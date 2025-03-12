@@ -19,7 +19,8 @@ local inventoryUI = {
     showAug4 = true,
     showAug5 = true,
     showAug6 = true,
-    windowLocked = false
+    windowLocked = false,
+    equipView = "table"
 }
 
 local EQ_ICON_OFFSET = 500
@@ -28,10 +29,12 @@ local ICON_HEIGHT = 20
 local animItems = mq.FindTextureAnimation("A_DragItem")
 local server = mq.TLO.MacroQuest.Server()
 
-function drawItemIcon(iconID)
+function drawItemIcon(iconID, width, height)
+    width = width or ICON_WIDTH
+    height = height or ICON_HEIGHT
   if iconID and iconID > 0 then
     animItems:SetTextureCell(iconID - EQ_ICON_OFFSET)
-    ImGui.DrawTextureAnimation(animItems, ICON_WIDTH, ICON_HEIGHT)
+    ImGui.DrawTextureAnimation(animItems, width, height)
   else
     ImGui.Text("N/A")
   end
@@ -222,6 +225,15 @@ function searchAcrossPeers()
   return results
 end
 
+local function getItemBySlot(slotid)
+    for _, item in ipairs(inventoryUI.inventoryData.equipped) do
+        if item.slotid == slotid then
+            return item
+        end
+    end
+    return nil
+end
+
 --------------------------------------------------
 -- Render the item inspection popup.
 --------------------------------------------------
@@ -372,113 +384,242 @@ function inventoryUI.render()
 -- Inside the Equipped tab section, replace the existing code with this:
 -- Inside the Equipped tab section, replace the existing code with this:
 if ImGui.BeginTabItem("Equipped") then
-    -- Begin a child region with horizontal scrolling
-    if ImGui.BeginChild("EquippedScrollRegion", 0, 0, true, ImGuiChildFlags.HorizontalScrollbar) then
-        
-        -- Add checkboxes to toggle column visibility
-        ImGui.Text("Show Columns:")
-        ImGui.SameLine()
-        inventoryUI.showAug1 = ImGui.Checkbox("Aug 1", inventoryUI.showAug1)
-        ImGui.SameLine()
-        inventoryUI.showAug2 = ImGui.Checkbox("Aug 2", inventoryUI.showAug2)
-        ImGui.SameLine()
-        inventoryUI.showAug3 = ImGui.Checkbox("Aug 3", inventoryUI.showAug3)
-        ImGui.SameLine()
-        inventoryUI.showAug4 = ImGui.Checkbox("Aug 4", inventoryUI.showAug4)
-        ImGui.SameLine()
-        inventoryUI.showAug5 = ImGui.Checkbox("Aug 5", inventoryUI.showAug5)
-        ImGui.SameLine()
-        inventoryUI.showAug6 = ImGui.Checkbox("Aug 6", inventoryUI.showAug6)
-        
-        -- Calculate the number of visible columns
-        local numColumns = 2 -- Icon and Item Name are always visible
-        local visibleAugs = 0
-        local augVisibility = {
-            inventoryUI.showAug1,
-            inventoryUI.showAug2,
-            inventoryUI.showAug3,
-            inventoryUI.showAug4,
-            inventoryUI.showAug5,
-            inventoryUI.showAug6
-        }
-        
-        -- Count visible augs
-        for _, isVisible in ipairs(augVisibility) do
-            if isVisible then
-                visibleAugs = visibleAugs + 1
-                numColumns = numColumns + 1
-            end
-        end
-        
-        -- Calculate the available width for the table
-        local availableWidth = ImGui.GetWindowContentRegionWidth()
-        local iconWidth = 30 -- Fixed width for the icon column
-        local itemWidth = 150 -- Fixed width for the item name column
-        local augWidth = 0
-        
-        -- Only calculate augWidth if there are visible augs
-        if visibleAugs > 0 then
-            augWidth = math.max(80, (availableWidth - iconWidth - itemWidth) / visibleAugs)
-        end
-        
-        -- Start the table with dynamic columns based on visibility toggles
-        if ImGui.BeginTable("EquippedTable", numColumns, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingStretchProp) then
-            -- Define column headers with proper width settings
-            ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, iconWidth) -- First column for item icon
-            ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthFixed, itemWidth) -- Second column for item name
+    -- Add tabs for different view modes
+    if ImGui.BeginTabBar("EquippedViewTabs") then
+        -- Table View Tab
+        if ImGui.BeginTabItem("Table View") then
+            inventoryUI.equipView = "table"
             
-            -- Add columns for augs based on visibility toggles with proper sizing
-            for i = 1, 6 do
-                if augVisibility[i] then
-                    ImGui.TableSetupColumn("Aug " .. i, ImGuiTableColumnFlags.WidthStretch, 1.0)
-                end
-            end
-            
-            ImGui.TableHeadersRow()
-            
-            -- Loop through equipped items and populate the table
-            for _, item in ipairs(inventoryUI.inventoryData.equipped) do
-                if matchesSearch(item) then
-                    ImGui.TableNextRow()
-                    
-                    -- Column 1: Item Icon
-                    ImGui.TableNextColumn()
-                    if item.icon and item.icon ~= 0 then
-                        drawItemIcon(item.icon)
-                    else
-                        ImGui.Text("N/A")
+            -- Begin a child region with horizontal scrolling
+            if ImGui.BeginChild("EquippedScrollRegion", 0, 0, true, ImGuiChildFlags.HorizontalScrollbar) then
+                
+                -- Add checkboxes to toggle column visibility
+                ImGui.Text("Show Columns:")
+                ImGui.SameLine()
+                inventoryUI.showAug1 = ImGui.Checkbox("Aug 1", inventoryUI.showAug1)
+                ImGui.SameLine()
+                inventoryUI.showAug2 = ImGui.Checkbox("Aug 2", inventoryUI.showAug2)
+                ImGui.SameLine()
+                inventoryUI.showAug3 = ImGui.Checkbox("Aug 3", inventoryUI.showAug3)
+                ImGui.SameLine()
+                inventoryUI.showAug4 = ImGui.Checkbox("Aug 4", inventoryUI.showAug4)
+                ImGui.SameLine()
+                inventoryUI.showAug5 = ImGui.Checkbox("Aug 5", inventoryUI.showAug5)
+                ImGui.SameLine()
+                inventoryUI.showAug6 = ImGui.Checkbox("Aug 6", inventoryUI.showAug6)
+                
+                -- Calculate the number of visible columns
+                local numColumns = 2 -- Icon and Item Name are always visible
+                local visibleAugs = 0
+                local augVisibility = {
+                    inventoryUI.showAug1,
+                    inventoryUI.showAug2,
+                    inventoryUI.showAug3,
+                    inventoryUI.showAug4,
+                    inventoryUI.showAug5,
+                    inventoryUI.showAug6
+                }
+                
+                -- Count visible augs
+                for _, isVisible in ipairs(augVisibility) do
+                    if isVisible then
+                        visibleAugs = visibleAugs + 1
+                        numColumns = numColumns + 1
                     end
+                end
+                
+                -- Calculate the available width for the table
+                local availableWidth = ImGui.GetWindowContentRegionWidth()
+                local iconWidth = 30 -- Fixed width for the icon column
+                local itemWidth = 150 -- Fixed width for the item name column
+                local augWidth = 0
+                
+                -- Only calculate augWidth if there are visible augs
+                if visibleAugs > 0 then
+                    augWidth = math.max(80, (availableWidth - iconWidth - itemWidth) / visibleAugs)
+                end
+                
+                -- Start the table with dynamic columns based on visibility toggles
+                if ImGui.BeginTable("EquippedTable", numColumns, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingStretchProp) then
+                    -- Define column headers with proper width settings
+                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, iconWidth) -- First column for item icon
+                    ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthFixed, itemWidth) -- Second column for item name
                     
-                    -- Column 2: Item Name (Clickable)
-                    ImGui.TableNextColumn()
-                    if ImGui.Selectable(item.name) then
-                        local links = mq.ExtractLinks(item.itemlink)
-                        if links and #links > 0 then
-                            mq.ExecuteTextLink(links[1])
-                        else
-                            mq.cmd('/echo No item link found in the database.')
+                    -- Add columns for augs based on visibility toggles with proper sizing
+                    for i = 1, 6 do
+                        if augVisibility[i] then
+                            ImGui.TableSetupColumn("Aug " .. i, ImGuiTableColumnFlags.WidthStretch, 1.0)
                         end
                     end
                     
-                    -- Add columns for visible augs only
-                    for i = 1, 6 do
-                        local augField = "aug" .. i .. "Name"
-                        
-                        if augVisibility[i] then
+                    ImGui.TableHeadersRow()
+                    
+                    -- Loop through equipped items and populate the table
+                    for _, item in ipairs(inventoryUI.inventoryData.equipped) do
+                        if matchesSearch(item) then
+                            ImGui.TableNextRow()
+                            
+                            -- Column 1: Item Icon
                             ImGui.TableNextColumn()
-                            if item[augField] and item[augField] ~= "" then
-                                ImGui.Text(item[augField])
+                            if item.icon and item.icon ~= 0 then
+                                drawItemIcon(item.icon)
+                            else
+                                ImGui.Text("N/A")
+                            end
+                            
+                            -- Column 2: Item Name (Clickable)
+                            ImGui.TableNextColumn()
+                            if ImGui.Selectable(item.name) then
+                                local links = mq.ExtractLinks(item.itemlink)
+                                if links and #links > 0 then
+                                    mq.ExecuteTextLink(links[1])
+                                else
+                                    mq.cmd('/echo No item link found in the database.')
+                                end
+                            end
+                            
+                            -- Add columns for visible augs only
+                            for i = 1, 6 do
+                                local augField = "aug" .. i .. "Name"
+                                
+                                if augVisibility[i] then
+                                    ImGui.TableNextColumn()
+                                    if item[augField] and item[augField] ~= "" then
+                                        ImGui.Text(item[augField])
+                                    end
+                                end
                             end
                         end
                     end
+                    
+                    ImGui.EndTable()
                 end
+                
+                -- End the child region
+                ImGui.EndChild()
             end
-            
-            ImGui.EndTable()
+            ImGui.EndTabItem()
         end
         
-        -- End the child region
-        ImGui.EndChild()
+        -- Visual Layout Tab
+        if ImGui.BeginTabItem("Visual") then
+            -- Define the slot layout
+            local slotLayout = {
+                {1, 2, 3, 4},       -- Row 1: Head, Face, Neck, Shoulders
+                {17, "", "", 5},    -- Row 2: Primary, Empty, Empty, Ear 1
+                {7, "", "", 8},     -- Row 3: Arms, Empty, Empty, Wrist 1
+                {20, "", "", 6},    -- Row 4: Range, Empty, Empty, Ear 2
+                {9, "", "", 10},    -- Row 5: Back, Empty, Empty, Wrist 2
+                {18, 12, 0, 19},    -- Row 6: Secondary, Chest, Ammo, Waist
+                {"", 15, 16, 21},   -- Row 7: Empty, Legs, Feet, Charm
+                {13, 14, 11, 22}    -- Row 8: Finger 1, Finger 2, Hands, Power Source
+            }
+        
+            -- Create a table to map slot IDs to equipped items
+            local equippedItems = {}
+            for _, item in ipairs(inventoryUI.inventoryData.equipped) do
+                equippedItems[item.slotid] = item
+            end
+        
+            -- Track the selected item
+            inventoryUI.selectedItem = inventoryUI.selectedItem or nil
+        
+            -- Split the window into two columns
+            ImGui.Columns(2, "EquippedColumns", true)  -- false means no border between columns
+        
+            -- Column 1: Equipped Table        
+            if ImGui.BeginTable("EquippedTable", 4, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingFixedFit) then
+                -- Set column widths
+                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthStretch)
+                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthStretch)
+                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthStretch)
+                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthStretch)                
+                ImGui.TableHeadersRow()
+        
+                -- Loop through the slot layout
+                for rowIndex, row in ipairs(slotLayout) do
+                    ImGui.TableNextRow(ImGuiTableRowFlags.None, 60)  -- Larger row height
+        
+                    -- Loop through the columns in the current row
+                    for colIndex, slotID in ipairs(row) do
+                        ImGui.TableNextColumn()
+        
+                        -- Display the item in the current slot (if it exists)
+                        -- Replace the problematic code block in the Visual tab section with this:
+                        if slotID and equippedItems[slotID] then
+                            local item = equippedItems[slotID]
+                            if item.icon and item.icon ~= 0 then
+                                ImGui.PushID(slotID)  -- Ensure a unique ID for each slot
+                                
+                                -- Create an invisible button that will be the clickable area
+                                if ImGui.InvisibleButton("##slot_" .. tostring(slotID), 60, 60) then
+                                    -- When clicked, set this as the selected item
+                                    inventoryUI.selectedItem = item
+                                end
+                                
+                                -- Calculate the position where the invisible button was placed
+                                local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
+                                
+                                -- Draw the icon at the same position as the invisible button
+                                ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
+                                drawItemIcon(item.icon, 60, 60)
+                                
+                                ImGui.PopID()
+                            else
+                                ImGui.Text("N/A")  -- Display "N/A" if no icon is available
+                            end
+                            
+                            -- Display the item name on hover
+                            if ImGui.IsItemHovered() then
+                                ImGui.BeginTooltip()
+                                ImGui.Text(item.name)
+                                ImGui.EndTooltip()
+                            end
+                        else
+                            ImGui.Text("")  -- Display an empty cell for nil slots
+                        end
+                    end
+                end
+        
+                ImGui.EndTable()
+            end
+        
+            -- Column 2: Details Region
+            ImGui.NextColumn()
+            if inventoryUI.selectedItem then
+                local selectedItem = inventoryUI.selectedItem
+                
+                -- Make the item name clickable
+                ImGui.Text("Item Name: ")
+                ImGui.SameLine()
+                if ImGui.Selectable(selectedItem.name) then
+                    local links = mq.ExtractLinks(selectedItem.itemlink)
+                    if links and #links > 0 then
+                        mq.ExecuteTextLink(links[1])
+                    else
+                        mq.cmd('/echo No item link found in the database.')
+                    end
+                end
+                
+                -- Continue with the rest of the details
+                ImGui.Text("Slot: " .. tostring(selectedItem.slotid))
+                ImGui.Text("Icon ID: " .. tostring(selectedItem.icon))
+                for a = 1, 6 do
+                    local augField = "aug" .. a .. "Name"
+                    if selectedItem[augField] and selectedItem[augField] ~= "" then
+                        ImGui.Text(string.format("Aug %d: %s", a, selectedItem[augField]))
+                    end
+                end
+            else
+                ImGui.Text("Click an item to view details.")
+            end
+            
+        
+            ImGui.Columns(1)  -- Reset to a single column
+            ImGui.EndTabItem()
+        end
+        
+        ImGui.EndTabBar()
     end
     ImGui.EndTabItem()
 end
