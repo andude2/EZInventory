@@ -186,6 +186,9 @@ function compareSlotAcrossPeers(slotID)
         ::continue::
     end
     
+    -- Sort results by peer name for consistent display
+    table.sort(results, function(a, b) return a.peerName < b.peerName end)
+    
     return results
 end
 
@@ -410,7 +413,7 @@ function inventoryUI.render()
     end
 
         -- Add the lock button (padlock icon)
-    -- Calculate position for the lock button at the far right
+        -- Calculate position for the lock button at the far right
     local cursorPosX = ImGui.GetCursorPosX()
     local textWidth = ImGui.CalcTextSize(icons.FA_UNLOCK)
     local windowWidth = ImGui.GetWindowWidth()
@@ -467,8 +470,6 @@ function inventoryUI.render()
     ------------------------------
     if ImGui.BeginTabBar("InventoryTabs") then
 
--- Inside the Equipped tab section, replace the existing code with this:
--- Inside the Equipped tab section, replace the existing code with this:
 if ImGui.BeginTabItem("Equipped") then
     -- Add tabs for different view modes
     if ImGui.BeginTabBar("EquippedViewTabs") then
@@ -591,7 +592,7 @@ if ImGui.BeginTabItem("Equipped") then
        if ImGui.BeginTabItem("Visual") then
         -- Define the slot layout (unchanged)
         local slotLayout = {
-            {1, 2, 3, 4},       -- Row 1: Head, Face, Neck, Shoulders
+            {1, 2, 3, 4},       -- Row 1: Left Ear, Face, Neck, Shoulders
             {17, "", "", 5},    -- Row 2: Primary, Empty, Empty, Ear 1
             {7, "", "", 8},     -- Row 3: Arms, Empty, Empty, Wrist 1
             {20, "", "", 6},    -- Row 4: Range, Empty, Empty, Ear 2
@@ -697,79 +698,84 @@ if ImGui.BeginTabItem("Equipped") then
     
         -- Column 2: Comparison Table
         ImGui.NextColumn()
+    
+    if inventoryUI.selectedSlotID then
+        -- Header for the comparison table
+        ImGui.Text("Comparing " .. inventoryUI.selectedSlotName .. " slot across all characters:")
+        ImGui.Separator()
         
-        if inventoryUI.selectedSlotID then
-            -- Header for the comparison table
-            ImGui.Text("Comparing " .. inventoryUI.selectedSlotName .. " slot across all characters:")
-            ImGui.Separator()
-            
-            if #inventoryUI.compareResults == 0 then
-                ImGui.Text("No data available for comparison.")
-            else
-                -- Create a table to display the comparison results
-                if ImGui.BeginTable("ComparisonTable", 3, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
-                    ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 100)
-                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
-                    ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
-                    ImGui.TableHeadersRow()
+        if #inventoryUI.compareResults == 0 then
+            ImGui.Text("No data available for comparison.")
+        else
+            -- Create a table to display the comparison results
+            if ImGui.BeginTable("ComparisonTable", 3, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+                ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 100)
+                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
+                ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
+                ImGui.TableHeadersRow()
+                
+                for _, result in ipairs(inventoryUI.compareResults) do
+                    ImGui.TableNextRow()
                     
-                    for _, result in ipairs(inventoryUI.compareResults) do
-                        ImGui.TableNextRow()
-                        
-                        -- Character column
-                        ImGui.TableNextColumn()
-                        ImGui.Text(result.peerName)
-                        
-                        -- Icon column
-                        ImGui.TableNextColumn()
-                        if result.item and result.item.icon and result.item.icon > 0 then
-                            drawItemIcon(result.item.icon)
-                        else
-                            ImGui.Text("--")
-                        end
-                        
-                        -- Item name column
-                        ImGui.TableNextColumn()
-                        if result.item then
-                            if ImGui.Selectable(result.item.name) then
+                    -- Character column
+                    ImGui.TableNextColumn()
+                    ImGui.Text(result.peerName)
+                    
+                    -- Icon column
+                    ImGui.TableNextColumn()
+                    if result.item and result.item.icon and result.item.icon > 0 then
+                        drawItemIcon(result.item.icon)
+                    else
+                        ImGui.Text("--")
+                    end
+                    
+                    -- Item name column
+                    ImGui.TableNextColumn()
+                    if result.item then
+                        if ImGui.Selectable(result.item.name) then
+                            -- Use the itemlink from the database if available
+                            if result.item.itemlink and result.item.itemlink ~= "" then
                                 local links = mq.ExtractLinks(result.item.itemlink)
                                 if links and #links > 0 then
                                     mq.ExecuteTextLink(links[1])
                                 else
-                                    mq.cmd('/echo No item link found in the database.')
+                                    mq.cmd('/echo No valid item link found in the database.')
+                                end
+                            else
+                                mq.cmdf('/echo No item link available for %s', result.item.name)
+                            end
+                        end
+                        
+                        -- Show tooltips with augments on hover
+                        if ImGui.IsItemHovered() then
+                            ImGui.BeginTooltip()
+                            ImGui.Text(result.item.name)
+                            
+                            -- Display augments if any
+                            for a = 1, 6 do
+                                local augField = "aug" .. a .. "Name"
+                                if result.item[augField] and result.item[augField] ~= "" then
+                                    ImGui.Text(string.format("Aug %d: %s", a, result.item[augField]))
                                 end
                             end
                             
-                            -- Show tooltips with augments on hover
-                            if ImGui.IsItemHovered() then
-                                ImGui.BeginTooltip()
-                                ImGui.Text(result.item.name)
-                                
-                                -- Display augments if any
-                                for a = 1, 6 do
-                                    local augField = "aug" .. a .. "Name"
-                                    if result.item[augField] and result.item[augField] ~= "" then
-                                        ImGui.Text(string.format("Aug %d: %s", a, result.item[augField]))
-                                    end
-                                end
-                                
-                                ImGui.EndTooltip()
-                            end
-                        else
-                            ImGui.Text("(empty)")
+                            ImGui.EndTooltip()
                         end
+                    else
+                        ImGui.Text("(empty)")
                     end
-                    
-                    ImGui.EndTable()
                 end
+                
+                ImGui.EndTable()
             end
-        else
-            ImGui.Text("Click on a slot to compare it across all characters.")
         end
-        
-        ImGui.Columns(1)  -- Reset to a single column
-        ImGui.EndTabItem()
+    else
+        ImGui.Text("Click on a slot to compare it across all characters.")
     end
+    
+    ImGui.Columns(1)  -- Reset to a single column
+    ImGui.EndTabItem()
+end
         ImGui.EndTabBar()
     end
     ImGui.EndTabItem()
@@ -976,9 +982,9 @@ end
   end
 
       ------------------------------
-      -- All Peers Search Results Tab
+      -- All Bots Search Results Tab
       ------------------------------
-      if ImGui.BeginTabItem("All Peers") then
+      if ImGui.BeginTabItem("All Bots") then
         -- Filter options
         local filterOptions = { "All", "Equipped", "Inventory", "Bank" }
         inventoryUI.sourceFilter = inventoryUI.sourceFilter or "All"  -- Default filter
