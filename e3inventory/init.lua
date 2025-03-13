@@ -1,4 +1,5 @@
 -- inventory_window.lua
+-- developed in by psatty82, aka Linamas
 local sqlite3 = require("lsqlite3")
 local mq = require("mq")
 local ImGui = require("ImGui")
@@ -24,6 +25,7 @@ local inventoryUI = {
     selectedSlotID = nil,
     selectedSlotName = nil,
     compareResults = {},
+    enableHover = true,
 }
 
 local EQ_ICON_OFFSET = 500
@@ -60,7 +62,7 @@ local function scanForPeerDatabases()
   local folder = getInventoryFolder()
  
   local localName = mq.TLO.Me.Name()
-  local localFile = folder .. string.format("Inventory_%s_%s.db", localName, server)  
+  local localFile = folder .. string.format("Inventory_%s_%s.db", localName, server)  -- Use "Local" as the server name
   
   for file in lfs.dir(folder) do
       if file:match("^Inventory_.*%.db$") then
@@ -336,12 +338,19 @@ local function renderItemInspectionPopup()
         ImGui.Text("Slot: " .. itemPopup.slotname)
       end
       for a = 1, 6 do
-        local augField = "aug" .. a .. "Name"
-        if itemPopup[augField] and itemPopup[augField] ~= "" then
-          ImGui.Text(string.format("Aug %d: %s", a, itemPopup[augField]))
+        local augNameField = "aug" .. a .. "Name"
+        local augLinkField = "aug" .. a .. "link"
+        if itemPopup[augNameField] and itemPopup[augNameField] ~= "" then
+            if itemPopup[augLinkField] and itemPopup[augLinkField] ~= "" then
+                if ImGui.Selectable(string.format("Aug %d: %s", a, itemPopup[augNameField])) then
+                    mq.ExecuteTextLink(itemPopup[augLinkField])
+                end
+            else
+                ImGui.Text(string.format("Aug %d: %s", a, itemPopup[augNameField]))
+            end
         end
-      end
     end
+end
     if ImGui.Button("Close") then
       itemPopup = nil
       ImGui.CloseCurrentPopup()
@@ -382,8 +391,7 @@ function inventoryUI.render()
       windowFlags = windowFlags + ImGuiWindowFlags.NoMove + ImGuiWindowFlags.NoResize
   end
 
-  ImGui.SetNextWindowSize(800, 600, ImGuiCond.FirstUseEver)
-  if ImGui.Begin("Inventory Window", inventoryUI.visible, windowFlags) then
+  if ImGui.Begin("Inventory Window", nil, windowFlags) then
 
     -- Peer selection dropdown
     if ImGui.BeginCombo("Select Peer", inventoryUI.selectedPeer or "Select a Peer") then
@@ -567,15 +575,22 @@ if ImGui.BeginTabItem("Equipped") then
                             
                             -- Add columns for visible augs only
                             for i = 1, 6 do
-                                local augField = "aug" .. i .. "Name"
-                                
                                 if augVisibility[i] then
                                     ImGui.TableNextColumn()
+                                    local augField = "aug" .. i .. "Name"
+                                    local augLinkField = "aug" .. i .. "link"
                                     if item[augField] and item[augField] ~= "" then
-                                        ImGui.Text(item[augField])
+                                        if ImGui.Selectable(string.format("%s", item[augField])) then
+                                            local links = mq.ExtractLinks(item[augLinkField])
+                                            if links and #links > 0 then
+                                                mq.ExecuteTextLink(links[1])
+                                            else
+                                                mq.cmd('/echo No aug link found in the database.')
+                                            end
+                                        end
                                     end
                                 end
-                            end
+                            end                                           
                         end
                     end
                     
@@ -588,117 +603,183 @@ if ImGui.BeginTabItem("Equipped") then
             ImGui.EndTabItem()
         end
         
-       -- Visual Layout Tab
-       if ImGui.BeginTabItem("Visual") then
-        -- Define the slot layout (unchanged)
-        local slotLayout = {
-            {1, 2, 3, 4},       -- Row 1: Left Ear, Face, Neck, Shoulders
-            {17, "", "", 5},    -- Row 2: Primary, Empty, Empty, Ear 1
-            {7, "", "", 8},     -- Row 3: Arms, Empty, Empty, Wrist 1
-            {20, "", "", 6},    -- Row 4: Range, Empty, Empty, Ear 2
-            {9, "", "", 10},    -- Row 5: Back, Empty, Empty, Wrist 2
-            {18, 12, 0, 19},    -- Row 6: Secondary, Chest, Ammo, Waist
-            {"", 15, 16, 21},   -- Row 7: Empty, Legs, Feet, Charm
-            {13, 14, 11, 22}    -- Row 8: Finger 1, Finger 2, Hands, Power Source
-        }
+-- Visual Layout Tab
+if ImGui.BeginTabItem("Visual") then
+    -- Add the hover toggle checkbox at the top of the tab
+    inventoryUI.enableHover = ImGui.Checkbox("Enable Hover Tooltips", inventoryUI.enableHover)
+    if ImGui.IsItemHovered() then
+        ImGui.SetTooltip("When enabled, hovering over items shows their tooltips and opens the item window.\nWhen disabled, you must click on items to see details.")
+    end
+    ImGui.Separator()
+    -- Define the slot layout (unchanged)
+    local slotLayout = {
+        {1, 2, 3, 4},       -- Row 1: Left Ear, Face, Neck, Shoulders
+        {17, "", "", 5},    -- Row 2: Primary, Empty, Empty, Ear 1
+        {7, "", "", 8},     -- Row 3: Arms, Empty, Empty, Wrist 1
+        {20, "", "", 6},    -- Row 4: Range, Empty, Empty, Ear 2
+        {9, "", "", 10},    -- Row 5: Back, Empty, Empty, Wrist 2
+        {18, 12, 0, 19},    -- Row 6: Secondary, Chest, Ammo, Waist
+        {"", 15, 16, 21},   -- Row 7: Empty, Legs, Feet, Charm
+        {13, 14, 11, 22}    -- Row 8: Finger 1, Finger 2, Hands, Power Source
+    }
+
+    -- Create a table to map slot IDs to equipped items
+    local equippedItems = {}
+    for _, item in ipairs(inventoryUI.inventoryData.equipped) do
+        equippedItems[item.slotid] = item
+    end
+
+    -- Track the selected item
+    inventoryUI.selectedItem = inventoryUI.selectedItem or nil
     
-        -- Create a table to map slot IDs to equipped items
-        local equippedItems = {}
-        for _, item in ipairs(inventoryUI.inventoryData.equipped) do
-            equippedItems[item.slotid] = item
-        end
+    -- Reset hover states each frame to prevent state persistence issues
+    inventoryUI.hoverStates = {}
     
-        -- Track the selected item
-        inventoryUI.selectedItem = inventoryUI.selectedItem or nil
-    
-        -- Split the window into two columns
-        ImGui.Columns(2, "EquippedColumns", true)  -- true means border between columns
-        ImGui.SetColumnWidth(0, 300)
-    
-        -- Column 1: Equipped Table
-        if ImGui.BeginTable("EquippedTable", 4, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
-            -- Set column widths to fit the content
-            ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
-            ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
-            ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
-            ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
-            ImGui.TableHeadersRow()
-    
-            -- Loop through the slot layout
-            for rowIndex, row in ipairs(slotLayout) do
-                ImGui.TableNextRow(ImGuiTableRowFlags.None, 40)
-    
-                -- Loop through the columns in the current row
-                for colIndex, slotID in ipairs(row) do
-                    ImGui.TableNextColumn()
-    
-                    -- Skip empty slots
-                    if slotID == "" then
-                        ImGui.Text("")
-                        goto continue_slot
-                    end
-    
-                    -- Generate a unique identifier for this slot
-                    local slotButtonID = "slot_" .. tostring(slotID)
-                    local slotName = getSlotNameFromID(slotID)
-                    
-                    -- Display the item in the current slot (if it exists)
-                    if equippedItems[slotID] then
-                        local item = equippedItems[slotID]
-                        if item.icon and item.icon ~= 0 then
-                            ImGui.PushID(slotButtonID)  -- Ensure a unique ID for each slot
-    
-                            -- When clicked, set this as the selected slot and query all peers
-                            if ImGui.InvisibleButton("##" .. slotButtonID, 40, 40) then
-                                inventoryUI.selectedSlotID = slotID
-                                inventoryUI.selectedSlotName = slotName
-                                inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
+    -- Track which window is currently open
+    inventoryUI.openItemWindow = inventoryUI.openItemWindow or nil
+
+    -- Track if we're hovering over any item this frame
+    local hoveringAnyItem = false
+
+    -- Split the window into two columns
+    ImGui.Columns(2, "EquippedColumns", true)  -- true means border between columns
+    ImGui.SetColumnWidth(0, 300)
+
+    -- Column 1: Equipped Table (unchanged)
+    if ImGui.BeginTable("EquippedTable", 4, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+        -- Set column widths to fit the content
+        ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
+        ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
+        ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
+        ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
+        ImGui.TableHeadersRow()
+
+        -- Loop through the slot layout
+        for rowIndex, row in ipairs(slotLayout) do
+            ImGui.TableNextRow(ImGuiTableRowFlags.None, 40)
+
+            -- Loop through the columns in the current row
+            for colIndex, slotID in ipairs(row) do
+                ImGui.TableNextColumn()
+
+                -- Skip empty slots
+                if slotID == "" then
+                    ImGui.Text("")
+                    goto continue_slot
+                end
+
+                -- Generate a unique identifier for this slot
+                local slotButtonID = "slot_" .. tostring(slotID)
+                local slotName = getSlotNameFromID(slotID)
+                
+                -- Display the item in the current slot (if it exists)
+                if equippedItems[slotID] then
+                    local item = equippedItems[slotID]
+                    if item.icon and item.icon ~= 0 then
+                        ImGui.PushID(slotButtonID)  -- Ensure a unique ID for each slot
+
+                        -- Create an invisible button for the slot
+                        local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 40, 40)
+                        
+                        -- Calculate the position where the invisible button was placed
+                        local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
+
+                        -- Draw the icon at the same position as the invisible button
+                        ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
+                        drawItemIcon(item.icon, 40, 40)
+                        
+                        -- Handle clicking on the item
+                        if clicked then
+                            -- First close any open item window
+                            if mq.TLO.Window("ItemDisplayWindow").Open() then
+                                mq.TLO.Window("ItemDisplayWindow").DoClose()
+                                inventoryUI.openItemWindow = nil
                             end
                             
-                            -- Calculate the position where the invisible button was placed
-                            local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
-    
-                            -- Draw the icon at the same position as the invisible button
-                            ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
-                            drawItemIcon(item.icon, 40, 40)
-    
-                            ImGui.PopID()
-                        else
-                            -- Empty slot with text label
-                            ImGui.Text(slotName)
-                            if ImGui.IsItemClicked() then
-                                inventoryUI.selectedSlotID = slotID
-                                inventoryUI.selectedSlotName = slotName
-                                inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
+                            -- Then update selection for comparison
+                            inventoryUI.selectedSlotID = slotID
+                            inventoryUI.selectedSlotName = slotName
+                            inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
+                        end
+
+                        -- Handle hovering on the item
+                        if ImGui.IsItemHovered() then
+                            hoveringAnyItem = inventoryUI.enableHover  -- Only consider hovering if hover is enabled
+                            local hoverKey = "slot_" .. slotID
+                            
+                            -- Only show item window if none is currently open AND hover is enabled
+                            if inventoryUI.enableHover and not inventoryUI.openItemWindow then
+                                local links = mq.ExtractLinks(item.itemlink)
+                                if links and #links > 0 then
+                                    mq.ExecuteTextLink(links[1])
+                                    inventoryUI.openItemWindow = hoverKey
+                                end
+                            end
+                            
+                            -- Always show tooltips regardless of hover setting
+                            ImGui.BeginTooltip()
+                            ImGui.Text(item.name)
+                            
+                            -- Display augments if any
+                            for a = 1, 6 do
+                                local augField = "aug" .. a .. "Name"
+                                if item[augField] and item[augField] ~= "" then
+                                    ImGui.Text(string.format("Aug %d: %s", a, item[augField]))
+                                end
+                            end
+                            
+                            ImGui.EndTooltip()
+                            
+                            -- Mark this item as being hovered only if hover is enabled
+                            if inventoryUI.enableHover then
+                                inventoryUI.hoverStates[hoverKey] = true
                             end
                         end
+
+                        ImGui.PopID()
                     else
                         -- Empty slot with text label
                         ImGui.Text(slotName)
                         if ImGui.IsItemClicked() then
+                            -- First close any open item window
+                            if mq.TLO.Window("ItemDisplayWindow").Open() then
+                                mq.TLO.Window("ItemDisplayWindow").DoClose()
+                                inventoryUI.openItemWindow = nil
+                            end
+                            
+                            -- Then update selection
                             inventoryUI.selectedSlotID = slotID
                             inventoryUI.selectedSlotName = slotName
                             inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
                         end
                     end
-    
-                    -- Display the item name on hover
-                    if ImGui.IsItemHovered() and equippedItems[slotID] then
-                        ImGui.BeginTooltip()
-                        ImGui.Text(equippedItems[slotID].name)
-                        ImGui.EndTooltip()
+                else
+                    -- Empty slot with text label
+                    ImGui.Text(slotName)
+                    if ImGui.IsItemClicked() then
+                        -- First close any open item window
+                        if mq.TLO.Window("ItemDisplayWindow").Open() then
+                            mq.TLO.Window("ItemDisplayWindow").DoClose()
+                            inventoryUI.openItemWindow = nil
+                        end
+                        
+                        -- Then update selection
+                        inventoryUI.selectedSlotID = slotID
+                        inventoryUI.selectedSlotName = slotName
+                        inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
                     end
-                    
-                    ::continue_slot::
                 end
+                
+                ::continue_slot::
             end
-    
-            ImGui.EndTable()
         end
-    
-        -- Column 2: Comparison Table
-        ImGui.NextColumn()
-    
+
+        ImGui.EndTable()
+    end
+
+    -- Column 2: Comparison Table
+    ImGui.NextColumn()
+
     if inventoryUI.selectedSlotID then
         -- Header for the comparison table
         ImGui.Text("Comparing " .. inventoryUI.selectedSlotName .. " slot across all characters:")
@@ -714,7 +795,10 @@ if ImGui.BeginTabItem("Equipped") then
                 ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
                 ImGui.TableHeadersRow()
                 
-                for _, result in ipairs(inventoryUI.compareResults) do
+                -- Track if we're hovering over any comparison item
+                local hoveringAnyCompare = false
+                
+                for idx, result in ipairs(inventoryUI.compareResults) do
                     ImGui.TableNextRow()
                     
                     -- Character column
@@ -729,25 +813,30 @@ if ImGui.BeginTabItem("Equipped") then
                         ImGui.Text("--")
                     end
                     
-                    -- Item name column
+                    -- Item name column - MODIFIED to use hover instead of click
                     ImGui.TableNextColumn()
                     if result.item then
-                        if ImGui.Selectable(result.item.name) then
-                            -- Use the itemlink from the database if available
-                            if result.item.itemlink and result.item.itemlink ~= "" then
-                                local links = mq.ExtractLinks(result.item.itemlink)
-                                if links and #links > 0 then
-                                    mq.ExecuteTextLink(links[1])
-                                else
-                                    mq.cmd('/echo No valid item link found in the database.')
-                                end
-                            else
-                                mq.cmdf('/echo No item link available for %s', result.item.name)
-                            end
-                        end
+                        ImGui.Text(result.item.name)
                         
-                        -- Show tooltips with augments on hover
                         if ImGui.IsItemHovered() then
+                            hoveringAnyCompare = true
+                            hoveringAnyItem = inventoryUI.enableHover  -- Only consider hovering if hover is enabled
+                            
+                            local hoverKey = "compare_" .. result.peerName .. "_" .. idx
+                            
+                            -- Only show item window if none is currently open AND hover is enabled
+                            if inventoryUI.enableHover and not inventoryUI.openItemWindow then
+                                -- Use the itemlink from the database if available
+                                if result.item.itemlink and result.item.itemlink ~= "" then
+                                    local links = mq.ExtractLinks(result.item.itemlink)
+                                    if links and #links > 0 then
+                                        mq.ExecuteTextLink(links[1])
+                                        inventoryUI.openItemWindow = hoverKey
+                                    end
+                                end
+                            end
+                            
+                            -- Always show tooltip with augments
                             ImGui.BeginTooltip()
                             ImGui.Text(result.item.name)
                             
@@ -760,6 +849,11 @@ if ImGui.BeginTabItem("Equipped") then
                             end
                             
                             ImGui.EndTooltip()
+                            
+                            -- Mark this item as being hovered only if hover is enabled
+                            if inventoryUI.enableHover then
+                                inventoryUI.hoverStates[hoverKey] = true
+                            end
                         end
                     else
                         ImGui.Text("(empty)")
@@ -774,6 +868,16 @@ if ImGui.BeginTabItem("Equipped") then
     end
     
     ImGui.Columns(1)  -- Reset to a single column
+    
+    -- Check if we need to close the item window (when not hovering over any item)
+    if not hoveringAnyItem and inventoryUI.openItemWindow then
+        -- Check if the item window is still open
+        if mq.TLO.Window("ItemDisplayWindow").Open() then
+            mq.TLO.Window("ItemDisplayWindow").DoClose()
+        end
+        inventoryUI.openItemWindow = nil
+    end
+    
     ImGui.EndTabItem()
 end
         ImGui.EndTabBar()
@@ -784,7 +888,7 @@ end
 
 
 ------------------------------
--- Bags Section
+-- Bags Section (Revised)
 ------------------------------
 local BAG_ICON_SIZE = 32  -- Smaller icons for tables
 
@@ -1087,7 +1191,7 @@ end
 end
 
 mq.imgui.init("Inventory Window", function()
-  inventoryUI.render()  -- Call the function properly
+  inventoryUI.render()  -- ✅ Call the function properly
 end)
 
 -- Define help information
