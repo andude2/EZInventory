@@ -60,7 +60,7 @@ local function scanForPeerDatabases()
   local folder = getInventoryFolder()
  
   local localName = mq.TLO.Me.Name()
-  local localFile = folder .. string.format("Inventory_%s_%s.db", localName, server)  -- Use "Local" as the server name
+  local localFile = folder .. string.format("Inventory_%s_%s.db", localName, server)  
   
   for file in lfs.dir(folder) do
       if file:match("^Inventory_.*%.db$") then
@@ -615,7 +615,7 @@ if ImGui.BeginTabItem("Equipped") then
         ImGui.Columns(2, "EquippedColumns", true)  -- true means border between columns
         ImGui.SetColumnWidth(0, 300)
     
-        -- Column 1: Equipped Table (unchanged)
+        -- Column 1: Equipped Table
         if ImGui.BeginTable("EquippedTable", 4, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
             -- Set column widths to fit the content
             ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
@@ -784,7 +784,7 @@ end
 
 
 ------------------------------
--- Bags Section (Revised)
+-- Bags Section
 ------------------------------
 local BAG_ICON_SIZE = 32  -- Smaller icons for tables
 
@@ -1087,7 +1087,7 @@ end
 end
 
 mq.imgui.init("Inventory Window", function()
-  inventoryUI.render()  -- ✅ Call the function properly
+  inventoryUI.render()  -- Call the function properly
 end)
 
 -- Define help information
