@@ -247,6 +247,23 @@ local function request()
   itemRequest = nil
 end
 
+--------------------------------------------------
+-- Function: Get Class Armor Type
+--------------------------------------------------
+local function getArmorTypeByClass(class)
+    if class == "WAR" or class == "CLR" or class == "PAL" or class == "SHD" or class == "BRD" then
+        return "Plate"
+    elseif class == "RNG" or class == "ROG" or class == "SHM" or class == "BER" then
+        return "Chain"
+    elseif class == "NEC" or class == "WIZ" or class == "MAG" or class == "ENC" then
+        return "Cloth"
+    elseif class == "DRU" or class == "MNK" or class == "BST" then
+        return "Leather"
+    else
+        return "Unknown"
+    end
+end
+
 
 --------------------------------------------------
 -- Function: Search Across All Peer Databases
@@ -610,7 +627,30 @@ if ImGui.BeginTabItem("Visual") then
     if ImGui.IsItemHovered() then
         ImGui.SetTooltip("When enabled, hovering over items shows their tooltips and opens the item window.\nWhen disabled, you must click on items to see details.")
     end
+
+    -- Add a spacer between the checkbox and the dropdown
+    ImGui.SameLine()  -- Place the dropdown on the same line as the checkbox
+    ImGui.Dummy(120, 0)  -- Add a 20-pixel horizontal spacer
+
+    -- Add armor type filter dropdown
+    local armorTypes = { "All", "Plate", "Chain", "Cloth", "Leather" }
+    inventoryUI.armorTypeFilter = inventoryUI.armorTypeFilter or "All"  -- Default filter
+
+    ImGui.SameLine()  -- Place the dropdown combo on the same line as the checkbox and spacer
+    ImGui.Text("Armor Type:")
+    ImGui.SameLine()
+    ImGui.SetNextItemWidth(100)  -- Set the width of the dropdown to 100 pixels
+    if ImGui.BeginCombo("##ArmorTypeFilter", inventoryUI.armorTypeFilter) then
+        for _, armorType in ipairs(armorTypes) do
+            if ImGui.Selectable(armorType, inventoryUI.armorTypeFilter == armorType) then
+                inventoryUI.armorTypeFilter = armorType  -- Update the filter
+            end
+        end
+        ImGui.EndCombo()
+    end
+
     ImGui.Separator()
+
     -- Define the slot layout (unchanged)
     local slotLayout = {
         {1, 2, 3, 4},       -- Row 1: Left Ear, Face, Neck, Shoulders
@@ -799,64 +839,78 @@ if ImGui.BeginTabItem("Visual") then
                 local hoveringAnyCompare = false
                 
                 for idx, result in ipairs(inventoryUI.compareResults) do
-                    ImGui.TableNextRow()
+                    -- Filter by armor type
+                    local peerClass = mq.TLO.Spawn("pc = " .. result.peerName).Class.ShortName()
+                    local armorType = getArmorTypeByClass(peerClass)
                     
-                    -- Character column
-                    ImGui.TableNextColumn()
-                    ImGui.Text(result.peerName)
-                    
-                    -- Icon column
-                    ImGui.TableNextColumn()
-                    if result.item and result.item.icon and result.item.icon > 0 then
-                        drawItemIcon(result.item.icon)
-                    else
-                        ImGui.Text("--")
-                    end
-                    
-                    -- Item name column - MODIFIED to use hover instead of click
-                    ImGui.TableNextColumn()
-                    if result.item then
-                        ImGui.Text(result.item.name)
+                    if inventoryUI.armorTypeFilter == "All" or armorType == inventoryUI.armorTypeFilter then
+                        ImGui.TableNextRow()
                         
-                        if ImGui.IsItemHovered() then
-                            hoveringAnyCompare = true
-                            hoveringAnyItem = inventoryUI.enableHover  -- Only consider hovering if hover is enabled
-                            
-                            local hoverKey = "compare_" .. result.peerName .. "_" .. idx
-                            
-                            -- Only show item window if none is currently open AND hover is enabled
-                            if inventoryUI.enableHover and not inventoryUI.openItemWindow then
-                                -- Use the itemlink from the database if available
+                        -- Character column
+                        ImGui.TableNextColumn()
+                        ImGui.Text(result.peerName)
+                        
+                        -- Icon column
+                        ImGui.TableNextColumn()
+                        if result.item and result.item.icon and result.item.icon > 0 then
+                            drawItemIcon(result.item.icon)
+                        else
+                            ImGui.Text("--")
+                        end
+
+                        ImGui.TableNextColumn()
+                        if result.item then
+                            -- Make the item name clickable
+                            if ImGui.Selectable(result.item.name) then
+                                -- Execute the item link if available
                                 if result.item.itemlink and result.item.itemlink ~= "" then
                                     local links = mq.ExtractLinks(result.item.itemlink)
                                     if links and #links > 0 then
                                         mq.ExecuteTextLink(links[1])
-                                        inventoryUI.openItemWindow = hoverKey
                                     end
                                 end
                             end
                             
-                            -- Always show tooltip with augments
-                            ImGui.BeginTooltip()
-                            ImGui.Text(result.item.name)
-                            
-                            -- Display augments if any
-                            for a = 1, 6 do
-                                local augField = "aug" .. a .. "Name"
-                                if result.item[augField] and result.item[augField] ~= "" then
-                                    ImGui.Text(string.format("Aug %d: %s", a, result.item[augField]))
+                            if ImGui.IsItemHovered() then
+                                hoveringAnyCompare = true
+                                hoveringAnyItem = inventoryUI.enableHover  -- Only consider hovering if hover is enabled
+                                
+                                local hoverKey = "compare_" .. result.peerName .. "_" .. idx
+                                
+                                -- Only show item window if none is currently open AND hover is enabled
+                                if inventoryUI.enableHover and not inventoryUI.openItemWindow then
+                                    -- Use the itemlink from the database if available
+                                    if result.item.itemlink and result.item.itemlink ~= "" then
+                                        local links = mq.ExtractLinks(result.item.itemlink)
+                                        if links and #links > 0 then
+                                            mq.ExecuteTextLink(links[1])
+                                            inventoryUI.openItemWindow = hoverKey
+                                        end
+                                    end
+                                end
+                                
+                                -- Always show tooltip with augments
+                                ImGui.BeginTooltip()
+                                ImGui.Text(result.item.name)
+                                
+                                -- Display augments if any
+                                for a = 1, 6 do
+                                    local augField = "aug" .. a .. "Name"
+                                    if result.item[augField] and result.item[augField] ~= "" then
+                                        ImGui.Text(string.format("Aug %d: %s", a, result.item[augField]))
+                                    end
+                                end
+                                
+                                ImGui.EndTooltip()
+                                
+                                -- Mark this item as being hovered only if hover is enabled
+                                if inventoryUI.enableHover then
+                                    inventoryUI.hoverStates[hoverKey] = true
                                 end
                             end
-                            
-                            ImGui.EndTooltip()
-                            
-                            -- Mark this item as being hovered only if hover is enabled
-                            if inventoryUI.enableHover then
-                                inventoryUI.hoverStates[hoverKey] = true
-                            end
+                        else
+                            ImGui.Text("(empty)")
                         end
-                    else
-                        ImGui.Text("(empty)")
                     end
                 end
                 
