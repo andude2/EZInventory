@@ -269,68 +269,91 @@ end
 -- Function: Search Across All Peer Databases
 --------------------------------------------------
 function searchAcrossPeers()
-  local results = {}
-  local searchTerm = (searchText or ""):lower()
-
-  -- Ensure we have the latest list of peers
-  scanForPeerDatabases()
-
-  for _, peer in ipairs(inventoryUI.peers) do
-      -- Skip if the database is already locked
-      if inventoryUI.dbLocked then
-          mq.cmdf("/echo Database is locked. Skipping peer: %s", peer.name)
-          goto continue
-      end
-
-      -- Set the database lock flag
-      inventoryUI.dbLocked = true
-
-      -- Open the database in a protected call
-      local success, db = pcall(sqlite3.open, peer.filename)
-      if not success or not db then
-          mq.cmdf("/echo Error opening database for peer: %s (%s)", peer.name, db or "unknown error")
-          inventoryUI.dbLocked = false  -- Release the lock
-          goto continue
-      end
-
-      -- Search equipped items
-      for row in db:nrows("SELECT * FROM gear_equiped") do
-          if searchTerm == "" or (row.name and row.name:lower():find(searchTerm)) then
-              row.peerName = peer.name
-              row.peerServer = peer.server
-              row.source = "Equipped"  -- Indicates the item is equipped
-              table.insert(results, row)
-          end
-      end
-
-      -- Search bag items (inventory)
-      for row in db:nrows("SELECT * FROM gear_bags") do
-          if searchTerm == "" or (row.name and row.name:lower():find(searchTerm)) then
-              row.peerName = peer.name
-              row.peerServer = peer.server
-              row.source = "Inventory"  -- Indicates the item is in the inventory
-              table.insert(results, row)
-          end
-      end
-
-      -- Search bank items
-      for row in db:nrows("SELECT * FROM gear_bank") do
-          if searchTerm == "" or (row.name and row.name:lower():find(searchTerm)) then
-              row.peerName = peer.name
-              row.peerServer = peer.server
-              row.source = "Bank"  -- Indicates the item is in the bank
-              table.insert(results, row)
-          end
-      end
-
-      -- Close the database and release the lock
-      db:close()
-      inventoryUI.dbLocked = false
-
-      ::continue::
-  end
-
-  return results
+    local results = {}
+    local searchTerm = (searchText or ""):lower()
+  
+    -- Ensure we have the latest list of peers
+    scanForPeerDatabases()
+  
+    for _, peer in ipairs(inventoryUI.peers) do
+        -- Skip if the database is already locked
+        if inventoryUI.dbLocked then
+            mq.cmdf("/echo Database is locked. Skipping peer: %s", peer.name)
+            goto continue
+        end
+        
+        -- Set the database lock flag
+        inventoryUI.dbLocked = true
+        
+        -- Open the database in a protected call
+        local success, db = pcall(sqlite3.open, peer.filename)
+        if not success or not db then
+            mq.cmdf("/echo Error opening database for peer: %s (%s)", peer.name, db or "unknown error")
+            inventoryUI.dbLocked = false  -- Release the lock
+            goto continue
+        end
+        
+        -- Helper function to check if an item matches the search term
+        local function itemMatches(row)
+            -- Empty search shows everything
+            if searchTerm == "" then 
+                return true 
+            end
+            
+            -- Check item name
+            if row.name and row.name:lower():find(searchTerm) then
+                return true
+            end
+            
+            -- Check each augment slot
+            for i = 1, 6 do
+                local augField = "aug" .. i .. "Name"
+                if row[augField] and row[augField] ~= "" and row[augField]:lower():find(searchTerm) then
+                    return true
+                end
+            end
+            
+            return false
+        end
+  
+        -- Search equipped items
+        for row in db:nrows("SELECT * FROM gear_equiped") do
+            if itemMatches(row) then
+                row.peerName = peer.name
+                row.peerServer = peer.server
+                row.source = "Equipped"  -- Indicates the item is equipped
+                table.insert(results, row)
+            end
+        end
+  
+        -- Search bag items (inventory)
+        for row in db:nrows("SELECT * FROM gear_bags") do
+            if itemMatches(row) then
+                row.peerName = peer.name
+                row.peerServer = peer.server
+                row.source = "Inventory"  -- Indicates the item is in the inventory
+                table.insert(results, row)
+            end
+        end
+  
+        -- Search bank items
+        for row in db:nrows("SELECT * FROM gear_bank") do
+            if itemMatches(row) then
+                row.peerName = peer.name
+                row.peerServer = peer.server
+                row.source = "Bank"  -- Indicates the item is in the bank
+                table.insert(results, row)
+            end
+        end
+  
+        -- Close the database and release the lock
+        db:close()
+        inventoryUI.dbLocked = false
+  
+        ::continue::
+    end
+  
+    return results
 end
 
 local function getItemBySlot(slotid)
@@ -485,10 +508,26 @@ function inventoryUI.render()
         
             local searchTerm = searchText:lower()
             local itemName = (item.name or ""):lower()
-        
-            -- Return true if the lowercase name contains the lowercase search term
-            return itemName:find(searchTerm) ~= nil
-        end      
+            
+            -- Check item name first
+            if itemName:find(searchTerm) then
+                return true
+            end
+            
+            -- Then check all augment slots
+            for i = 1, 6 do
+                local augField = "aug" .. i .. "Name"
+                if item[augField] and item[augField] ~= "" then
+                    local augName = item[augField]:lower()
+                    if augName:find(searchTerm) then
+                        return true
+                    end
+                end
+            end
+            
+            -- No match found in item name or any augment
+            return false
+        end     
 
     ------------------------------
     -- Equipped Items Section
@@ -1164,15 +1203,41 @@ end
         if #results == 0 then
             ImGui.Text("No matching items found across all peers.")
         else
-            if ImGui.BeginTable("AllPeersTable", 6, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg) then
+            if ImGui.BeginTable("AllPeersTable", 7, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingFixedFit) then
                 -- Define columns
-                ImGui.TableSetupColumn("Peer")  -- Peer name
-                ImGui.TableSetupColumn("Source")  -- Source (Inventory, Bank, Equipped)
-                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 30)  -- Icon column
-                ImGui.TableSetupColumn("Item")  -- Item name
-                ImGui.TableSetupColumn("Quantity")  -- Quantity column
-                ImGui.TableSetupColumn("Request", ImGuiTableColumnFlags.WidthFixed, 80)  -- Request button column
+                ImGui.TableSetupColumn("Peer", ImGuiTableColumnFlags.WidthStretch, 80)
+                ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthStretch, 60)
+                ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthStretch, 80)
+                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 30)
+                ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 200)
+                ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 40)
+                ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 80)
                 ImGui.TableHeadersRow()
+    
+                -- Helper function to determine slot information
+                local function getSlotInfo(item)
+                    -- For augments, check if this is a match for an augment slot
+                    local searchTerm = (searchText or ""):lower()
+                    if searchTerm ~= "" then
+                        for i = 1, 6 do
+                            local augField = "aug" .. i .. "Name"
+                            if item[augField] and item[augField] ~= "" and item[augField]:lower():find(searchTerm) then
+                                return "Aug " .. i
+                            end
+                        end
+                    end
+                    
+                    -- Not an augment match, determine regular slot
+                    if item.source == "Equipped" then
+                        return getSlotNameFromID(item.slotid) or ("Slot " .. tostring(item.slotid))
+                    elseif item.source == "Inventory" then
+                        return "Bag " .. tostring(item.bagid) .. ", Slot " .. tostring(item.slotid)
+                    elseif item.source == "Bank" then
+                        return "Bank " .. tostring(item.slotid)
+                    else
+                        return tostring(item.slotid or "Unknown")
+                    end
+                end
     
                 -- Loop through results and apply the filter
                 for _, item in ipairs(results) do
@@ -1187,6 +1252,10 @@ end
                         -- Source column (Inventory, Bank, Equipped)
                         ImGui.TableNextColumn()
                         ImGui.Text(item.source)
+                        
+                        -- Slot information column
+                        ImGui.TableNextColumn()
+                        ImGui.Text(getSlotInfo(item))
     
                         -- Icon column
                         ImGui.TableNextColumn()
@@ -1211,7 +1280,7 @@ end
                         ImGui.TableNextColumn()
                         ImGui.Text(tostring(item.qty or ""))
     
-                        -- Request button column
+                        -- Action button column
                         ImGui.TableNextColumn()
                         if item.peerName == mq.TLO.Me.Name() then
                             -- Pickup logic for your own database (ignore nodrop flag)
@@ -1236,7 +1305,7 @@ end
                 end
                 ImGui.EndTable()
             end
-          end
+        end
         ImGui.EndTabItem()
     end
     ImGui.EndTabBar()
