@@ -27,13 +27,24 @@ local inventoryUI = {
     selectedSlotName = nil,
     compareResults = {},
     enableHover = false,
+    needsRefresh = false,
+    bagsView = "table",
 }
 
 local EQ_ICON_OFFSET = 500
 local ICON_WIDTH = 20
 local ICON_HEIGHT = 20
 local animItems = mq.FindTextureAnimation("A_DragItem")
+local animBox   = mq.FindTextureAnimation("A_RecessedBox") -- Used for optional background
 local server = mq.TLO.MacroQuest.Server()
+local CBB_ICON_WIDTH       = 40
+local CBB_ICON_HEIGHT      = 40
+local CBB_COUNT_X_OFFSET   = 39 -- Offset for stack count text (X)
+local CBB_COUNT_Y_OFFSET   = 23 -- Offset for stack count text (Y)
+local CBB_BAG_ITEM_SIZE    = 40 -- Size of each item cell for layout calculation
+local CBB_MAX_SLOTS_PER_BAG = 10 -- Assumption for bag size if not otherwise known
+local show_item_background_cbb = true -- Toggle for the cbb style background
+
 
 function drawItemIcon(iconID, width, height)
     width = width or ICON_WIDTH
@@ -44,6 +55,261 @@ function drawItemIcon(iconID, width, height)
   else
     ImGui.Text("N/A")
   end
+end
+
+local function draw_empty_slot_cbb(cell_id)
+    local cursor_x, cursor_y = ImGui.GetCursorPos()
+    if show_item_background_cbb and animBox then
+        ImGui.DrawTextureAnimation(animBox, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
+    end
+    ImGui.SetCursorPos(cursor_x, cursor_y)
+    ImGui.PushStyleColor(ImGuiCol.Button,       0, 0, 0, 0)
+    ImGui.PushStyleColor(ImGuiCol.ButtonHovered,0, 0.3, 0, 0.2) -- Subtle hover for drop target
+    ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0, 0.3, 0, 0.3)
+    ImGui.Button("##empty_" .. cell_id, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
+    ImGui.PopStyleColor(3)
+
+    -- Check if left mouse button is clicked on this slot AND an item is on the cursor
+    if mq.TLO.Cursor.ID() and ImGui.IsItemClicked(ImGuiMouseButton.Left) then
+        local cursorItemTLO = mq.TLO.Cursor -- Get cursor info *before* sending command
+
+        local pack_number, slotIndex = cell_id:match("bag_(%d+)_slot_(%d+)")
+
+        if pack_number and slotIndex then
+            pack_number = tonumber(pack_number)
+            slotIndex = tonumber(slotIndex) -- This should already be 1-based
+
+            mq.cmdf("/echo [DEBUG] Drop Attempt: pack_number=%s, slotIndex=%s", tostring(pack_number), tostring(slotIndex))
+
+            if pack_number >= 1 and pack_number <= 12 and slotIndex >= 1 then
+                if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
+                    mq.cmdf("/itemnotify in pack%d %d leftmouseup", pack_number, slotIndex)
+
+                    -- *** ADDED: Optimistic UI Update for Drop ***
+                    -- Create a representation of the dropped item
+                    local newItem = {
+                        name = cursorItemTLO.Name(),
+                        id = cursorItemTLO.ID(), -- Map to database 'id' field if applicable
+                        icon = cursorItemTLO.Icon(),
+                        qty = cursorItemTLO.StackCount(),
+                        bagid = pack_number, -- The bag (pack) number
+                        slotid = slotIndex, -- The slot number within the bag
+                        nodrop = cursorItemTLO.NoDrop() and 1 or 0,
+                        -- Other fields like itemlink, augs will be missing/nil
+                        -- as they aren't easily available from Cursor TLO
+                    }
+
+                    -- Ensure the bag exists in the local data
+                    if not inventoryUI.inventoryData.bags[pack_number] then
+                        inventoryUI.inventoryData.bags[pack_number] = {}
+                    end
+
+                    -- Add the new item to the local data table
+                    -- Important: Check if an item *already* exists visually at this slot
+                    -- due to potential race conditions or stale data. If so, replace it.
+                    local replaced = false
+                    local bagItems = inventoryUI.inventoryData.bags[pack_number]
+                    for i = #bagItems, 1, -1 do
+                        if tonumber(bagItems[i].slotid) == slotIndex then
+                            mq.cmdf("/echo [DEBUG] Optimistically replacing existing item in UI data: Bag %d, Slot %d", pack_number, slotIndex)
+                            bagItems[i] = newItem -- Replace existing entry
+                            replaced = true
+                            break
+                        end
+                    end
+                    -- If not replaced, just add it
+                    if not replaced then
+                         mq.cmdf("/echo [DEBUG] Optimistically adding new item to UI data: Bag %d, Slot %d", pack_number, slotIndex)
+                         table.insert(inventoryUI.inventoryData.bags[pack_number], newItem)
+                    end
+                    -- *** END ADDED CODE ***
+
+                else
+                    mq.cmd("/echo Cannot directly place items in another character's bag.")
+                end
+            else
+                mq.cmdf("/echo [ERROR] Invalid pack/slot ID derived from cell_id: %s (pack_number=%s, slotIndex=%s)", cell_id, tostring(pack_number), tostring(slotIndex))
+            end
+        else
+             mq.cmd("/echo [ERROR] Could not parse pack/slot ID from cell_id: " .. cell_id)
+        end
+    end
+end
+
+local function draw_live_item_icon_cbb(item_tlo, cell_id)
+    local cursor_x, cursor_y = ImGui.GetCursorPos()
+
+    -- Draw background if enabled
+    if show_item_background_cbb and animBox then
+        ImGui.DrawTextureAnimation(animBox, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
+    end
+
+    -- Draw the item's icon using TLO method
+    if item_tlo.Icon() and item_tlo.Icon() > 0 and animItems then
+        ImGui.SetCursorPos(cursor_x, cursor_y)
+        animItems:SetTextureCell(item_tlo.Icon() - EQ_ICON_OFFSET)
+        ImGui.DrawTextureAnimation(animItems, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
+    end
+
+    -- Draw stack count using TLO method
+    local stackCount = item_tlo.Stack() or 1
+    if stackCount > 1 then
+        ImGui.SetWindowFontScale(0.68)
+        local stackStr = tostring(stackCount)
+        local textSize = ImGui.CalcTextSize(stackStr)
+        local text_x = cursor_x + CBB_COUNT_X_OFFSET - textSize -- Right align
+        local text_y = cursor_y + CBB_COUNT_Y_OFFSET
+        ImGui.SetCursorPos(text_x, text_y)
+        ImGui.TextUnformatted(stackStr)
+        ImGui.SetWindowFontScale(1.0)
+    end
+
+    -- Transparent button for interaction
+    ImGui.SetCursorPos(cursor_x, cursor_y)
+    ImGui.PushStyleColor(ImGuiCol.Button,       0, 0, 0, 0)
+    ImGui.PushStyleColor(ImGuiCol.ButtonHovered,0, 0.3, 0, 0.2)
+    ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0, 0.3, 0, 0.3)
+    ImGui.Button("##live_item_" .. cell_id, CBB_ICON_WIDTH, CBB_ICON_HEIGHT) -- Unique prefix for live items
+    ImGui.PopStyleColor(3)
+
+    -- Tooltip using TLO method
+    if ImGui.IsItemHovered() then
+        ImGui.BeginTooltip()
+        ImGui.Text(item_tlo.Name() or "Unknown Item")
+        ImGui.Text("Qty: " .. tostring(stackCount))
+        -- Note: Augment info isn't directly available on the base item TLO easily
+        ImGui.EndTooltip()
+    end
+
+    -- Left-click: Pick up the item using TLO slot info
+    if ImGui.IsItemClicked(ImGuiMouseButton.Left) then
+        local mainSlot = item_tlo.ItemSlot() -- e.g., 23-34 for bags
+        local subSlot = item_tlo.ItemSlot2() -- Slot inside container (0-based), or -1
+
+        mq.cmdf("/echo [DEBUG] Live Pickup Click: mainSlot=%s, subSlot=%s", tostring(mainSlot), tostring(subSlot))
+
+        if mainSlot >= 23 and mainSlot <= 34 then -- It's in a bag slot
+            local pack_number = mainSlot - 22 -- Convert 23-34 to 1-12
+            if subSlot == -1 then
+                -- This case shouldn't happen for items *in* bags, but maybe if the bag itself is clicked?
+                -- For safety, let's use the item name like the old table view pickup
+                 mq.cmdf('/shift /itemnotify "%s" leftmouseup', item_tlo.Name())
+                 mq.cmd('/echo [WARN] Pickup fallback: Used item name for item not in subslot.')
+            else
+                -- Item is inside a container bag
+                local command_slotid = subSlot + 1 -- Convert 0-based TLO subslot to 1-based command slot
+                -- *** ADD /shift here ***
+                mq.cmdf("/shift /itemnotify in pack%d %d leftmouseup", pack_number, command_slotid)
+            end
+        else
+            -- Item is not in a main bag slot (e.g., equipped, bank?) - pickup might not work this way
+            mq.cmd("/echo [ERROR] Cannot perform standard bag pickup for item in slot " .. tostring(mainSlot))
+        end
+    end
+
+    -- Right-click: Use item (TLO Name is reliable here)
+    if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
+        mq.cmdf('/useitem "%s"', item_tlo.Name())
+    end
+end
+
+local function draw_item_icon_cbb(item, cell_id)
+    local cursor_x, cursor_y = ImGui.GetCursorPos()
+
+    if show_item_background_cbb and animBox then
+        ImGui.DrawTextureAnimation(animBox, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
+    end
+
+    -- Draw the item's icon (using the existing animItems)
+    if item.icon and item.icon > 0 and animItems then
+        ImGui.SetCursorPos(cursor_x, cursor_y)
+        animItems:SetTextureCell(item.icon - EQ_ICON_OFFSET)
+        ImGui.DrawTextureAnimation(animItems, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
+    else
+         -- Draw placeholder if no icon? Or leave blank? Let's leave blank for now.
+    end
+
+    -- Draw stack count (using item.qty from database)
+    local stackCount = tonumber(item.qty) or 1
+    if stackCount > 1 then
+        ImGui.SetWindowFontScale(0.68)
+        local stackStr = tostring(stackCount)
+        local textSize = ImGui.CalcTextSize(stackStr)
+        local text_x = cursor_x + CBB_COUNT_X_OFFSET - textSize -- Right align
+        local text_y = cursor_y + CBB_COUNT_Y_OFFSET
+        ImGui.SetCursorPos(text_x, text_y)
+        ImGui.TextUnformatted(stackStr)
+        ImGui.SetWindowFontScale(1.0)
+    end
+
+    -- Transparent button for interaction
+    ImGui.SetCursorPos(cursor_x, cursor_y)
+    ImGui.PushStyleColor(ImGuiCol.Button,       0, 0, 0, 0)
+    ImGui.PushStyleColor(ImGuiCol.ButtonHovered,0, 0.3, 0, 0.2)
+    ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0, 0.3, 0, 0.3)
+    ImGui.Button("##item_" .. cell_id, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
+    ImGui.PopStyleColor(3)
+
+    -- Tooltip (Keep existing tooltip logic)
+    if ImGui.IsItemHovered() then
+        ImGui.BeginTooltip()
+        ImGui.Text(item.name or "Unknown Item")
+        ImGui.Text("Qty: " .. tostring(stackCount))
+        for i = 1, 6 do
+            local augField = "aug" .. i .. "Name"
+            if item[augField] and item[augField] ~= "" then
+                ImGui.Text(string.format("Aug %d: %s", i, item[augField]))
+            end
+        end
+        ImGui.EndTooltip()
+    end
+
+    -- Left-click: Pick up the item
+    if ImGui.IsItemClicked(ImGuiMouseButton.Left) then
+        local bagid_raw = item.bagid
+        local slotid_raw = item.slotid
+        mq.cmdf("/echo [DEBUG] Clicked '%s': DB bagid=%s, DB slotid=%s", item.name, tostring(bagid_raw), tostring(slotid_raw))
+
+        local pack_number = tonumber(bagid_raw)
+        local command_slotid = tonumber(slotid_raw) -- Using 1-based directly from DB
+
+        if not pack_number or not command_slotid then
+             mq.cmdf("/echo [ERROR] Missing or non-numeric bagid/slotid in database item: %s (bagid_raw=%s, slotid_raw=%s)", item.name, tostring(bagid_raw), tostring(slotid_raw))
+        else
+            mq.cmdf("/echo [DEBUG] Interpreted: pack_number=%s, command_slotid=%s", tostring(pack_number), tostring(command_slotid))
+
+            if pack_number >= 1 and pack_number <= 12 and command_slotid >= 1 then
+                 if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
+                    mq.cmdf("/itemnotify in pack%d %d leftmouseup", pack_number, command_slotid)
+
+                    -- *** ADDED: Optimistic UI Update ***
+                    -- Find and remove the item from the local data table for immediate visual feedback
+                    if inventoryUI.inventoryData.bags[pack_number] then
+                        local bagItems = inventoryUI.inventoryData.bags[pack_number]
+                        for i = #bagItems, 1, -1 do -- Iterate backwards when removing
+                            if tonumber(bagItems[i].slotid) == command_slotid then
+                                mq.cmdf("/echo [DEBUG] Optimistically removing item from UI data: Bag %d, Slot %d", pack_number, command_slotid)
+                                table.remove(bagItems, i)
+                                -- Assuming only one item per slot, we can break
+                                break
+                            end
+                        end
+                    end
+                    -- *** END ADDED CODE ***
+
+                 else
+                    mq.cmd("/echo Cannot directly pick up items from another character's bag.")
+                 end
+            else
+                 mq.cmdf("/echo [ERROR] Invalid pack/slot ID check failed for item: %s (pack_number=%s, command_slotid=%s)", item.name, tostring(pack_number), tostring(command_slotid))
+            end
+        end
+    end
+
+    -- Right-click: Could still add "Request" logic here if needed
+    -- if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
+    --    -- ... request logic ...
+    -- end
 end
 
 --------------------------------------------------
@@ -77,36 +343,87 @@ local function scanForPeerDatabases()
 end
 
 --------------------------------------------------
+--- Function: Check Database Lock Status
+--------------------------------------------------
+function refreshInventoryData()
+    if inventoryUI.dbLocked then
+        mq.cmdf("/echo Database is locked. Please wait...")
+        return
+    end
+
+    -- Lock the database to prevent concurrent access
+    inventoryUI.dbLocked = true
+
+    -- Rescan for peer databases
+    scanForPeerDatabases()
+
+    -- Reload inventory data for the selected peer
+    for _, peer in ipairs(inventoryUI.peers) do
+        if peer.name == inventoryUI.selectedPeer then
+            loadInventoryData(peer.filename)
+            break
+        end
+    end
+
+    -- Unlock the database
+    inventoryUI.dbLocked = false
+
+    -- Update the UI to reflect the new data
+    mq.cmdf("/echo Inventory data refreshed.")
+end
+
+local function withDatabaseLock(func)
+    if inventoryUI.dbLocked then
+        mq.cmdf("/echo Database is locked. Please wait...")
+        return
+    end
+
+    -- Lock the database
+    inventoryUI.dbLocked = true
+
+    -- Execute the function safely
+    local success, err = pcall(func)
+    if not success then
+        mq.cmdf("/echo Error during database operation: %s", err)
+    end
+
+    -- Unlock the database
+    inventoryUI.dbLocked = false
+end
+
+--------------------------------------------------
 -- Helper: Load inventory data from the selected DB.
 --------------------------------------------------
-local function loadInventoryData(peerFile)
-  inventoryUI.inventoryData = { equipped = {}, bags = {}, bank = {} }
-  local db = sqlite3.open(peerFile)
-  if not db then
-      mq.cmdf("/echo Error opening inventory database: %s", peerFile)
-      return
-  end
+function loadInventoryData(peerFile)
+    withDatabaseLock(function()
+        inventoryUI.inventoryData = { equipped = {}, bags = {}, bank = {} }
+        local db = sqlite3.open(peerFile)
+        if not db then
+            mq.cmdf("/echo Error opening inventory database: %s", peerFile)
+            return
+        end
 
-  -- Equipped gear
-  for row in db:nrows("SELECT * FROM gear_equiped") do
-      table.insert(inventoryUI.inventoryData.equipped, row)
-  end
+        -- Equipped gear
+        for row in db:nrows("SELECT * FROM gear_equiped") do
+            table.insert(inventoryUI.inventoryData.equipped, row)
+        end
 
-  -- Bag items – group by bagid
-  for row in db:nrows("SELECT * FROM gear_bags") do
-      local bagid = row.bagid
-      if not inventoryUI.inventoryData.bags[bagid] then
-          inventoryUI.inventoryData.bags[bagid] = {}
-      end
-      table.insert(inventoryUI.inventoryData.bags[bagid], row)
-  end
+        -- Bag items – group by bagid
+        for row in db:nrows("SELECT * FROM gear_bags") do
+            local bagid = row.bagid
+            if not inventoryUI.inventoryData.bags[bagid] then
+                inventoryUI.inventoryData.bags[bagid] = {}
+            end
+            table.insert(inventoryUI.inventoryData.bags[bagid], row)
+        end
 
-  -- Bank items
-  for row in db:nrows("SELECT * FROM gear_bank") do
-      table.insert(inventoryUI.inventoryData.bank, row)
-  end
+        -- Bank items
+        for row in db:nrows("SELECT * FROM gear_bank") do
+            table.insert(inventoryUI.inventoryData.bank, row)
+        end
 
-  db:close()
+        db:close()
+    end)
 end
 
 --------------------------------------------------
@@ -344,86 +661,77 @@ function searchAcrossPeers()
     local results = {}
     local searchTerm = (searchText or ""):lower()
 
-    -- Ensure we have the latest list of peers
-    scanForPeerDatabases()
+    withDatabaseLock(function()
+        -- Ensure we have the latest list of peers
+        scanForPeerDatabases()
 
-    for _, peer in ipairs(inventoryUI.peers) do
-        -- Skip if the database is already locked
-        if inventoryUI.dbLocked then
-            mq.cmdf("/echo Database is locked. Skipping peer: %s", peer.name)
-            goto continue
-        end
-
-        -- Set the database lock flag
-        inventoryUI.dbLocked = true
-
-        -- Open the database in a protected call
-        local success, db = pcall(sqlite3.open, peer.filename)
-        if not success or not db then
-            mq.cmdf("/echo Error opening database for peer: %s (%s)", peer.name, db or "unknown error")
-            inventoryUI.dbLocked = false  -- Release the lock
-            goto continue
-        end
-
-        -- Helper function to check if an item matches the search term
-        local function itemMatches(row)
-            -- Empty search shows everything
-            if searchTerm == "" then
-                return true
+        for _, peer in ipairs(inventoryUI.peers) do
+            -- Open the database in a protected call
+            local success, db = pcall(sqlite3.open, peer.filename)
+            if not success or not db then
+                mq.cmdf("/echo Error opening database for peer: %s (%s)", peer.name, db or "unknown error")
+                goto continue
             end
 
-            -- Check item name
-            if row.name and row.name:lower():find(searchTerm) then
-                return true
-            end
-
-            -- Check each augment slot
-            for i = 1, 6 do
-                local augField = "aug" .. i .. "Name"
-                if row[augField] and row[augField] ~= "" and row[augField]:lower():find(searchTerm) then
+            -- Helper function to check if an item matches the search term
+            local function itemMatches(row)
+                -- Empty search shows everything
+                if searchTerm == "" then
                     return true
+                end
+
+                -- Check item name
+                if row.name and row.name:lower():find(searchTerm) then
+                    return true
+                end
+
+                -- Check each augment slot
+                for i = 1, 6 do
+                    local augField = "aug" .. i .. "Name"
+                    if row[augField] and row[augField] ~= "" and row[augField]:lower():find(searchTerm) then
+                        return true
+                    end
+                end
+
+                return false
+            end
+
+            -- Search equipped items
+            for row in db:nrows("SELECT * FROM gear_equiped") do
+                if itemMatches(row) then
+                    row.peerName = peer.name
+                    row.peerServer = peer.server
+                    row.source = "Equipped"
+                    table.insert(results, row)
                 end
             end
 
-            return false
-        end
-
-        -- Search equipped items
-        for row in db:nrows("SELECT * FROM gear_equiped") do
-            if itemMatches(row) then
-                row.peerName = peer.name
-                row.peerServer = peer.server
-                row.source = "Equipped"  -- Indicates the item is equipped
-                table.insert(results, row)
+            -- Search bag items (inventory)
+            for row in db:nrows("SELECT * FROM gear_bags") do
+                if itemMatches(row) then
+                    row.peerName = peer.name
+                    row.peerServer = peer.server
+                    row.source = "Inventory"
+                    table.insert(results, row)
+                end
             end
-        end
 
-        -- Search bag items (inventory)
-        for row in db:nrows("SELECT * FROM gear_bags") do
-            if itemMatches(row) then
-                row.peerName = peer.name
-                row.peerServer = peer.server
-                row.source = "Inventory"  -- Indicates the item is in the inventory
-                table.insert(results, row)
+            -- Search bank items
+            for row in db:nrows("SELECT * FROM gear_bank") do
+                if itemMatches(row) then
+                    row.peerName = peer.name
+                    row.peerServer = peer.server
+                    row.source = "Bank"
+                    table.insert(results, row)
+                end
             end
+
+            -- Close the database
+            db:close()
+
+            ::continue::
         end
-
-        -- Search bank items
-        for row in db:nrows("SELECT * FROM gear_bank") do
-            if itemMatches(row) then
-                row.peerName = peer.name
-                row.peerServer = peer.server
-                row.source = "Bank"  -- Indicates the item is in the bank
-                table.insert(results, row)
-            end
-        end
-
-        -- Close the database and release the lock
-        db:close()
-        inventoryUI.dbLocked = false
-
-        ::continue::
-    end
+    end)
 
     return results
 end
@@ -462,11 +770,15 @@ function inventoryUI.render()
     end
     ImGui.SameLine()
     if ImGui.Button("Sync") then
-      if inventoryUI.dbLocked then
-          mq.cmdf("/popcustom 5 Database is locked. Please wait...")
-      else
-          mq.cmdf("/e3bcaa /e3inventoryfile_sync")
-      end
+        if inventoryUI.dbLocked then
+            mq.cmdf("/popcustom 5 Database is locked. Please wait...")
+        else
+            -- Trigger the sync command
+            mq.cmdf("/e3bcaa /e3inventoryfile_sync")
+    
+            -- Set the sync flag
+            inventoryUI.needsSync = true
+        end
     end
 
         -- Add the lock button (padlock icon)
@@ -614,50 +926,58 @@ function inventoryUI.render()
 
                             ImGui.TableHeadersRow()
 
-                            -- Loop through equipped items and populate the table
-                            for _, item in ipairs(inventoryUI.inventoryData.equipped) do
-                                if matchesSearch(item) then
-                                    ImGui.TableNextRow()
-
-                                    -- Column 1: Item Icon
-                                    ImGui.TableNextColumn()
-                                    if item.icon and item.icon ~= 0 then
-                                        drawItemIcon(item.icon)
+                            local function renderEquippedTableRow(item, augVisibility)
+                                -- Column 1: Item Icon
+                                ImGui.TableNextColumn()
+                                if item.icon and item.icon ~= 0 then
+                                    drawItemIcon(item.icon)
+                                else
+                                    ImGui.Text("N/A")
+                                end
+                            
+                                -- Column 2: Item Name (Clickable)
+                                ImGui.TableNextColumn()
+                                if ImGui.Selectable(item.name) then
+                                    local links = mq.ExtractLinks(item.itemlink)
+                                    if links and #links > 0 then
+                                        mq.ExecuteTextLink(links[1])
                                     else
-                                        ImGui.Text("N/A")
+                                        mq.cmd('/echo No item link found in the database.')
                                     end
-
-                                    -- Column 2: Item Name (Clickable)
-                                    ImGui.TableNextColumn()
-                                    if ImGui.Selectable(item.name) then
-                                        local links = mq.ExtractLinks(item.itemlink)
-                                        if links and #links > 0 then
-                                            mq.ExecuteTextLink(links[1])
-                                        else
-                                            mq.cmd('/echo No item link found in the database.')
-                                        end
-                                    end
-
-                                    -- Add columns for visible augs only
-                                    for i = 1, 6 do
-                                        if augVisibility[i] then
-                                            ImGui.TableNextColumn()
-                                            local augField = "aug" .. i .. "Name"
-                                            local augLinkField = "aug" .. i .. "link"
-                                            if item[augField] and item[augField] ~= "" then
-                                                if ImGui.Selectable(string.format("%s", item[augField])) then
-                                                    local links = mq.ExtractLinks(item[augLinkField])
-                                                    if links and #links > 0 then
-                                                        mq.ExecuteTextLink(links[1])
-                                                    else
-                                                        mq.cmd('/echo No aug link found in the database.')
-                                                    end
+                                end
+                            
+                                -- Add columns for visible augs only
+                                for i = 1, 6 do
+                                    if augVisibility[i] then
+                                        ImGui.TableNextColumn()
+                                        local augField = "aug" .. i .. "Name"
+                                        local augLinkField = "aug" .. i .. "link"
+                                        if item[augField] and item[augField] ~= "" then
+                                            if ImGui.Selectable(string.format("%s", item[augField])) then
+                                                local links = mq.ExtractLinks(item[augLinkField])
+                                                if links and #links > 0 then
+                                                    mq.ExecuteTextLink(links[1])
+                                                else
+                                                    mq.cmd('/echo No aug link found in the database.')
                                                 end
                                             end
                                         end
                                     end
                                 end
                             end
+                            
+                            for _, item in ipairs(inventoryUI.inventoryData.equipped) do
+                                if matchesSearch(item) then
+                                    ImGui.TableNextRow()
+                                    ImGui.PushID(item.name or "unknown_item")
+                                    local ok, err = pcall(renderEquippedTableRow, item, augVisibility)
+                                    ImGui.PopID()
+                                    if not ok then
+                                        mq.cmdf("/echo Error rendering item row: %s", err)
+                                    end
+                                end
+                            end
+                                                     
 
                             ImGui.EndTable()
                         end
@@ -683,7 +1003,7 @@ function inventoryUI.render()
                             -- Add armor type filter dropdown
                             local armorTypes = { "All", "Plate", "Chain", "Cloth", "Leather" }
                             inventoryUI.armorTypeFilter = inventoryUI.armorTypeFilter or "All"  -- Default filter
-
+                            
                             ImGui.SameLine()  -- Place the dropdown combo on the same line as the checkbox and spacer
                             ImGui.Text("Armor Type:")
                             ImGui.SameLine()
@@ -691,7 +1011,7 @@ function inventoryUI.render()
                             if ImGui.BeginCombo("##ArmorTypeFilter", inventoryUI.armorTypeFilter) then
                                 for _, armorType in ipairs(armorTypes) do
                                     if ImGui.Selectable(armorType, inventoryUI.armorTypeFilter == armorType) then
-                                        inventoryUI.armorTypeFilter = armorType  -- Update the filter
+                                        inventoryUI.armorTypeFilter = armorType
                                     end
                                 end
                                 ImGui.EndCombo()
@@ -734,136 +1054,87 @@ function inventoryUI.render()
                             ImGui.SetColumnWidth(0, 300)
 
                             -- Column 1: Equipped Table (unchanged)
-                            if ImGui.BeginTable("EquippedTable", 4, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
-                                -- Set column widths to fit the content
-                                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
-                                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
-                                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
-                                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
-                                ImGui.TableHeadersRow()
-
-                                -- Loop through the slot layout
-                                for rowIndex, row in ipairs(slotLayout) do
-                                    ImGui.TableNextRow(ImGuiTableRowFlags.None, 40)
-
-                                    -- Loop through the columns in the current row
-                                    for colIndex, slotID in ipairs(row) do
-                                        ImGui.TableNextColumn()
-
-                                        -- Skip empty slots
-                                        if slotID == "" then
-                                            ImGui.Text("")
-                                            goto continue_slot
-                                        end
-
-                                        -- Generate a unique identifier for this slot
+                            local ok, err = pcall(function()
+                                if ImGui.BeginTable("EquippedTable", 4, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+                                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
+                                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
+                                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
+                                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ICON_WIDTH)
+                                    ImGui.TableHeadersRow()
+                            
+                                    local function renderEquippedSlot(slotID, item, slotName)
                                         local slotButtonID = "slot_" .. tostring(slotID)
-                                        local slotName = getSlotNameFromID(slotID)
-
-                                        -- Display the item in the current slot (if it exists)
-                                        if equippedItems[slotID] then
-                                            local item = equippedItems[slotID]
-                                            if item.icon and item.icon ~= 0 then
-                                                ImGui.PushID(slotButtonID)  -- Ensure a unique ID for each slot
-
-                                                -- Create an invisible button for the slot
-                                                local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 40, 40)
-
-                                                -- Calculate the position where the invisible button was placed
-                                                local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
-
-                                                -- Draw the icon at the same position as the invisible button
-                                                ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
-                                                drawItemIcon(item.icon, 40, 40)
-
-                                                -- Handle clicking on the item
-                                                if clicked then
-                                                    -- First close any open item window
-                                                    if mq.TLO.Window("ItemDisplayWindow").Open() then
-                                                        mq.TLO.Window("ItemDisplayWindow").DoClose()
-                                                        inventoryUI.openItemWindow = nil
-                                                    end
-
-                                                    -- Then update selection for comparison
-                                                    inventoryUI.selectedSlotID = slotID
-                                                    inventoryUI.selectedSlotName = slotName
-                                                    inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
-                                                end
-
-                                                -- Handle hovering on the item
-                                                if ImGui.IsItemHovered() then
-                                                    hoveringAnyItem = inventoryUI.enableHover  -- Only consider hovering if hover is enabled
-                                                    local hoverKey = "slot_" .. slotID
-
-                                                    -- Only show item window if none is currently open AND hover is enabled
-                                                    if inventoryUI.enableHover and not inventoryUI.openItemWindow then
-                                                        local links = mq.ExtractLinks(item.itemlink)
-                                                        if links and #links > 0 then
-                                                            mq.ExecuteTextLink(links[1])
-                                                            inventoryUI.openItemWindow = hoverKey
-                                                        end
-                                                    end
-
-                                                    -- Always show tooltips regardless of hover setting
-                                                    ImGui.BeginTooltip()
-                                                    ImGui.Text(item.name)
-
-                                                    -- Display augments if any
-                                                    for a = 1, 6 do
-                                                        local augField = "aug" .. a .. "Name"
-                                                        if item[augField] and item[augField] ~= "" then
-                                                            ImGui.Text(string.format("Aug %d: %s", a, item[augField]))
-                                                        end
-                                                    end
-
-                                                    ImGui.EndTooltip()
-
-                                                    -- Mark this item as being hovered only if hover is enabled
-                                                    if inventoryUI.enableHover then
-                                                        inventoryUI.hoverStates[hoverKey] = true
-                                                    end
-                                                end
-
-                                                ImGui.PopID()
-                                            else
-                                                -- Empty slot with text label
-                                                ImGui.Text(slotName)
-                                                if ImGui.IsItemClicked() then
-                                                    -- First close any open item window
-                                                    if mq.TLO.Window("ItemDisplayWindow").Open() then
-                                                        mq.TLO.Window("ItemDisplayWindow").DoClose()
-                                                        inventoryUI.openItemWindow = nil
-                                                    end
-
-                                                    -- Then update selection
-                                                    inventoryUI.selectedSlotID = slotID
-                                                    inventoryUI.selectedSlotName = slotName
-                                                    inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
-                                                end
-                                            end
-                                        else
-                                            -- Empty slot with text label
-                                            ImGui.Text(slotName)
-                                            if ImGui.IsItemClicked() then
-                                                -- First close any open item window
+                                        if item and item.icon and item.icon ~= 0 then
+                                            local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 40, 40)
+                                            local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
+                                            ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
+                                            drawItemIcon(item.icon, 40, 40)
+                                    
+                                            if clicked then
                                                 if mq.TLO.Window("ItemDisplayWindow").Open() then
                                                     mq.TLO.Window("ItemDisplayWindow").DoClose()
                                                     inventoryUI.openItemWindow = nil
                                                 end
-
-                                                -- Then update selection
+                                                inventoryUI.selectedSlotID = slotID
+                                                inventoryUI.selectedSlotName = slotName
+                                                inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
+                                            end
+                                    
+                                            if ImGui.IsItemHovered() then
+                                                if inventoryUI.enableHover and not inventoryUI.openItemWindow then
+                                                    local links = mq.ExtractLinks(item.itemlink)
+                                                    if links and #links > 0 then
+                                                        mq.ExecuteTextLink(links[1])
+                                                        inventoryUI.openItemWindow = "slot_" .. slotID
+                                                    end
+                                                end
+                                                ImGui.BeginTooltip()
+                                                ImGui.Text(item.name)
+                                                for a = 1, 6 do
+                                                    local augField = "aug" .. a .. "Name"
+                                                    if item[augField] and item[augField] ~= "" then
+                                                        ImGui.Text(string.format("Aug %d: %s", a, item[augField]))
+                                                    end
+                                                end
+                                                ImGui.EndTooltip()
+                                            end
+                                        else
+                                            ImGui.Text(slotName)
+                                            if ImGui.IsItemClicked() then
+                                                if mq.TLO.Window("ItemDisplayWindow").Open() then
+                                                    mq.TLO.Window("ItemDisplayWindow").DoClose()
+                                                    inventoryUI.openItemWindow = nil
+                                                end
                                                 inventoryUI.selectedSlotID = slotID
                                                 inventoryUI.selectedSlotName = slotName
                                                 inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
                                             end
                                         end
-
-                                        ::continue_slot::
                                     end
+                                    
+                                    for rowIndex, row in ipairs(slotLayout) do
+                                        ImGui.TableNextRow(ImGuiTableRowFlags.None, 40)
+                                        for colIndex, slotID in ipairs(row) do
+                                            ImGui.TableNextColumn()
+                                            if slotID ~= "" then
+                                                local slotButtonID = "slot_" .. tostring(slotID)
+                                                local slotName = getSlotNameFromID(slotID)
+                                                local item = equippedItems[slotID]
+                                    
+                                                ImGui.PushID(slotButtonID)
+                                                local success, err = pcall(renderEquippedSlot, slotID, item, slotName)
+                                                ImGui.PopID()
+                                                if not success then
+                                                    mq.cmdf("/echo Error drawing slot %s: %s", tostring(slotID), err)
+                                                end
+                                            else
+                                                ImGui.Text("")
+                                            end
+                                        end
+                                    end                                    
+                                    ImGui.EndTable()
                                 end
-
-                                ImGui.EndTable()
-                            end
+                            end)                            
 
                             -- Column 2: Comparison Table
                             ImGui.NextColumn()
@@ -887,6 +1158,7 @@ function inventoryUI.render()
                                         local hoveringAnyCompare = false
 
                                         for idx, result in ipairs(inventoryUI.compareResults) do
+                                            ImGui.PushID(result.peerName .. "_" .. idx)
                                             -- Filter by armor type
                                             local peerClass = mq.TLO.Spawn("pc = " .. result.peerName).Class.ShortName()
                                             local armorType = getArmorTypeByClass(peerClass)
@@ -963,6 +1235,8 @@ function inventoryUI.render()
                                                     ImGui.Text("(empty)")
                                                 end
                                             end
+                                            ImGui.PopID()
+                                        
                                         end
 
                                         ImGui.EndTable()
@@ -997,152 +1271,250 @@ function inventoryUI.render()
         ------------------------------
         local BAG_ICON_SIZE = 32  -- Smaller icons for tables
 
-        -- Inside the Bags tab section
         if ImGui.BeginTabItem("Bags") then
-            -- Clear the matchingBags table at the start of each render
-            matchingBags = {}
-
-            -- First pass: Identify bags with matching items
-            for bagid, bagItems in pairs(inventoryUI.inventoryData.bags) do
-                for _, item in ipairs(bagItems) do
-                    if matchesSearch(item) then
-                        matchingBags[bagid] = true  -- Mark this bag as containing a matching item
-                        break  -- No need to check further items in this bag
-                    end
-                end
-            end
-
-            -- Initialize state tracking variables if they don't exist
-            inventoryUI.globalExpandAll = inventoryUI.globalExpandAll or false
-            inventoryUI.bagOpen = inventoryUI.bagOpen or {}
-            inventoryUI.previousSearchText = inventoryUI.previousSearchText or ""
-
-            -- Check if search text has changed
-            local searchChanged = searchText ~= inventoryUI.previousSearchText
-            inventoryUI.previousSearchText = searchText
-
-            -- Render the global checkbox with proper label based on current state
-            local checkboxLabel = inventoryUI.globalExpandAll and "Collapse All Bags" or "Expand All Bags"
-            local newGlobalState = ImGui.Checkbox(checkboxLabel, inventoryUI.globalExpandAll)
-
-            -- Track global toggle changes
-            if newGlobalState ~= inventoryUI.globalExpandAll then
-                -- Global toggle changed: update all bag states accordingly
-                inventoryUI.globalExpandAll = newGlobalState
-
-                -- Set all bags to match the global state
-                for bagid, _ in pairs(inventoryUI.inventoryData.bags) do
-                    inventoryUI.bagOpen[bagid] = newGlobalState
-                end
-            end
-
-            -- Build a sorted list of bag columns
-            local bagColumns = {}
-            for bagid, bagItems in pairs(inventoryUI.inventoryData.bags) do
-                local bagItem = bagItems[1]  -- Use the first item in the bag to get bag info
-                table.insert(bagColumns, { bagid = bagid, items = bagItems, bagItem = bagItem })
-            end
-            table.sort(bagColumns, function(a, b) return a.bagid < b.bagid end)
-
-            -- Render each bag header
-            for _, bag in ipairs(bagColumns) do
-                local bagid = bag.bagid
-                local bagName = bag.items[1] and bag.items[1].bagname or ("Bag " .. tostring(bagid))
-                bagName = string.format("%s (%d)", bagName, bagid)
-
-                -- Check if the bag contains a matching item
-                local hasMatchingItem = matchingBags[bagid] or false
-
-                -- When search text changes and we have a match, force open the bag
-                if searchChanged and hasMatchingItem and searchText ~= "" then
-                    inventoryUI.bagOpen[bagid] = true
-                end
-
-                -- Set the next item's open state based on our stored state
-                if inventoryUI.bagOpen[bagid] ~= nil then
-                    ImGui.SetNextItemOpen(inventoryUI.bagOpen[bagid])
-                end
-
-                -- Draw the collapsing header and update our stored state
-                local isOpen = ImGui.CollapsingHeader(bagName)
-                inventoryUI.bagOpen[bagid] = isOpen  -- store current state
-
-                if isOpen then
-                    if ImGui.BeginTable("BagTable_" .. bagid, 5, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg) then
-                        -- Define columns
-                        ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 32)  -- Icon column
-                        ImGui.TableSetupColumn("Item Name", ImGuiTableColumnFlags.WidthStretch)  -- Item name column
-                        ImGui.TableSetupColumn("Quantity", ImGuiTableColumnFlags.WidthFixed, 80)  -- Quantity column
-                        ImGui.TableSetupColumn("Slot #", ImGuiTableColumnFlags.WidthFixed, 60)  -- Slot # column
-                        ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 80)  -- Request/Pickup button column
-                        ImGui.TableHeadersRow()
-
-                        for i, item in ipairs(bag.items) do
+            -- View toggle
+            if ImGui.BeginTabBar("BagsViewTabs") then
+                if ImGui.BeginTabItem("Table View") then
+                    inventoryUI.bagsView = "table"
+                    -- Existing table view code (unchanged)
+                    matchingBags = {}
+                    for bagid, bagItems in pairs(inventoryUI.inventoryData.bags) do
+                        for _, item in ipairs(bagItems) do
                             if matchesSearch(item) then
-                                ImGui.TableNextRow()
-
-                                -- Column 1: Icon
-                                ImGui.TableNextColumn()
-                                if item.icon and item.icon > 0 then
-                                    drawItemIcon(item.icon)
-                                else
-                                    ImGui.Text("N/A")
-                                end
-
-                                -- Column 2: Item Name with selectable behavior and tooltip
-                                ImGui.TableNextColumn()
-                                if ImGui.Selectable(item.name) then
-                                    local links = mq.ExtractLinks(item.itemlink)
-                                    if links and #links > 0 then
-                                        mq.ExecuteTextLink(links[1])
-                                    else
-                                        mq.cmd('/echo No item link found in the database.')
-                                    end
-                                end
-                                if ImGui.IsItemHovered() then
-                                    ImGui.BeginTooltip()
-                                    ImGui.Text(item.name)
-                                    ImGui.Text("Qty: " .. tostring(item.qty))
-                                    ImGui.EndTooltip()
-                                end
-
-                                -- Column 3: Quantity
-                                ImGui.TableNextColumn()
-                                ImGui.Text(tostring(item.qty or ""))
-
-                                -- Column 4: Slot #
-                                ImGui.TableNextColumn()
-                                ImGui.Text(tostring(item.slotid or ""))
-
-                                -- Column 5: Request/Pickup button
-                                ImGui.TableNextColumn()
-                                if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
-                                    -- Pickup logic for your own database (ignore nodrop flag)
-                                    if ImGui.Button("Pickup##" .. bagid .. "_" .. i) then
-                                        mq.cmdf('/shift /itemnotify "%s" leftmouseup', item.name)
-                                    end
-                                else
-                                    -- Request logic for other peers (respect nodrop flag)
-                                    if item.nodrop == 0 then  -- Check if the item is droppable
-                                        if ImGui.Button("Request##" .. bagid .. "_" .. i) then
-                                            itemRequest = {
-                                                toon = inventoryUI.selectedPeer,
-                                                name = item.name,
-                                            }
-                                            inventoryUI.pendingRequest = true  -- Flag that a request is pending
+                                matchingBags[bagid] = true
+                                break
+                            end
+                        end
+                    end
+                    inventoryUI.globalExpandAll = inventoryUI.globalExpandAll or false
+                    inventoryUI.bagOpen = inventoryUI.bagOpen or {}
+                    local searchChanged = searchText ~= (inventoryUI.previousSearchText or "")
+                    inventoryUI.previousSearchText = searchText
+                    local checkboxLabel = inventoryUI.globalExpandAll and "Collapse All Bags" or "Expand All Bags"
+                    if ImGui.Checkbox(checkboxLabel, inventoryUI.globalExpandAll) ~= inventoryUI.globalExpandAll then
+                        inventoryUI.globalExpandAll = not inventoryUI.globalExpandAll
+                        for bagid, _ in pairs(inventoryUI.inventoryData.bags) do
+                            inventoryUI.bagOpen[bagid] = inventoryUI.globalExpandAll
+                        end
+                    end
+                    local bagColumns = {}
+                    for bagid, bagItems in pairs(inventoryUI.inventoryData.bags) do
+                        table.insert(bagColumns, { bagid = bagid, items = bagItems })
+                    end
+                    table.sort(bagColumns, function(a, b) return a.bagid < b.bagid end)
+                    for _, bag in ipairs(bagColumns) do
+                        local bagid = bag.bagid
+                        local bagName = bag.items[1] and bag.items[1].bagname or ("Bag " .. tostring(bagid))
+                        bagName = string.format("%s (%d)", bagName, bagid)
+                        local hasMatchingItem = matchingBags[bagid] or false
+                        if searchChanged and hasMatchingItem and searchText ~= "" then
+                            inventoryUI.bagOpen[bagid] = true
+                        end
+                        if inventoryUI.bagOpen[bagid] ~= nil then
+                            ImGui.SetNextItemOpen(inventoryUI.bagOpen[bagid])
+                        end
+                        local isOpen = ImGui.CollapsingHeader(bagName)
+                        inventoryUI.bagOpen[bagid] = isOpen
+                        if isOpen then
+                            if ImGui.BeginTable("BagTable_" .. bagid, 5, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg) then
+                                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 32)
+                                ImGui.TableSetupColumn("Item Name", ImGuiTableColumnFlags.WidthStretch)
+                                ImGui.TableSetupColumn("Quantity", ImGuiTableColumnFlags.WidthFixed, 80)
+                                ImGui.TableSetupColumn("Slot #", ImGuiTableColumnFlags.WidthFixed, 60)
+                                ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 80)
+                                ImGui.TableHeadersRow()
+                                for i, item in ipairs(bag.items) do
+                                    if matchesSearch(item) then
+                                        ImGui.TableNextRow()
+                                        ImGui.TableNextColumn()
+                                        if item.icon and item.icon > 0 then
+                                            drawItemIcon(item.icon)
+                                        else
+                                            ImGui.Text("N/A")
                                         end
-                                    else
-                                        ImGui.Text("No Drop")  -- Display "No Drop" for non-droppable items
+                                        ImGui.TableNextColumn()
+                                        if ImGui.Selectable(item.name) then
+                                            local links = mq.ExtractLinks(item.itemlink)
+                                            if links and #links > 0 then
+                                                mq.ExecuteTextLink(links[1])
+                                            else
+                                                mq.cmd('/echo No item link found in the database.')
+                                            end
+                                        end
+                                        if ImGui.IsItemHovered() then
+                                            ImGui.BeginTooltip()
+                                            ImGui.Text(item.name)
+                                            ImGui.Text("Qty: " .. tostring(item.qty))
+                                            ImGui.EndTooltip()
+                                        end
+                                        ImGui.TableNextColumn()
+                                        ImGui.Text(tostring(item.qty or ""))
+                                        ImGui.TableNextColumn()
+                                        ImGui.Text(tostring(item.slotid or ""))
+                                        ImGui.TableNextColumn()
+                                        if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
+                                            if ImGui.Button("Pickup##" .. bagid .. "_" .. i) then
+                                                mq.cmdf('/shift /itemnotify "%s" leftmouseup', item.name)
+                                            end
+                                        else
+                                            if item.nodrop == 0 then
+                                                if ImGui.Button("Request##" .. bagid .. "_" .. i) then
+                                                    itemRequest = { toon = inventoryUI.selectedPeer, name = item.name }
+                                                    inventoryUI.pendingRequest = true
+                                                end
+                                            else
+                                                ImGui.Text("No Drop")
+                                            end
+                                        end
                                     end
                                 end
+                                ImGui.EndTable()
+                            end
+                        end
+                    end
+                    ImGui.EndTabItem()
+                end
+        
+                if ImGui.BeginTabItem("Visual Layout") then
+                    inventoryUI.bagsView = "visual"
+
+                    -- Add toggle for CBB background style
+                    show_item_background_cbb = ImGui.Checkbox("Show Item Background", show_item_background_cbb)
+                    ImGui.Separator()
+
+                    -- Calculate columns based on available width
+                    local content_width = ImGui.GetWindowContentRegionWidth()
+                    local bag_cols = math.max(1, math.floor(content_width / CBB_BAG_ITEM_SIZE))
+
+                    -- Use tighter item spacing like cbb.lua
+                    ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ImVec2(3, 3))
+
+                    -- Check if we are viewing the current character
+                    if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
+                        -- *** LIVE VIEW for Current Character ***
+                        --mq.cmdf("/echo [DEBUG] Rendering LIVE view for %s", inventoryUI.selectedPeer) -- Debug message
+
+                        local current_col = 1
+                        -- Loop over main bag inventory slots 23..34
+                        for mainSlotIndex = 23, 34 do
+                            local slot_tlo = mq.TLO.Me.Inventory(mainSlotIndex)
+                            local pack_number = mainSlotIndex - 22 -- Pack number (1-12)
+
+                            if slot_tlo.Container() and slot_tlo.Container() > 0 then
+                                -- It's a container (bag)
+                                ImGui.TextUnformatted(string.format("%s (Pack %d)", slot_tlo.Name(), pack_number)) -- Display bag name
+                                ImGui.Separator()
+
+                                -- Loop through slots inside the container
+                                for insideIndex = 1, slot_tlo.Container() do
+                                    local item_tlo = slot_tlo.Item(insideIndex)
+                                    -- Generate cell_id using pack_number and 1-based insideIndex
+                                    local cell_id = string.format("bag_%d_slot_%d", pack_number, insideIndex)
+
+                                    -- Check if item exists and matches filter (using TLO Name)
+                                    local show_this_item = item_tlo.ID() and (not searchText or searchText == "" or string.match(string.lower(item_tlo.Name()), string.lower(searchText)))
+
+                                    ImGui.PushID(cell_id) -- Push ID for the cell
+                                    if show_this_item then
+                                        draw_live_item_icon_cbb(item_tlo, cell_id) -- Use the LIVE drawing function
+                                    else
+                                        -- Draw empty slot if no item OR item is filtered out
+                                        draw_empty_slot_cbb(cell_id) -- Existing empty slot function is fine
+                                    end
+                                    ImGui.PopID() -- Pop ID for the cell
+
+                                    -- Handle grid layout
+                                    if current_col < bag_cols then
+                                        current_col = current_col + 1
+                                        ImGui.SameLine()
+                                    else
+                                        current_col = 1
+                                    end
+                                end
+                                -- Add a newline after each bag's grid
+                                ImGui.NewLine()
+                                ImGui.Separator() -- Separator between bags
+                                current_col = 1 -- Reset column count for the next bag/row
+
+                            else
+                                -- It's a single slot (maybe a bag itself, or an item directly in 23-34)
+                                -- We generally don't draw these in a combined bag view, but you could add logic here if needed.
+                                -- For now, we'll skip drawing items directly in slots 23-34 unless they are containers.
                             end
                         end
 
-                        ImGui.EndTable()
-                    end
-                end
-            end
+                    else
+                        -- *** CACHED VIEW for Other Characters ***
+                        --mq.cmdf("/echo [DEBUG] Rendering CACHED view for %s", inventoryUI.selectedPeer) -- Debug message
 
+                        -- Pre-process bag data from database cache
+                        local bagsMap = {}
+                        local bagNames = {}
+                        local bagOrder = {}
+                        for bagid, bagItems in pairs(inventoryUI.inventoryData.bags) do
+                            if not bagsMap[bagid] then
+                                bagsMap[bagid] = {}
+                                table.insert(bagOrder, bagid)
+                            end
+                            local currentBagName = "Bag " .. tostring(bagid)
+                            for _, item in ipairs(bagItems) do
+                                if item.slotid then
+                                    bagsMap[bagid][tonumber(item.slotid)] = item
+                                    if item.bagname and item.bagname ~= "" then
+                                        currentBagName = item.bagname
+                                    end
+                                end
+                            end
+                            bagNames[bagid] = string.format("%s (%d)", currentBagName, bagid)
+                        end
+                        table.sort(bagOrder) -- Sort by pack number (which is the bagid here)
+
+                        -- Iterate through bags in sorted order (using cached data)
+                        for _, bagid in ipairs(bagOrder) do
+                            local bagMap = bagsMap[bagid]
+                            local bagName = bagNames[bagid]
+
+                            ImGui.TextUnformatted(bagName)
+                            ImGui.Separator()
+
+                            local current_col = 1
+                            -- Iterate through potential slots (assuming max size)
+                            for slotIndex = 1, CBB_MAX_SLOTS_PER_BAG do
+                                local item_db = bagMap[slotIndex] -- Look up item in this slot from DB cache
+                                -- Generate cell_id using bagid (pack number) and slotIndex
+                                local cell_id = string.format("bag_%d_slot_%d", bagid, slotIndex)
+
+                                -- Check if item exists and matches filter (using DB Name)
+                                local show_this_item = item_db and matchesSearch(item_db) -- Use existing matchesSearch helper
+
+                                ImGui.PushID(cell_id)
+                                if show_this_item then
+                                    -- Use the DB drawing function, passing the DB item table
+                                    draw_item_icon_cbb(item_db, cell_id)
+                                else
+                                    draw_empty_slot_cbb(cell_id)
+                                end
+                                ImGui.PopID()
+
+                                -- Handle grid layout
+                                if current_col < bag_cols then
+                                    current_col = current_col + 1
+                                    ImGui.SameLine()
+                                else
+                                    current_col = 1
+                                end
+                            end
+                            ImGui.NewLine()
+                            ImGui.Separator()
+                        end
+                    end -- End of if/else for live vs cached view
+
+                    ImGui.PopStyleVar() -- Pop ItemSpacing
+
+                ImGui.EndTabItem()
+            end
+                ImGui.EndTabBar()
+            end
             ImGui.EndTabItem()
         end
 
@@ -1297,6 +1669,8 @@ function inventoryUI.render()
                     if inventoryUI.sourceFilter == "All" or item.source == inventoryUI.sourceFilter then
                         ImGui.TableNextRow()
 
+                        ImGui.PushID(item.peerName .. "_" .. (item.name or "") .. "_" .. tostring(item.slotid or 0))
+
                         -- Peer name column
                         ImGui.TableNextColumn()
                         ImGui.Text(item.peerName)
@@ -1398,6 +1772,7 @@ function inventoryUI.render()
                                 ImGui.Text("No Drop")  -- Display "No Drop" for non-droppable items
                             end
                         end
+                        ImGui.PopID()  -- Pop the ID for the item
                     end
                 end
                 ImGui.EndTable()
@@ -1443,9 +1818,7 @@ end)
 
 -- Main function
 local function main()
-    -- Display help information at startup
     displayHelp()
-
     scanForPeerDatabases()
 
     -- Automatically load your inventory data
@@ -1459,9 +1832,22 @@ local function main()
     while true do
         mq.doevents()
 
+        -- Handle pending requests
         if inventoryUI.pendingRequest then
-            request()  -- Call the request function from the yieldable context
+            request()
             inventoryUI.pendingRequest = false
+        end
+
+        -- Handle sync requests
+        if inventoryUI.needsSync then
+            -- Add a delay to allow the sync operation to complete
+            mq.delay(2000)  -- 2-second delay
+
+            -- Refresh the inventory data
+            refreshInventoryData()
+
+            -- Clear the sync flag
+            inventoryUI.needsSync = false
         end
 
         mq.delay(100)  -- Shorter delay for more responsive UI
