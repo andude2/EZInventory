@@ -1384,10 +1384,16 @@ function inventoryUI.render()
 
                     -- Calculate columns based on available width
                     local content_width = ImGui.GetWindowContentRegionWidth()
-                    local bag_cols = math.max(1, math.floor(content_width / CBB_BAG_ITEM_SIZE))
+                    -- *** UPDATED Calculation to account for padding ***
+                    local horizontal_padding = 3 -- Must match the ImVec2 x value below
+                    local item_width_plus_padding = CBB_BAG_ITEM_SIZE + horizontal_padding
+                    -- Calculate how many full items + padding fit, adding back one padding unit
+                    -- because the last item doesn't have padding to its right affecting the fit.
+                    local bag_cols = math.max(1, math.floor((content_width + horizontal_padding) / item_width_plus_padding))
+                    -- *** END UPDATED Calculation ***
 
-                    -- Use tighter item spacing like cbb.lua
-                    ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ImVec2(3, 3))
+                    -- Add some padding between items
+                    ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ImVec2(horizontal_padding, 3)) -- Use the variable here too
 
                     -- Check if we are viewing the current character
                     if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
