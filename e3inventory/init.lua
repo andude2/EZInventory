@@ -85,8 +85,6 @@ local function draw_empty_slot_cbb(cell_id)
                 if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
                     mq.cmdf("/itemnotify in pack%d %d leftmouseup", pack_number, slotIndex)
 
-                    -- *** ADDED: Optimistic UI Update for Drop ***
-                    -- Create a representation of the dropped item
                     local newItem = {
                         name = cursorItemTLO.Name(),
                         id = cursorItemTLO.ID(), -- Map to database 'id' field if applicable
@@ -95,18 +93,13 @@ local function draw_empty_slot_cbb(cell_id)
                         bagid = pack_number, -- The bag (pack) number
                         slotid = slotIndex, -- The slot number within the bag
                         nodrop = cursorItemTLO.NoDrop() and 1 or 0,
-                        -- Other fields like itemlink, augs will be missing/nil
-                        -- as they aren't easily available from Cursor TLO
                     }
 
-                    -- Ensure the bag exists in the local data
+      
                     if not inventoryUI.inventoryData.bags[pack_number] then
                         inventoryUI.inventoryData.bags[pack_number] = {}
                     end
 
-                    -- Add the new item to the local data table
-                    -- Important: Check if an item *already* exists visually at this slot
-                    -- due to potential race conditions or stale data. If so, replace it.
                     local replaced = false
                     local bagItems = inventoryUI.inventoryData.bags[pack_number]
                     for i = #bagItems, 1, -1 do
@@ -191,23 +184,17 @@ local function draw_live_item_icon_cbb(item_tlo, cell_id)
         if mainSlot >= 23 and mainSlot <= 34 then -- It's in a bag slot
             local pack_number = mainSlot - 22 -- Convert 23-34 to 1-12
             if subSlot == -1 then
-                -- This case shouldn't happen for items *in* bags, but maybe if the bag itself is clicked?
-                -- For safety, let's use the item name like the old table view pickup
                  mq.cmdf('/shift /itemnotify "%s" leftmouseup', item_tlo.Name())
                  mq.cmd('/echo [WARN] Pickup fallback: Used item name for item not in subslot.')
             else
-                -- Item is inside a container bag
                 local command_slotid = subSlot + 1 -- Convert 0-based TLO subslot to 1-based command slot
-                -- *** ADD /shift here ***
                 mq.cmdf("/shift /itemnotify in pack%d %d leftmouseup", pack_number, command_slotid)
             end
         else
-            -- Item is not in a main bag slot (e.g., equipped, bank?) - pickup might not work this way
             mq.cmd("/echo [ERROR] Cannot perform standard bag pickup for item in slot " .. tostring(mainSlot))
         end
     end
 
-    -- Right-click: Use item (TLO Name is reliable here)
     if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
         mq.cmdf('/useitem "%s"', item_tlo.Name())
     end
@@ -226,7 +213,6 @@ local function draw_item_icon_cbb(item, cell_id)
         animItems:SetTextureCell(item.icon - EQ_ICON_OFFSET)
         ImGui.DrawTextureAnimation(animItems, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
     else
-         -- Draw placeholder if no icon? Or leave blank? Let's leave blank for now.
     end
 
     -- Draw stack count (using item.qty from database)
@@ -282,8 +268,6 @@ local function draw_item_icon_cbb(item, cell_id)
                  if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
                     mq.cmdf("/itemnotify in pack%d %d leftmouseup", pack_number, command_slotid)
 
-                    -- *** ADDED: Optimistic UI Update ***
-                    -- Find and remove the item from the local data table for immediate visual feedback
                     if inventoryUI.inventoryData.bags[pack_number] then
                         local bagItems = inventoryUI.inventoryData.bags[pack_number]
                         for i = #bagItems, 1, -1 do -- Iterate backwards when removing
@@ -305,11 +289,6 @@ local function draw_item_icon_cbb(item, cell_id)
             end
         end
     end
-
-    -- Right-click: Could still add "Request" logic here if needed
-    -- if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
-    --    -- ... request logic ...
-    -- end
 end
 
 --------------------------------------------------
@@ -477,7 +456,6 @@ function compareSlotAcrossPeers(slotID)
         -- Set the database lock flag
         inventoryUI.dbLocked = true
 
-        -- Open the database in a protected call
         local success, db = pcall(sqlite3.open, peer.filename)
         if not success or not db then
             mq.cmdf("/echo Error opening database for peer: %s (%s)", peer.name, db or "unknown error")
@@ -485,28 +463,24 @@ function compareSlotAcrossPeers(slotID)
             goto continue
         end
 
-        -- Query for the specific slot
         local item = nil
         for row in db:nrows(string.format("SELECT * FROM gear_equiped WHERE slotid = %d", slotID)) do
             item = row
-            break  -- We only need the first (and should be only) matching row
+            break  
         end
 
-        -- Add the result to our list
         table.insert(results, {
             peerName = peer.name,
             peerServer = peer.server,
-            item = item  -- Will be nil if no item is equipped in this slot
+            item = item  
         })
 
-        -- Close the database and release the lock
         db:close()
         inventoryUI.dbLocked = false
 
         ::continue::
     end
 
-    -- Sort results by peer name for consistent display
     table.sort(results, function(a, b) return a.peerName < b.peerName end)
 
     return results
@@ -1079,25 +1053,6 @@ function inventoryUI.render()
                                                 inventoryUI.selectedSlotName = slotName
                                                 inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
                                             end
-                                    
-                                            if ImGui.IsItemHovered() then
-                                                if inventoryUI.enableHover and not inventoryUI.openItemWindow then
-                                                    local links = mq.ExtractLinks(item.itemlink)
-                                                    if links and #links > 0 then
-                                                        mq.ExecuteTextLink(links[1])
-                                                        inventoryUI.openItemWindow = "slot_" .. slotID
-                                                    end
-                                                end
-                                                ImGui.BeginTooltip()
-                                                ImGui.Text(item.name)
-                                                for a = 1, 6 do
-                                                    local augField = "aug" .. a .. "Name"
-                                                    if item[augField] and item[augField] ~= "" then
-                                                        ImGui.Text(string.format("Aug %d: %s", a, item[augField]))
-                                                    end
-                                                end
-                                                ImGui.EndTooltip()
-                                            end
                                         else
                                             ImGui.Text(slotName)
                                             if ImGui.IsItemClicked() then
@@ -1378,56 +1333,44 @@ function inventoryUI.render()
                 if ImGui.BeginTabItem("Visual Layout") then
                     inventoryUI.bagsView = "visual"
 
-                    -- Add toggle for CBB background style
                     show_item_background_cbb = ImGui.Checkbox("Show Item Background", show_item_background_cbb)
                     ImGui.Separator()
 
-                    -- Calculate columns based on available width
                     local content_width = ImGui.GetWindowContentRegionWidth()
-                    -- *** UPDATED Calculation to account for padding ***
-                    local horizontal_padding = 3 -- Must match the ImVec2 x value below
-                    local item_width_plus_padding = CBB_BAG_ITEM_SIZE + horizontal_padding
-                    -- Calculate how many full items + padding fit, adding back one padding unit
-                    -- because the last item doesn't have padding to its right affecting the fit.
-                    local bag_cols = math.max(1, math.floor((content_width + horizontal_padding) / item_width_plus_padding))
-                    -- *** END UPDATED Calculation ***
 
-                    -- Add some padding between items
+                    local horizontal_padding = 3 
+                    local item_width_plus_padding = CBB_BAG_ITEM_SIZE + horizontal_padding
+                    local bag_cols = math.max(1, math.floor((content_width + horizontal_padding) / item_width_plus_padding))
+
                     ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ImVec2(horizontal_padding, 3)) -- Use the variable here too
 
-                    -- Check if we are viewing the current character
+    
                     if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
-                        -- *** LIVE VIEW for Current Character ***
-                        --mq.cmdf("/echo [DEBUG] Rendering LIVE view for %s", inventoryUI.selectedPeer) -- Debug message
-
+                       
                         local current_col = 1
-                        -- Loop over main bag inventory slots 23..34
+
                         for mainSlotIndex = 23, 34 do
                             local slot_tlo = mq.TLO.Me.Inventory(mainSlotIndex)
-                            local pack_number = mainSlotIndex - 22 -- Pack number (1-12)
+                            local pack_number = mainSlotIndex - 22 
 
                             if slot_tlo.Container() and slot_tlo.Container() > 0 then
-                                -- It's a container (bag)
+
                                 ImGui.TextUnformatted(string.format("%s (Pack %d)", slot_tlo.Name(), pack_number)) -- Display bag name
                                 ImGui.Separator()
 
-                                -- Loop through slots inside the container
+            
                                 for insideIndex = 1, slot_tlo.Container() do
                                     local item_tlo = slot_tlo.Item(insideIndex)
-                                    -- Generate cell_id using pack_number and 1-based insideIndex
                                     local cell_id = string.format("bag_%d_slot_%d", pack_number, insideIndex)
-
-                                    -- Check if item exists and matches filter (using TLO Name)
                                     local show_this_item = item_tlo.ID() and (not searchText or searchText == "" or string.match(string.lower(item_tlo.Name()), string.lower(searchText)))
 
-                                    ImGui.PushID(cell_id) -- Push ID for the cell
+                                    ImGui.PushID(cell_id) 
                                     if show_this_item then
-                                        draw_live_item_icon_cbb(item_tlo, cell_id) -- Use the LIVE drawing function
+                                        draw_live_item_icon_cbb(item_tlo, cell_id) 
                                     else
-                                        -- Draw empty slot if no item OR item is filtered out
-                                        draw_empty_slot_cbb(cell_id) -- Existing empty slot function is fine
+                                        draw_empty_slot_cbb(cell_id) 
                                     end
-                                    ImGui.PopID() -- Pop ID for the cell
+                                    ImGui.PopID() 
 
                                     -- Handle grid layout
                                     if current_col < bag_cols then
@@ -1437,23 +1380,17 @@ function inventoryUI.render()
                                         current_col = 1
                                     end
                                 end
-                                -- Add a newline after each bag's grid
                                 ImGui.NewLine()
-                                ImGui.Separator() -- Separator between bags
-                                current_col = 1 -- Reset column count for the next bag/row
+                                ImGui.Separator() 
+                                current_col = 1 
 
                             else
-                                -- It's a single slot (maybe a bag itself, or an item directly in 23-34)
-                                -- We generally don't draw these in a combined bag view, but you could add logic here if needed.
-                                -- For now, we'll skip drawing items directly in slots 23-34 unless they are containers.
+                                
                             end
                         end
 
                     else
-                        -- *** CACHED VIEW for Other Characters ***
-                        --mq.cmdf("/echo [DEBUG] Rendering CACHED view for %s", inventoryUI.selectedPeer) -- Debug message
 
-                        -- Pre-process bag data from database cache
                         local bagsMap = {}
                         local bagNames = {}
                         local bagOrder = {}
@@ -1473,9 +1410,8 @@ function inventoryUI.render()
                             end
                             bagNames[bagid] = string.format("%s (%d)", currentBagName, bagid)
                         end
-                        table.sort(bagOrder) -- Sort by pack number (which is the bagid here)
+                        table.sort(bagOrder) 
 
-                        -- Iterate through bags in sorted order (using cached data)
                         for _, bagid in ipairs(bagOrder) do
                             local bagMap = bagsMap[bagid]
                             local bagName = bagNames[bagid]
@@ -1484,25 +1420,23 @@ function inventoryUI.render()
                             ImGui.Separator()
 
                             local current_col = 1
-                            -- Iterate through potential slots (assuming max size)
+                           
                             for slotIndex = 1, CBB_MAX_SLOTS_PER_BAG do
-                                local item_db = bagMap[slotIndex] -- Look up item in this slot from DB cache
-                                -- Generate cell_id using bagid (pack number) and slotIndex
+                                local item_db = bagMap[slotIndex] 
+                                
                                 local cell_id = string.format("bag_%d_slot_%d", bagid, slotIndex)
 
-                                -- Check if item exists and matches filter (using DB Name)
-                                local show_this_item = item_db and matchesSearch(item_db) -- Use existing matchesSearch helper
+                                
+                                local show_this_item = item_db and matchesSearch(item_db) 
 
                                 ImGui.PushID(cell_id)
                                 if show_this_item then
-                                    -- Use the DB drawing function, passing the DB item table
                                     draw_item_icon_cbb(item_db, cell_id)
                                 else
                                     draw_empty_slot_cbb(cell_id)
                                 end
                                 ImGui.PopID()
 
-                                -- Handle grid layout
                                 if current_col < bag_cols then
                                     current_col = current_col + 1
                                     ImGui.SameLine()
@@ -1513,9 +1447,8 @@ function inventoryUI.render()
                             ImGui.NewLine()
                             ImGui.Separator()
                         end
-                    end -- End of if/else for live vs cached view
-
-                    ImGui.PopStyleVar() -- Pop ItemSpacing
+                    end 
+                    ImGui.PopStyleVar() 
 
                 ImGui.EndTabItem()
             end
@@ -1527,13 +1460,10 @@ function inventoryUI.render()
     ------------------------------
     -- Bank Items Section
     ------------------------------
-    -- Updated Bank section to show both bank slot ID and item slot ID with pickup action
     if ImGui.BeginTabItem("Bank") then
-        -- Check if the bank table is empty or doesn't exist
         if not inventoryUI.inventoryData.bank or #inventoryUI.inventoryData.bank == 0 then
             ImGui.Text("There's no loot here! Go visit a bank and re-sync!")
         else
-            -- Render the bank table with columns for both bankslotid and slotid
             if ImGui.BeginTable("BankTable", 5, bit.bor(ImGuiTableFlags.BordersInnerV, ImGuiTableFlags.RowBg)) then
                 ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
                 ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
@@ -1565,21 +1495,15 @@ function inventoryUI.render()
                         ImGui.TableSetColumnIndex(3)
                         ImGui.Text(tostring(item.slotid or "N/A"))      -- Display item slot ID
                         
-                        -- Action column with pickup button
                         ImGui.TableSetColumnIndex(4)
-                        -- Pickup logic for your own database (ignore nodrop flag)
                         if ImGui.Button("Pickup##bank_" .. i) then
-                            -- Get bank slot information
                             local dbBankSlotId = tonumber(item.bankslotid) or 0
                             local dbSlotId = tonumber(item.slotid) or -1
                             
-                            -- Handle bank items using the correct syntax
                             if dbBankSlotId >= 1 and dbBankSlotId <= 24 then
                                 if dbSlotId == -1 then
-                                    -- Direct bank slot
                                     mq.cmdf("/shift /itemnotify bank%d leftmouseup", dbBankSlotId)
                                 else
-                                    -- Item in a bag in bank slot
                                     mq.cmdf("/shift /itemnotify in bank%d %d leftmouseup", dbBankSlotId, dbSlotId)
                                 end
                             elseif dbBankSlotId >= 25 and dbBankSlotId <= 26 then
