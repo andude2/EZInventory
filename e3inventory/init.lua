@@ -304,21 +304,32 @@ end
 -- Helper: Scan the inventory folder for DB files.
 --------------------------------------------------
 local function scanForPeerDatabases()
-    inventoryUI.peers = {}  -- Clear list
-  local folder = getInventoryFolder()
+    inventoryUI.peers = {}  -- Clear peer list
+    inventoryUI.servers = {}  -- Map of server to peers
+    local folder = getInventoryFolder()
 
-  local localName = mq.TLO.Me.Name()
-  local localFile = folder .. string.format("Inventory_%s_%s.db", localName, server)
+    local localName = mq.TLO.Me.Name()
+    local localFile = folder .. string.format("Inventory_%s_%s.db", localName, server)
 
-  for file in lfs.dir(folder) do
-      if file:match("^Inventory_.*%.db$") then
-          -- Filename pattern: Inventory_{Peer}_{Server}.db
-          local peer, server = file:match("^Inventory_(.-)_(.-)%.db$")
-          if peer and server then
-              table.insert(inventoryUI.peers, { name = peer, server = server, filename = folder .. file })
-          end
-      end
-  end
+    for file in lfs.dir(folder) do
+        if file:match("^Inventory_.*%.db$") then
+            -- Filename pattern: Inventory_{Peer}_{Server}.db
+            local peer, peerServer = file:match("^Inventory_(.-)_(.-)%.db$")
+            if peer and peerServer then
+                local peerEntry = { name = peer, server = peerServer, filename = folder .. file }
+                table.insert(inventoryUI.peers, peerEntry)
+                -- Organize peers by server
+                if not inventoryUI.servers[peerServer] then
+                    inventoryUI.servers[peerServer] = {}
+                end
+                table.insert(inventoryUI.servers[peerServer], peerEntry)
+            end
+        end
+    end
+    -- Sort peers within each server for consistent display
+    for _, peers in pairs(inventoryUI.servers) do
+        table.sort(peers, function(a, b) return a.name < b.name end)
+    end
 end
 
 --------------------------------------------------
@@ -714,78 +725,113 @@ end
 -- Main render function.
 --------------------------------------------------
 function inventoryUI.render()
-  if not inventoryUI.visible then return end
-  scanForPeerDatabases()
+    if not inventoryUI.visible then return end
+    scanForPeerDatabases()
 
-  local windowFlags = ImGuiWindowFlags.None
-  if inventoryUI.windowLocked then
-      windowFlags = windowFlags + ImGuiWindowFlags.NoMove + ImGuiWindowFlags.NoResize
-  end
-
-  if ImGui.Begin("Inventory Window", nil, windowFlags) then
-
-    -- Peer selection dropdown
-    if ImGui.BeginCombo("Select Peer", inventoryUI.selectedPeer or "Select a Peer") then
-      for _, peer in ipairs(inventoryUI.peers) do
-          local isSelected = (inventoryUI.selectedPeer == peer.name)
-          if ImGui.Selectable(peer.name, isSelected) then
-              inventoryUI.selectedPeer = peer.name  -- Update the selected peer
-              loadInventoryData(peer.filename)      -- Load the peer's inventory data
-          end
-          if isSelected then
-              ImGui.SetItemDefaultFocus()  -- Highlight the selected peer
-          end
-      end
-      ImGui.EndCombo()
+    local windowFlags = ImGuiWindowFlags.None
+    if inventoryUI.windowLocked then
+        windowFlags = windowFlags + ImGuiWindowFlags.NoMove + ImGuiWindowFlags.NoResize
     end
-    ImGui.SameLine()
-    if ImGui.Button("Close") then
-      inventoryUI.visible = false  -- Hide the window when the Close button is clicked
-    end
-    ImGui.SameLine()
-    if ImGui.Button("Sync") then
-        if inventoryUI.dbLocked then
-            mq.cmdf("/popcustom 5 Database is locked. Please wait...")
-        else
-            -- Trigger the sync command
-            mq.cmdf("/e3bcaa /e3inventoryfile_sync")
-    
-            -- Set the sync flag
-            inventoryUI.needsSync = true
+
+    if ImGui.Begin("Inventory Window", nil, windowFlags) then
+        -- Server selection dropdown
+        inventoryUI.selectedServer = inventoryUI.selectedServer or server
+        ImGui.Text("Select Server:")
+        ImGui.SameLine()
+        ImGui.SetNextItemWidth(150)
+        if ImGui.BeginCombo("##ServerCombo", inventoryUI.selectedServer or "None") then
+            local serverList = {}
+            for srv, _ in pairs(inventoryUI.servers) do
+                table.insert(serverList, srv)
+            end
+            table.sort(serverList)
+            for i, srv in ipairs(serverList) do
+                ImGui.PushID(string.format("server_%s_%d", srv, i))
+                if ImGui.Selectable(srv, inventoryUI.selectedServer == srv) then
+                    inventoryUI.selectedServer = srv
+                    -- Reset selectedPeer if not valid for the new server
+                    local validPeer = false
+                    for _, peer in ipairs(inventoryUI.servers[srv] or {}) do
+                        if peer.name == inventoryUI.selectedPeer then
+                            validPeer = true
+                            break
+                        end
+                    end
+                    if not validPeer then
+                        inventoryUI.selectedPeer = nil
+                    end
+                end
+                if inventoryUI.selectedServer == srv then
+                    ImGui.SetItemDefaultFocus()
+                end
+                ImGui.PopID()
+            end
+            ImGui.EndCombo()
         end
-    end
+
+        -- Character selection dropdown
+        ImGui.SameLine()
+        ImGui.Text("Select Peer:")
+        ImGui.SameLine()
+        ImGui.SetNextItemWidth(350) -- Set character dropdown width to 350 pixels
+        local displayPeer = inventoryUI.selectedPeer or "None"
+        if inventoryUI.selectedServer and ImGui.BeginCombo("##PeerCombo", displayPeer) then
+            local peers = inventoryUI.servers[inventoryUI.selectedServer] or {}
+            for i, peer in ipairs(peers) do
+                ImGui.PushID(string.format("peer_%s_%s_%d", peer.name, peer.server, i))
+                if ImGui.Selectable(peer.name, inventoryUI.selectedPeer == peer.name) then
+                    inventoryUI.selectedPeer = peer.name
+                    loadInventoryData(peer.filename)
+                end
+                if inventoryUI.selectedPeer == peer.name then
+                    ImGui.SetItemDefaultFocus()
+                end
+                ImGui.PopID()
+            end
+            ImGui.EndCombo()
+        end
+
+        ImGui.SameLine()
+        if ImGui.Button("Close") then
+            inventoryUI.visible = false
+        end
+        ImGui.SameLine()
+        if ImGui.Button("Sync") then
+            if inventoryUI.dbLocked then
+                mq.cmdf("/popcustom 5 Database is locked. Please wait...")
+            else
+                mq.cmdf("/e3bcaa /e3inventoryfile_sync")
+                inventoryUI.needsSync = true
+            end
+        end
 
         -- Add the lock button (padlock icon)
-        -- Calculate position for the lock button at the far right
-    local cursorPosX = ImGui.GetCursorPosX()
-    local textWidth = ImGui.CalcTextSize(icons.FA_UNLOCK)
-    local windowWidth = ImGui.GetWindowWidth()
-    local lockButtonPosX = windowWidth - textWidth - 40 -- 40 pixels from right edge
+        local cursorPosX = ImGui.GetCursorPosX()
+        local textWidth = ImGui.CalcTextSize(icons.FA_UNLOCK)
+        local windowWidth = ImGui.GetWindowWidth()
+        local lockButtonPosX = windowWidth - textWidth - 40
+        ImGui.SameLine(lockButtonPosX)
+        if inventoryUI.windowLocked then
+            if ImGui.Button(icons.FA_LOCK) then
+                inventoryUI.windowLocked = false
+            end
+            if ImGui.IsItemHovered() then
+                ImGui.SetTooltip("Unlock window position and size")
+            end
+        else
+            if ImGui.Button(icons.FA_UNLOCK) then
+                inventoryUI.windowLocked = true
+            end
+            if ImGui.IsItemHovered() then
+                ImGui.SetTooltip("Lock window position and size")
+            end
+        end
 
-    ImGui.SameLine(lockButtonPosX)
-    if inventoryUI.windowLocked then
-        -- Locked state - show closed padlock
-        if ImGui.Button(icons.FA_LOCK) then
-            inventoryUI.windowLocked = false
-        end
-        if ImGui.IsItemHovered() then
-            ImGui.SetTooltip("Unlock window position and size")
-        end
-    else
-        -- Unlocked state - show open padlock
-        if ImGui.Button(icons.FA_UNLOCK) then
-            inventoryUI.windowLocked = true
-        end
-        if ImGui.IsItemHovered() then
-            ImGui.SetTooltip("Lock window position and size")
-        end
-    end
-
-        -- Add a search bar
+        -- [Remaining render function code unchanged]
         ImGui.Separator()
         ImGui.Text("Search Items:")
         ImGui.SameLine()
-        searchText = ImGui.InputText("##Search", searchText or "")  -- 100-character limit
+        searchText = ImGui.InputText("##Search", searchText or "")
         ImGui.SameLine()
         if ImGui.Button("Clear") then
             searchText = ""
