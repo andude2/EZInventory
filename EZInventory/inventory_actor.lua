@@ -1,8 +1,11 @@
 -- inventory_actor.lua
 local mq = require 'mq'
 local actors = require('actors')
+local json = require('dkjson')
 
 local M = {}
+
+M.pending_requests = {}
 
 -- Message types
 M.MSG_TYPE = {
@@ -16,6 +19,7 @@ M.peer_inventories = {}
 
 -- Initialize the mailbox
 local actor_mailbox = nil
+local command_mailbox = nil
 
 
 local function scan_augment_links(item)
@@ -186,28 +190,203 @@ function M.request_all_inventories()
     )
 end
 
--- Initialize the inventory actor
+function M.process_pending_requests()
+        if #M.pending_requests > 0 then
+        local request = table.remove(M.pending_requests, 1)  -- Get the first request
+       
+        mq.cmdf("/echo Processing request: Give %s to %s", request.name, request.toon)
+        
+        -- Find the target character (the recipient)
+        local spawn = mq.TLO.Spawn("pc =" .. request.toon)
+        if not spawn or not spawn() then
+            mq.cmdf("/popcustom 5 %s not found in the zone!", request.toon)
+            return
+        end
+        
+        -- Check if we need to navigate to the recipient
+        if spawn.Distance3D() > 15 then
+            mq.cmdf("/echo Recipient %s is too far away (%.2f). Navigating to them...", request.toon, spawn.Distance3D())
+            
+            -- Navigation - WE (the giver) need to navigate to the recipient
+            mq.cmdf("/nav id %s", spawn.ID())
+            
+            -- Wait until we reach the recipient (or timeout)
+            local startTime = os.time()
+            while spawn.Distance3D() > 15 and os.time() - startTime < 30 do
+                mq.doevents()
+                mq.delay(1000)
+                mq.cmdf("/echo Navigating to %s... Distance: %.2f", request.toon, spawn.Distance3D())
+            end
+            
+            -- Check if we made it in time
+            if spawn.Distance3D() > 15 then
+                mq.cmdf("/popcustom 5 Could not reach %s to give %s (distance: %.2f)", 
+                       request.toon, request.name, spawn.Distance3D())
+                return
+            else
+                mq.cmdf("/echo Successfully reached %s (distance: %.2f)", request.toon, spawn.Distance3D())
+            end
+        end
+        
+        -- Process bank item if needed
+        if request.fromBank then
+            mq.cmdf("/echo Processing bank request for %s from %s...", request.name, request.toon)
+            local BankSlotId = tonumber(request.bankslotid) or 0
+            local SlotId = tonumber(request.slotid) or -1
+            local bankCommand = ""
+            
+            if BankSlotId >= 1 and BankSlotId <= 24 then
+                if SlotId == -1 then
+                    bankCommand = string.format("bank%d leftmouseup", BankSlotId)
+                else
+                    bankCommand = string.format("in bank%d %d leftmouseup", BankSlotId, SlotId)
+                end
+            elseif BankSlotId >= 25 and BankSlotId <= 26 then
+                local sharedSlot = BankSlotId - 24
+                if SlotId == -1 then
+                    bankCommand = string.format("sharedbank%d leftmouseup", sharedSlot)
+                else
+                    bankCommand = string.format("in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
+                end
+            else
+                mq.cmdf("/popcustom 5 Invalid bank slot information for %s", request.name)
+                return
+            end
+            
+            mq.cmdf("/itemnotify %s", bankCommand)
+            mq.delay(1000)
+        else
+            -- Regular inventory item - pick it up
+            mq.cmdf('/shift /itemnotify "%s" leftmouseup', request.name)
+            mq.delay(500)
+        end
+        
+        -- Tell the recipient to auto-accept the trade
+        M.send_inventory_command(request.toon, "auto_accept_trade", {})
+        
+        -- Start the trade process with target
+        mq.cmdf("/mqtar pc %s", request.toon)
+        mq.delay(500)
+        mq.cmd("/click left target")
+        
+        while not mq.TLO.Window("TradeWnd").Open() and os.time() do
+            mq.delay(100)
+        end
+        
+        -- Check if trade window opened successfully
+        if not mq.TLO.Window("TradeWnd").Open() then
+            mq.cmdf("/popcustom 5 Trade window failed to open with %s", request.toon)
+            return
+        end
+        
+        -- Wait for a moment to ensure item appears in trade window
+        mq.delay(500)
+        
+        -- Click the Trade button to finalize the trade
+        mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
+        
+    end
+end
+
+-- Command dispatcher
+local function handle_command_message(message)
+    local content = message()
+    if not content or type(content) ~= 'table' then return end
+    if content.type ~= 'command' then return end
+
+    local command = content.command
+    local args = content.args or {}
+    local target = content.target
+
+    if target and target ~= mq.TLO.Me.CleanName() then
+        return -- Not for us
+    end
+
+    if command == "itemnotify" then
+        mq.cmdf('/itemnotify %s', table.concat(args, " "))
+    elseif command == "echo" then
+        print(('[EZInventory] %s'):format(table.concat(args, " ")))
+    elseif command == "pickup" then
+        local itemName = table.concat(args, " ")
+        mq.cmdf('/shift /itemnotify "%s" leftmouseup', itemName)
+    elseif command == "foreground" then
+        mq.cmd("/foreground")
+    elseif command == "proxy_give" then
+        local request = json.decode(args[1])
+        if request then
+            mq.cmdf("/echo [DEBUG] Received proxy_give command for: %s to %s", 
+                request.name, request.to)
+            
+            -- Add to our internal queue instead of using inventoryUI
+            table.insert(M.pending_requests, {
+                name = request.name,
+                toon = request.to,
+                fromBank = request.fromBank,
+                bagid = request.bagid,
+                slotid = request.slotid,
+                bankslotid = request.bankslotid,
+            })
+            
+            mq.cmd("/echo [DEBUG] Added request to pending queue")
+        else
+            mq.cmd("/echo [ERROR] Failed to decode proxy_give request")
+        end
+    else
+        print(string.format("[EZInventory] Unknown command: %s", tostring(command)))
+    end
+end
+
+-- Send a command to a specific peer
+function M.send_inventory_command(peer, command, args)
+    if not command_mailbox then return end
+    command_mailbox:send(
+        {character = peer},
+        {type = 'command', command = command, args = args or {}, target = peer}
+    )
+end
+
+-- Broadcast a command to all
+function M.broadcast_inventory_command(command, args)
+    for peerID, _ in pairs(M.peer_inventories) do
+        local name = peerID:match("_(.+)$")
+        if name and name ~= mq.TLO.Me.CleanName() then
+            M.send_inventory_command(name, command, args)
+        end
+    end
+end
+
 function M.init()
     print("[Inventory Actor] Initializing...")
-    
-    -- Check if we're already initialized
-    if actor_mailbox then
+
+    if actor_mailbox and command_mailbox then
         print("[Inventory Actor] Already initialized")
         return true
     end
-    
-    -- Try to register the mailbox
-    local success, result = pcall(function()
+
+    -- Register inventory exchange actor
+    local ok1, mailbox1 = pcall(function()
         return actors.register('inventory_exchange', message_handler)
     end)
-    
-    if not success or not result then
-        print(string.format('[Inventory Actor] Failed to register mailbox: %s', tostring(result)))
+
+    if not ok1 or not mailbox1 then
+        print(string.format('[Inventory Actor] Failed to register inventory_exchange: %s', tostring(mailbox1)))
         return false
     end
-    
-    actor_mailbox = result
-    print("[Inventory Actor] Mailbox registered successfully")
+    actor_mailbox = mailbox1
+    print("[Inventory Actor] inventory_exchange registered")
+
+    -- Register inventory command actor
+    local ok2, mailbox2 = pcall(function()
+        return actors.register('inventory_command', handle_command_message)
+    end)
+
+    if not ok2 or not mailbox2 then
+        print(string.format('[Inventory Actor] Failed to register inventory_command: %s', tostring(mailbox2)))
+        return false
+    end
+    command_mailbox = mailbox2
+    print("[Inventory Actor] inventory_command registered")
+
     return true
 end
 

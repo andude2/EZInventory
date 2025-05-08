@@ -1,11 +1,12 @@
 -- ezinventory.lua
--- developed in by psatty82
+-- developed by psatty82
 local mq = require("mq")
 local ImGui = require("ImGui")
 local icons = require("mq.icons")
 local inventory_actor = require('inventory_actor')
 local peerCache = {}
 local lastCacheTime = 0
+local json = require("dkjson")
 
 ---@tag InventoryUI
 local inventoryUI = {
@@ -31,6 +32,7 @@ local inventoryUI = {
     bagsView = "table",
     PUBLISH_INTERVAL = 30,
     lastPublishTime = 0,
+    contextMenu = { visible = false, item = nil, source = nil, x = 0, y = 0, peers = {}, selectedPeer = nil, },
 }
 
 local EQ_ICON_OFFSET = 500
@@ -434,131 +436,6 @@ function compareSlotAcrossPeers(slotID)
     return results
 end
 
-
---------------------------------------------------
--- Function: Enhanced Trade Request with Bank Support
---------------------------------------------------
-local function request()
-    if not itemRequest then
-        mq.cmdf("/popcustom 5 'itemRequest' not defined!")
-        return
-    end
-  
-    local spawn = mq.TLO.Spawn("pc =" .. itemRequest.toon)
-    if not spawn or not spawn() then
-        mq.cmdf("/popcustom 5 %s not found in the zone!", itemRequest.toon)
-        itemRequest = nil  -- Clear the request
-        return
-    end
-  
-    -- Check if this is a bank item request
-    if itemRequest.fromBank then
-        
-        mq.cmdf("/echo Processing bank request for %s from %s...", itemRequest.name, itemRequest.toon)
-        
-        -- Find nearest banker NPC
-        mq.cmdf('/bct %s //target banker', itemRequest.toon)
-        mq.delay(500)
-        
-        -- Try alternate search for banker
-        mq.cmdf('/bct %s //target npc banker', itemRequest.toon)
-        mq.delay(500)
-        
-        -- Check if banker is found and check distance to banker
-        mq.cmdf('/bct %s //if (${Target.Type.Equal[NPC]} && ${Target.Distance} > 100) /echo BANKER_DISTANCE_${Target.Distance}', itemRequest.toon)
-        mq.delay(500)
-        
-        -- Start navigation to banker, but tell the character to stop when within 100 units
-        mq.cmdf('/bct %s //nav id ${Target.ID} distance=100', itemRequest.toon)
-        mq.cmdf("/echo Directing %s to navigate close to banker but stop at 100 units...", itemRequest.toon)
-        
-        -- Wait a reasonable amount of time for navigation (15 seconds)
-        mq.delay(3000)
-        
-        -- Cancel navigation to ensure the character doesn't continue approaching
-        mq.cmdf('/bct %s //nav stop', itemRequest.toon)
-        mq.delay(500)
-        
-        -- Now handle the bank item request
-        local BankSlotId = tonumber(itemRequest.bankslotid) or 0
-        local SlotId = tonumber(itemRequest.slotid) or -1
-        
-        -- Construct the proper bank command
-        local bankCommand = ""
-        
-        if BankSlotId >= 1 and BankSlotId <= 24 then
-            if SlotId == -1 then
-                -- Direct bank slot
-                bankCommand = string.format("/shift /itemnotify bank%d leftmouseup", BankSlotId)
-            else
-                -- Item in a bag in bank slot
-                bankCommand = string.format("/shift /itemnotify in bank%d %d leftmouseup", BankSlotId, SlotId)
-            end
-        elseif BankSlotId >= 25 and BankSlotId <= 26 then
-            local sharedSlot = BankSlotId - 24  -- Convert to 1-2
-            if SlotId == -1 then
-                -- Direct shared bank slot
-                bankCommand = string.format("/shift /itemnotify sharedbank%d leftmouseup", sharedSlot)
-            else
-                -- Item in a shared bank bag
-                bankCommand = string.format("/shift /itemnotify in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
-            end
-        else
-            mq.cmdf("/popcustom 5 Invalid bank slot information for %s", itemRequest.name)
-            itemRequest = nil
-            return
-        end
-        
-        -- Execute the bank command and wait for item to be on cursor
-        mq.cmdf('/bct %s %s', itemRequest.toon, bankCommand)
-        mq.delay(1000)
-    end
-  
-    -- Continue with regular inventory item request or bank item that's now on cursor
-    -- Check if the spawn is within range (15 units)
-    if spawn.Distance3D() > 15 then
-        -- If too far, tell the target toon to navigate to the requesting toon
-        mq.cmdf('/bct %s //nav id %s', itemRequest.toon, mq.TLO.Me.ID())
-        mq.cmdf("/echo Telling %s to navigate to me (ID: %s)", itemRequest.toon, mq.TLO.Me.ID())
-  
-        -- Wait for the target toon to arrive (up to 30 seconds)
-        local startTime = os.time()
-        while spawn.Distance3D() > 15 and os.time() - startTime < 30 do
-            mq.doevents()
-            mq.delay(1000)  -- Wait 1 second between checks
-            mq.cmdf("/echo Waiting for %s to arrive... Distance: %s", itemRequest.toon, spawn.Distance3D())
-        end
-  
-        -- If the target toon didn't arrive in time, notify and exit
-        if spawn.Distance3D() > 15 then
-            mq.cmdf('/popcustom 5 %s did not arrive in time to request %s', itemRequest.toon, itemRequest.name)
-            itemRequest = nil  -- Clear the request
-            return
-        end
-    end
-    
-    if spawn.Distance3D() <= 15 then
-        -- If this isn't a bank request, pick up the item - otherwise it's already on cursor
-        if not itemRequest.fromBank then
-            mq.cmdf('/bct %s //shift /itemnotify "%s" leftmouseup', itemRequest.toon, itemRequest.name)
-            mq.delay(500)
-        end
-        
-        -- Target the requesting player
-        mq.cmdf('/bct %s //mqtar pc %s', itemRequest.toon, mq.TLO.Me.CleanName())
-        mq.delay(500)
-        
-        -- Click on target to initiate trade
-        mq.cmdf('/bct %s //click left target', itemRequest.toon)
-        mq.delay(2000, function() return mq.TLO.Window("TradeWnd").Open() end)
-        mq.delay(200)
-    else
-        mq.cmdf('/popcustom 5 %s is not in range to request %s', itemRequest.toon, itemRequest.name)
-    end
-  
-    itemRequest = nil
-  end
-
 --------------------------------------------------
 -- Function: Get Class Armor Type
 --------------------------------------------------
@@ -578,7 +455,7 @@ end
 
 
 --------------------------------------------------
--- Function: Search Across All Peer Databases
+-- Function: Search Across All Peers
 --------------------------------------------------
 function searchAcrossPeers()
     local results = {}
@@ -636,6 +513,157 @@ function searchAcrossPeers()
     end
     
     return results
+end
+
+--------------------------------------------------
+-- Context Menu Functions
+--------------------------------------------------
+
+-- Function to show the context menu
+function showContextMenu(item, sourceChar, mouseX, mouseY)
+    if not item then
+        mq.cmd("/echo [ERROR] Cannot show context menu for nil item")
+        return
+    end
+
+    if not sourceChar then
+        mq.cmd("/echo [ERROR] Cannot show context menu - source character is nil")
+        return
+    end
+
+    inventoryUI.contextMenu.visible = true
+    inventoryUI.contextMenu.item = item
+    inventoryUI.contextMenu.source = sourceChar
+    inventoryUI.contextMenu.x = mouseX
+    inventoryUI.contextMenu.y = mouseY
+
+    -- ✅ Clear peer list first
+    inventoryUI.contextMenu.peers = {}
+
+    -- ✅ Use deduplication
+    local seenPeers = {}
+    local serverPeers = peerCache[mq.TLO.MacroQuest.Server()] or {}
+
+    for _, peer in ipairs(serverPeers) do
+        if peer.name ~= sourceChar and not seenPeers[peer.name] then
+            table.insert(inventoryUI.contextMenu.peers, peer.name)
+            seenPeers[peer.name] = true
+        end
+    end
+
+    table.sort(inventoryUI.contextMenu.peers)
+    inventoryUI.contextMenu.selectedPeer = nil
+
+    mq.cmdf("/echo [DEBUG] Context menu opened for %s from %s", item.name or "Unknown Item", sourceChar or "Unknown Source")
+end
+
+-- Function to hide the context menu
+function hideContextMenu()
+    inventoryUI.contextMenu.visible = false
+    inventoryUI.contextMenu.item = nil
+    inventoryUI.contextMenu.source = nil
+    inventoryUI.contextMenu.selectedPeer = nil
+end
+
+-- Function to render the context menu
+function renderContextMenu()
+    if not inventoryUI.contextMenu.visible then return end
+    
+    -- Check if we have a valid item before continuing
+    if not inventoryUI.contextMenu.item then
+        -- Item data missing, close the context menu
+        hideContextMenu()
+        return
+    end
+    
+    -- Set position of context menu window
+    ImGui.SetNextWindowPos(inventoryUI.contextMenu.x, inventoryUI.contextMenu.y)
+    
+    -- Begin the context menu window
+    if ImGui.Begin("##ItemContextMenu", nil, ImGuiWindowFlags.NoTitleBar + ImGuiWindowFlags.NoResize + 
+                   ImGuiWindowFlags.AlwaysAutoResize + ImGuiWindowFlags.NoSavedSettings) then
+        
+        -- Show item name as header - with null check
+        local itemName = "Unknown Item"
+        if inventoryUI.contextMenu.item and inventoryUI.contextMenu.item.name then
+            itemName = inventoryUI.contextMenu.item.name
+        end
+        ImGui.Text(itemName)
+        ImGui.Separator()
+        
+        -- Context menu options
+        if ImGui.MenuItem("Examine") then
+            if inventoryUI.contextMenu.item and inventoryUI.contextMenu.item.itemlink then
+                local links = mq.ExtractLinks(inventoryUI.contextMenu.item.itemlink)
+                if links and #links > 0 then
+                    mq.ExecuteTextLink(links[1])
+                else
+                    mq.cmd('/echo No item link found in the database.')
+                end
+            end
+            hideContextMenu()
+        end
+        
+        -- Show Trade To submenu if item is not No Drop - with null checks
+        local isNoDrop = false
+        if inventoryUI.contextMenu.item and inventoryUI.contextMenu.item.nodrop and inventoryUI.contextMenu.item.nodrop == 1 then
+            isNoDrop = true
+        end
+        
+        if not isNoDrop then
+            if ImGui.BeginMenu("Trade To") then
+                -- List all peers as trade targets
+                for _, peerName in ipairs(inventoryUI.contextMenu.peers or {}) do
+                    if ImGui.MenuItem(peerName) then
+                        -- Initiate trade to this peer
+                        initiateProxyTrade(inventoryUI.contextMenu.item, 
+                                          inventoryUI.contextMenu.source, 
+                                          peerName)
+                        hideContextMenu()
+                    end
+                end
+                ImGui.EndMenu()
+            end
+        else
+            -- Disabled menu item for No Drop items
+            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+            ImGui.MenuItem("Trade To (No Drop Item)", false, false)
+            ImGui.PopStyleColor()
+        end
+        
+        ImGui.Separator()
+        
+        -- Cancel option
+        if ImGui.MenuItem("Cancel") then
+            hideContextMenu()
+        end
+        
+        ImGui.End()
+    end
+    
+    -- Check for clicks outside the context menu to close it
+    if ImGui.IsMouseClicked(ImGuiMouseButton.Left) and not ImGui.IsWindowHovered(ImGuiHoveredFlags.AnyWindow) then
+        hideContextMenu()
+    end
+end
+
+-- Function to initiate the proxy trade
+function initiateProxyTrade(item, sourceChar, targetChar)
+    mq.cmdf("/echo Initiating trade: %s from %s to %s", 
+           item.name, sourceChar, targetChar)
+    
+    local peerRequest = {
+        name = item.name,
+        to = targetChar,
+        fromBank = item.bankslotid ~= nil,
+        bagid = item.bagid,
+        slotid = item.slotid,
+        bankslotid = item.bankslotid,
+    }
+    
+    inventory_actor.send_inventory_command(sourceChar, "proxy_give", {json.encode(peerRequest)})
+    mq.cmdf("/echo Trade request sent: %s will give %s to %s", 
+           sourceChar, item.name, targetChar)
 end
 
 --------------------------------------------------
@@ -723,6 +751,11 @@ function inventoryUI.render()
         if ImGui.Button("Close") then
             inventoryUI.visible = false
         end
+        ImGui.SameLine()
+        if ImGui.Button("Give Item") then
+            inventoryUI.showGiveItemPanel = not inventoryUI.showGiveItemPanel
+        end
+
         ImGui.SameLine()
 
         -- Add the lock button (padlock icon)
@@ -1088,7 +1121,7 @@ function inventoryUI.render()
                                                 -- Character column
                                                 ImGui.TableNextColumn()
                                                 if ImGui.Selectable(result.peerName) then
-                                                    mq.cmdf("/bct %s //foreground", result.peerName)
+                                                    inventory_actor.send_inventory_command(result.peerName, "foreground", {})
                                                     mq.cmdf("/echo Bringing %s to the foreground...", result.peerName)
                                                 end
 
@@ -1253,6 +1286,10 @@ function inventoryUI.render()
                                                 mq.cmd('/echo No item link found in the database.')
                                             end
                                         end
+                                        if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
+                                            local mouseX, mouseY = ImGui.GetMousePos()
+                                            showContextMenu(item, inventoryUI.selectedPeer, mouseX, mouseY)
+                                        end
                                         if ImGui.IsItemHovered() then
                                             ImGui.BeginTooltip()
                                             ImGui.Text(item.name)
@@ -1270,9 +1307,14 @@ function inventoryUI.render()
                                             end
                                         else
                                             if item.nodrop == 0 then
-                                                if ImGui.Button("Request##" .. bagid .. "_" .. i) then
-                                                    itemRequest = { toon = inventoryUI.selectedPeer, name = item.name }
-                                                    inventoryUI.pendingRequest = true
+                                                local itemName = item.name or "Unknown"
+                                                local peerName = peerName or "Unknown"
+                                                local uniqueID = string.format("%s_%s_%d", itemName, peerName, i)
+                                                if ImGui.Button("Trade##" .. uniqueID) then
+                                                    inventoryUI.showGiveItemPanel = true
+                                                    inventoryUI.selectedGiveItem = itemName
+                                                    inventoryUI.selectedGiveTarget = peerName  -- The target to receive the item
+                                                    inventoryUI.selectedGiveSource = item.peerName  -- Store the original owner!
                                                 end
                                             else
                                                 ImGui.Text("No Drop")
@@ -1606,6 +1648,13 @@ function inventoryUI.render()
                             end
                         end
 
+                        -- Add right-click detection
+                        if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
+                            -- Show context menu at mouse position
+                            local mouseX, mouseY = ImGui.GetMousePos()
+                            showContextMenu(item, item.peerName, mouseX, mouseY)
+                        end
+
                        -- Quantity column
                         ImGui.TableNextColumn()
                         local qtyDisplay = tostring(item.qty or "?")
@@ -1663,9 +1712,11 @@ function inventoryUI.render()
                             end
                         else
                             if item.nodrop == 0 then
-                                if ImGui.Button("Request##" .. uniqueID) then
-                                    itemRequest = { toon = peerName, name = itemName }
-                                    inventoryUI.pendingRequest = true
+                                if ImGui.Button("Trade##" .. uniqueID) then
+                                    inventoryUI.showGiveItemPanel = true
+                                    inventoryUI.selectedGiveItem = itemName
+                                    inventoryUI.selectedGiveTarget = peerName  -- The target to receive the item
+                                    inventoryUI.selectedGiveSource = item.peerName  -- Store the original owner!
                                 end
                             else
                                 ImGui.Text("No Drop")
@@ -1681,7 +1732,95 @@ function inventoryUI.render()
     end
     ImGui.EndTabBar()
   end
+
+        --------------------------------------------------------
+        --- Item Exchange Popup
+        --------------------------------------------------------
+        
+        inventoryUI.showGiveItemPanel = inventoryUI.showGiveItemPanel or false
+
+    if inventoryUI.showGiveItemPanel then
+        ImGui.SetNextWindowSize(400, 0, ImGuiCond.Once)
+        local isOpen = ImGui.Begin("Give Item Panel", nil, ImGuiWindowFlags.AlwaysAutoResize)
+        if isOpen then
+        ImGui.Text("Select an item and peer to give it to.")
+        ImGui.Separator()
+
+        -- Item dropdown
+        inventoryUI.selectedGiveItem = inventoryUI.selectedGiveItem or ""
+        local localItems = {}
+        for _, bagItems in pairs(inventoryUI.inventoryData.bags or {}) do
+            for _, item in ipairs(bagItems) do
+                table.insert(localItems, item.name)
+            end
+        end
+        table.sort(localItems)
+
+        ImGui.Text("Item:")
+        ImGui.SameLine()
+        if ImGui.BeginCombo("##GiveItemCombo", inventoryUI.selectedGiveItem ~= "" and inventoryUI.selectedGiveItem or "Select Item") then
+            for _, itemName in ipairs(localItems) do
+                if ImGui.Selectable(itemName, inventoryUI.selectedGiveItem == itemName) then
+                    inventoryUI.selectedGiveItem = itemName
+                end
+            end
+            ImGui.EndCombo()
+        end
+
+        -- Peer dropdown
+        inventoryUI.selectedGiveTarget = inventoryUI.selectedGiveTarget or ""
+        ImGui.Text("To Peer:")
+        ImGui.SameLine()
+        if ImGui.BeginCombo("##GivePeerCombo", inventoryUI.selectedGiveTarget ~= "" and inventoryUI.selectedGiveTarget or "Select Peer") then
+            local peers = peerCache[inventoryUI.selectedServer] or {}
+            table.sort(peers, function(a, b)
+                return (a.name or ""):lower() < (b.name or ""):lower()
+            end)
+            for i, peer in ipairs(peers) do
+                local isSelected = inventoryUI.selectedGiveTarget == peer.name
+                ImGui.PushID("give_peer_" .. peer.name)
+                if ImGui.Selectable(peer.name, isSelected) then
+                    inventoryUI.selectedGiveTarget = peer.name
+                end
+                if isSelected then
+                    ImGui.SetItemDefaultFocus()
+                end
+                ImGui.PopID()
+            end
+            ImGui.EndCombo()
+        end
+
+        ImGui.Separator()
+        if inventoryUI.showGiveItemPanel and ImGui.Button("Give") then
+            if inventoryUI.selectedGiveItem ~= "" and inventoryUI.selectedGiveTarget ~= "" then
+                local peerRequest = {
+                    name = inventoryUI.selectedGiveItem,
+                    to = inventoryUI.selectedGiveTarget,
+                    fromBank = false,  -- Using inventory by default
+                }
+                
+                -- Send the command to the SOURCE peer (owner of the item)
+                inventory_actor.send_inventory_command(inventoryUI.selectedGiveSource, "proxy_give", {json.encode(peerRequest)})
+                
+                mq.cmdf("/echo Requesting %s to give %s to %s", 
+                        inventoryUI.selectedGiveSource,
+                        inventoryUI.selectedGiveItem, 
+                        inventoryUI.selectedGiveTarget)
+                
+                inventoryUI.showGiveItemPanel = false -- Close the panel after sending
+            else
+                mq.cmd("/popcustom 5 Please select an item and a peer first.")
+            end
+        end
+        ImGui.SameLine()
+        if ImGui.Button("Close Panel") then
+            inventoryUI.showGiveItemPanel = false
+        end
+            end
+        if isOpen then ImGui.End() end
+    end
   ImGui.End()
+  renderContextMenu()
 end
 
 mq.imgui.init("Inventory Window", function()
@@ -1711,6 +1850,15 @@ end)
 
 mq.bind("/ezinventory_ui", function()
     inventoryUI.visible = not inventoryUI.visible
+end)
+
+mq.bind("/ezinventory_cmd", function(peer, command, ...)
+    if not peer or not command then
+        print("Usage: /ezinventory_cmd <peer> <command> [args...]")
+        return
+    end
+    local args = {...}
+    inventory_actor.send_inventory_command(peer, command, args)
 end)
 
 -- Main function
@@ -1781,10 +1929,7 @@ local function main()
         updatePeerList()
         
         -- Handle pending requests
-        if inventoryUI.pendingRequest then
-            request()
-            inventoryUI.pendingRequest = false
-        end
+        inventory_actor.process_pending_requests()
         
         mq.delay(100)
     end
