@@ -1,5 +1,5 @@
-LUA script to help facilitate inventory management across all of your connected E3Bots.  
+LUA script to help facilitate inventory management across all of your connected Characters.  
 
-To start, /lua run e3inventory
+To start, /lua run ezinventory
 
-/e3inventory_help for a list of commands
+/ezinventory_help for a list of commands
