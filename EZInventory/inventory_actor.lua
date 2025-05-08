@@ -190,101 +190,126 @@ function M.request_all_inventories()
     )
 end
 
+function M.command_peer_navigate_to_banker(peer)
+    M.send_inventory_command(peer, "navigate_to_banker", {})
+end
+
 function M.process_pending_requests()
-        if #M.pending_requests > 0 then
-        local request = table.remove(M.pending_requests, 1)  -- Get the first request
-       
-        mq.cmdf("/echo Processing request: Give %s to %s", request.name, request.toon)
-        
-        -- Find the target character (the recipient)
-        local spawn = mq.TLO.Spawn("pc =" .. request.toon)
-        if not spawn or not spawn() then
-            mq.cmdf("/popcustom 5 %s not found in the zone!", request.toon)
-            return
-        end
-        
-        -- Check if we need to navigate to the recipient
-        if spawn.Distance3D() > 15 then
-            mq.cmdf("/echo Recipient %s is too far away (%.2f). Navigating to them...", request.toon, spawn.Distance3D())
-            
-            -- Navigation - WE (the giver) need to navigate to the recipient
-            mq.cmdf("/nav id %s", spawn.ID())
-            
-            -- Wait until we reach the recipient (or timeout)
-            local startTime = os.time()
-            while spawn.Distance3D() > 15 and os.time() - startTime < 30 do
-                mq.doevents()
-                mq.delay(1000)
-                mq.cmdf("/echo Navigating to %s... Distance: %.2f", request.toon, spawn.Distance3D())
-            end
-            
-            -- Check if we made it in time
-            if spawn.Distance3D() > 15 then
-                mq.cmdf("/popcustom 5 Could not reach %s to give %s (distance: %.2f)", 
-                       request.toon, request.name, spawn.Distance3D())
-                return
-            else
-                mq.cmdf("/echo Successfully reached %s (distance: %.2f)", request.toon, spawn.Distance3D())
-            end
-        end
-        
-        -- Process bank item if needed
-        if request.fromBank then
-            mq.cmdf("/echo Processing bank request for %s from %s...", request.name, request.toon)
-            local BankSlotId = tonumber(request.bankslotid) or 0
-            local SlotId = tonumber(request.slotid) or -1
-            local bankCommand = ""
-            
-            if BankSlotId >= 1 and BankSlotId <= 24 then
-                if SlotId == -1 then
-                    bankCommand = string.format("bank%d leftmouseup", BankSlotId)
-                else
-                    bankCommand = string.format("in bank%d %d leftmouseup", BankSlotId, SlotId)
-                end
-            elseif BankSlotId >= 25 and BankSlotId <= 26 then
-                local sharedSlot = BankSlotId - 24
-                if SlotId == -1 then
-                    bankCommand = string.format("sharedbank%d leftmouseup", sharedSlot)
-                else
-                    bankCommand = string.format("in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
-                end
-            else
-                mq.cmdf("/popcustom 5 Invalid bank slot information for %s", request.name)
-                return
-            end
-            
-            mq.cmdf("/itemnotify %s", bankCommand)
-            mq.delay(1000)
-        else
-            -- Regular inventory item - pick it up
-            mq.cmdf('/shift /itemnotify "%s" leftmouseup', request.name)
+    if #M.pending_requests == 0 then return end
+
+    local request = table.remove(M.pending_requests, 1)
+    mq.cmdf("/echo Processing request: Give %s to %s", request.name, request.toon)
+
+    -- Step 1: If item is from bank, go open bank and get it
+    if request.fromBank then
+        local BankSlotId = tonumber(request.bankslotid) or 0
+        local SlotId = tonumber(request.slotid) or -1
+        local bankCommand = ""
+
+        -- Try to find and target the nearest banker
+        local banker = mq.TLO.Spawn("npc banker")
+        if banker() then
+            mq.cmdf("/target id %d", banker.ID())
             mq.delay(500)
-        end
-        
-        -- Tell the recipient to auto-accept the trade
-        M.send_inventory_command(request.toon, "auto_accept_trade", {})
-        
-        -- Start the trade process with target
-        mq.cmdf("/mqtar pc %s", request.toon)
-        mq.delay(500)
-        mq.cmd("/click left target")
-        
-        while not mq.TLO.Window("TradeWnd").Open() and os.time() do
-            mq.delay(100)
-        end
-        
-        -- Check if trade window opened successfully
-        if not mq.TLO.Window("TradeWnd").Open() then
-            mq.cmdf("/popcustom 5 Trade window failed to open with %s", request.toon)
+        else
+            mq.cmd("/echo [ERROR] Could not find a banker nearby.")
             return
         end
-        
-        -- Wait for a moment to ensure item appears in trade window
+
+        if mq.TLO.Target.Type() ~= "NPC" then
+            mq.cmd("/popcustom 5 Could not find a banker.")
+            return
+        end
+
+        -- Navigate to banker
+        mq.cmdf("/echo Navigating to banker...")
+        mq.cmdf("/nav target")
+        mq.delay(3000)
+        mq.cmd("/nav stop")
         mq.delay(500)
-        
-        -- Click the Trade button to finalize the trade
-        mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
-        
+
+        -- Interact and open bank
+        mq.cmd("/click right target")
+        mq.delay(1000)
+
+        if not mq.TLO.Window("BankWnd").Open() then
+            mq.cmd("/bank")
+            mq.delay(1000)
+        end
+
+        -- Prepare itemnotify command
+        if BankSlotId >= 1 and BankSlotId <= 24 then
+            if SlotId == -1 then
+                bankCommand = string.format("bank%d leftmouseup", BankSlotId)
+            else
+                bankCommand = string.format("in bank%d %d leftmouseup", BankSlotId, SlotId)
+            end
+        elseif BankSlotId >= 25 and BankSlotId <= 26 then
+            local sharedSlot = BankSlotId - 24
+            if SlotId == -1 then
+                bankCommand = string.format("sharedbank%d leftmouseup", sharedSlot)
+            else
+                bankCommand = string.format("in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
+            end
+        else
+            mq.cmdf("/popcustom 5 Invalid bank slot information for %s", request.name)
+            return
+        end
+
+        mq.cmdf("/itemnotify %s", bankCommand)
+        mq.delay(1000)
+    else
+        -- Regular bag item
+        mq.cmdf('/shift /itemnotify "%s" leftmouseup', request.name)
+        mq.delay(500)
+    end
+
+    -- Step 2: Find recipient
+    local spawn = mq.TLO.Spawn("pc =" .. request.toon)
+    if not spawn or not spawn() then
+        mq.cmdf("/popcustom 5 %s not found in the zone!", request.toon)
+        return
+    end
+
+    -- Navigate to recipient if needed
+    if spawn.Distance3D() > 15 then
+        mq.cmdf("/echo Recipient %s is too far away (%.2f). Navigating...", request.toon, spawn.Distance3D())
+        mq.cmdf("/nav id %s", spawn.ID())
+        local startTime = os.time()
+        while spawn.Distance3D() > 15 and os.time() - startTime < 30 do
+            mq.doevents()
+            mq.delay(1000)
+        end
+        mq.cmd("/nav stop")
+
+        if spawn.Distance3D() > 15 then
+            mq.cmdf("/popcustom 5 Could not reach %s to give %s", request.toon, request.name)
+            return
+        end
+    end
+
+    -- Step 3: Trade the item
+    M.send_inventory_command(request.toon, "auto_accept_trade", {})
+    mq.cmdf("/mqtar pc %s", request.toon)
+    mq.delay(500)
+    mq.cmd("/click left target")
+
+    local timeout = os.time() + 5
+    while not mq.TLO.Window("TradeWnd").Open() and os.time() < timeout do
+        mq.delay(100)
+    end
+
+    if not mq.TLO.Window("TradeWnd").Open() then
+        mq.cmdf("/popcustom 5 Trade window failed to open with %s", request.toon)
+        return
+    end
+
+    mq.delay(500)
+    mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
+
+    -- Optional: Close bank window
+    if mq.TLO.Window("BankWnd").Open() then
+        mq.TLO.Window("BankWnd").DoClose()
     end
 end
 
@@ -311,6 +336,18 @@ local function handle_command_message(message)
         mq.cmdf('/shift /itemnotify "%s" leftmouseup', itemName)
     elseif command == "foreground" then
         mq.cmd("/foreground")
+    elseif command == "navigate_to_banker" then
+        mq.cmd('/target banker')
+        mq.delay(500)
+        if not mq.TLO.Target.ID() then mq.cmd('/target npc banker') end
+        mq.delay(500)
+        if mq.TLO.Target.Type() == "NPC" then
+            mq.cmdf("/nav id %d distance=100", mq.TLO.Target.ID())
+            mq.delay(3000)
+            mq.cmd("/nav stop")
+        else
+            mq.cmd("/echo [EZInventory] Banker not found")
+        end
     elseif command == "proxy_give" then
         local request = json.decode(args[1])
         if request then

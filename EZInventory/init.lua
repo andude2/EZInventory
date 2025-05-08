@@ -453,7 +453,6 @@ local function getArmorTypeByClass(class)
     end
 end
 
-
 --------------------------------------------------
 -- Function: Search Across All Peers
 --------------------------------------------------
@@ -538,7 +537,7 @@ function showContextMenu(item, sourceChar, mouseX, mouseY)
     inventoryUI.contextMenu.y = mouseY
 
     inventoryUI.contextMenu.peers = {}
-    
+
     local seenPeers = {}
     local serverPeers = peerCache[mq.TLO.MacroQuest.Server()] or {}
 
@@ -1829,7 +1828,6 @@ end)
 local helpInfo = {
     { binding = "/ezinventory_ui", description = "Toggles the visibility of the inventory window." },
     { binding = "/ezinventory_help", description = "Displays this help information." },
-    { binding = "/ezinventoryfile_sync", description = "Syncs inventory data to the database - only updates bank if near the bank." },
     -- Add more bindings and descriptions as needed
 }
 
