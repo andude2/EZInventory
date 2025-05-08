@@ -537,10 +537,8 @@ function showContextMenu(item, sourceChar, mouseX, mouseY)
     inventoryUI.contextMenu.x = mouseX
     inventoryUI.contextMenu.y = mouseY
 
-    -- ✅ Clear peer list first
     inventoryUI.contextMenu.peers = {}
-
-    -- ✅ Use deduplication
+    
     local seenPeers = {}
     local serverPeers = peerCache[mq.TLO.MacroQuest.Server()] or {}
 
