@@ -1305,7 +1305,7 @@ function inventoryUI.render()
                                         else
                                             if item.nodrop == 0 then
                                                 local itemName = item.name or "Unknown"
-                                                local peerName = peerName or "Unknown"
+                                                local peerName = mq.TLO.Me.Name() or "Unknown"
                                                 local uniqueID = string.format("%s_%s_%d", itemName, peerName, i)
                                                 if ImGui.Button("Trade##" .. uniqueID) then
                                                     inventoryUI.showGiveItemPanel = true
@@ -1712,7 +1712,7 @@ function inventoryUI.render()
                                 if ImGui.Button("Trade##" .. uniqueID) then
                                     inventoryUI.showGiveItemPanel = true
                                     inventoryUI.selectedGiveItem = itemName
-                                    inventoryUI.selectedGiveTarget = peerName  -- The target to receive the item
+                                    inventoryUI.selectedGiveTarget = inventoryUI.selectedPeer  -- The target to receive the item
                                     inventoryUI.selectedGiveSource = item.peerName  -- Store the original owner!
                                 end
                             else
