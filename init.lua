@@ -1727,7 +1727,7 @@ function inventoryUI.render()
                                     inventoryUI.selectedGiveSource = item.peerName
                                 end
                                 ImGui.SameLine()
-                                ImGui.Text("--")  -- Horizontal padding
+                                ImGui.Text("--")
                                 ImGui.SameLine()
                                 local buttonLabel = string.format("Give to %s##%s", inventoryUI.selectedPeer or "Unknown", uniqueID)
                                 ImGui.PushStyleColor(ImGuiCol.Button, 0, 0.6, 0, 1)        -- Normal (green)
@@ -1912,7 +1912,10 @@ local function main()
         -- Give ourselves time to initialize before broadcasting
         mq.delay(10)
         
-        if mq.TLO.Plugin("MQ2DanNet").IsLoaded() then
+        if mq.TLO.Plugin("MQ2Mono").IsLoaded() then
+            mq.cmd("/e3bcaa /lua run ezinventory")
+            print("Broadcasting inventory startup via MQ2Mono to all connected clients...")
+        elseif mq.TLO.Plugin("MQ2DanNet").IsLoaded() then
             -- DanNet is loaded, use it
             mq.cmd("/dgaexecute /lua run ezinventory")
             print("Broadcasting inventory startup via DanNet to all connected clients...")
