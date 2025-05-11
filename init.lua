@@ -1536,11 +1536,9 @@ function inventoryUI.render()
       -- All Bots Search Results Tab
       ------------------------------
       if ImGui.BeginTabItem("All Bots") then
-        -- Filter options
         local filterOptions = { "All", "Equipped", "Inventory", "Bank" }
         inventoryUI.sourceFilter = inventoryUI.sourceFilter or "All"  -- Default filter
 
-        -- Filter dropdown
         ImGui.Text("Filter by Source:")
         ImGui.SameLine()
         if ImGui.BeginCombo("##SourceFilter", inventoryUI.sourceFilter) then
@@ -1619,9 +1617,7 @@ function inventoryUI.render()
                     end
                 end
 
-                -- Loop through results and apply the filter
                 for idx, item in ipairs(results) do
-                    -- Apply the filter
                     if inventoryUI.sourceFilter == "All" or item.source == inventoryUI.sourceFilter then
 
                         if inventoryUI.filterNoDrop and item.nodrop == 1 then
@@ -1630,7 +1626,6 @@ function inventoryUI.render()
 
                         ImGui.TableNextRow()
 
-                        -- Create a unique ID using the index
                         local uniqueID = string.format("%s_%s_%d", 
                             item.peerName or "unknown", 
                             item.name or "unnamed", 
@@ -1638,22 +1633,18 @@ function inventoryUI.render()
                         
                         ImGui.PushID(uniqueID)
 
-                        -- Peer name column
                         ImGui.TableNextColumn()
                         if ImGui.Selectable(item.peerName) then
                             inventory_actor.send_inventory_command(item.peerName, "foreground", {})
                             mq.cmdf("/echo Bringing %s to the foreground...", item.peerName)
                         end
 
-                        -- Source column (Inventory, Bank, Equipped)
                         ImGui.TableNextColumn()
                         ImGui.Text(item.source)
 
-                        -- Slot information column
                         ImGui.TableNextColumn()
                         ImGui.Text(getSlotInfo(item))
 
-                        -- Icon column
                         ImGui.TableNextColumn()
                         if item.icon and item.icon ~= 0 then
                             drawItemIcon(item.icon)
@@ -1672,14 +1663,12 @@ function inventoryUI.render()
                             end
                         end
 
-                        -- Add right-click detection
                         if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
                             -- Show context menu at mouse position
                             local mouseX, mouseY = ImGui.GetMousePos()
                             showContextMenu(item, item.peerName, mouseX, mouseY)
                         end
 
-                    -- Quantity column
                         ImGui.TableNextColumn()
                         local qtyDisplay = tostring(item.qty or "?")
                         ImGui.Text(qtyDisplay)
@@ -1690,31 +1679,25 @@ function inventoryUI.render()
                                 tostring(item.qty or item.stack or "nil")))
                         end
 
-                        -- Action button column
                         ImGui.TableNextColumn()
                         local peerName = item.peerName or "Unknown"
                         local itemName = item.name or "Unnamed"
                         
                         if peerName == mq.TLO.Me.Name() then
-                            -- Pickup logic for your own database (ignore nodrop flag)
                             if ImGui.Button("Pickup##" .. uniqueID) then
                                 if item.source == "Bank" then
                                     local BankSlotId = tonumber(item.bankslotid) or 0
                                     local SlotId = tonumber(item.slotid) or -1
                                     
                                     -- Debug output
-                                    mq.cmdf("/echo [DEBUG] Bank pickup: Item=%s, BankSlot=%d, Slot=%d", 
-                                        itemName, BankSlotId, SlotId)
+                                    --mq.cmdf("/echo [DEBUG] Bank pickup: Item=%s, BankSlot=%d, Slot=%d", itemName, BankSlotId, SlotId)
                                     
                                     if BankSlotId >= 1 and BankSlotId <= 24 then
-                                        -- ADJUST: Subtract 2 from the bank slot for the itemnotify command
                                         local adjustedBankSlot = BankSlotId
                                         
                                         if SlotId == -1 then
-                                            -- Direct bank slot
                                             mq.cmdf("/shift /itemnotify bank%d leftmouseup", adjustedBankSlot)
                                         else
-                                            -- Item in a bag in bank slot
                                             mq.cmdf("/shift /itemnotify in bank%d %d leftmouseup", adjustedBankSlot, SlotId)
                                         end
                                     elseif BankSlotId >= 25 and BankSlotId <= 26 then
