@@ -1275,7 +1275,7 @@ function inventoryUI.render()
                                             ImGui.Text("N/A")
                                         end
                                         ImGui.TableNextColumn()
-                                        if ImGui.Selectable(item.name) then
+                                        if ImGui.Selectable(item.name .. "##" .. bagid .. "_" .. i) then
                                             local links = mq.ExtractLinks(item.itemlink)
                                             if links and #links > 0 then
                                                 mq.ExecuteTextLink(links[1])
@@ -1299,13 +1299,13 @@ function inventoryUI.render()
                                         ImGui.Text(tostring(item.slotid or ""))
                                         ImGui.TableNextColumn()
                                         if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
-                                            if ImGui.Button("Pickup##" .. bagid .. "_" .. i) then
+                                            if ImGui.Button("Pickup##" .. item.name .. "_" .. tostring(item.slotid or i)) then
                                                 mq.cmdf('/shift /itemnotify "%s" leftmouseup', item.name)
                                             end
                                         else
                                             if item.nodrop == 0 then
                                                 local itemName = item.name or "Unknown"
-                                                local peerName = peerName or "Unknown"
+                                                local peerName = item.peerName or "Unknown"
                                                 local uniqueID = string.format("%s_%s_%d", itemName, peerName, i)
                                                 if ImGui.Button("Trade##" .. uniqueID) then
                                                     inventoryUI.showGiveItemPanel = true
@@ -1558,6 +1558,9 @@ function inventoryUI.render()
             end
             ImGui.EndCombo()
         end
+        ImGui.SameLine()
+        inventoryUI.filterNoDrop = inventoryUI.filterNoDrop or false
+        inventoryUI.filterNoDrop = ImGui.Checkbox("Hide No Drop", inventoryUI.filterNoDrop)
 
         -- Search results with filter applied
         local results = searchAcrossPeers()
@@ -1604,6 +1607,11 @@ function inventoryUI.render()
                 for idx, item in ipairs(results) do
                     -- Apply the filter
                     if inventoryUI.sourceFilter == "All" or item.source == inventoryUI.sourceFilter then
+
+                        if inventoryUI.filterNoDrop and item.nodrop == 1 then
+                            goto continue
+                        end
+
                         ImGui.TableNextRow()
 
                         -- Create a unique ID using the index
@@ -1715,11 +1723,35 @@ function inventoryUI.render()
                                     inventoryUI.selectedGiveTarget = peerName  -- The target to receive the item
                                     inventoryUI.selectedGiveSource = item.peerName  -- Store the original owner!
                                 end
+                                ImGui.SameLine()
+                                ImGui.Text("--")  -- Horizontal padding
+                                ImGui.SameLine()
+                                local buttonLabel = string.format("Give to %s##%s", inventoryUI.selectedPeer or "Unknown", uniqueID)
+                                ImGui.PushStyleColor(ImGuiCol.Button, 0, 0.6, 0, 1)        -- Normal (green)
+                                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0, 0.8, 0, 1) -- Hover
+                                ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0, 1.0, 0, 1)  -- Active
+                                if ImGui.Button(buttonLabel) then
+                                    local giveRequest = {
+                                        name = itemName,
+                                        to = inventoryUI.selectedPeer,
+                                        fromBank = item.source == "Bank",
+                                        bagid = item.bagid,
+                                        slotid = item.slotid,
+                                        bankslotid = item.bankslotid,
+                                    }
+
+                                    inventory_actor.send_inventory_command(item.peerName, "proxy_give", {json.encode(giveRequest)})
+
+                                    mq.cmdf("/echo Requested %s to give %s to %s", item.peerName, itemName, inventoryUI.selectedPeer)
+                                end
+                                ImGui.PopStyleColor(3)
                             else
                                 ImGui.Text("No Drop")
                             end
                         end                        
                         ImGui.PopID()
+
+                        ::continue::
                     end
                 end
                 ImGui.EndTable()
@@ -1926,7 +1958,13 @@ local function main()
         
         -- Handle pending requests
         inventory_actor.process_pending_requests()
-        
+        if #inventory_actor.deferred_tasks > 0 then
+            local task = table.remove(inventory_actor.deferred_tasks, 1)
+            local ok, err = pcall(task)
+            if not ok then
+                mq.cmdf("/echo [EZInventory ERROR] Deferred task failed: %s", tostring(err))
+            end
+        end
         mq.delay(100)
     end
 end

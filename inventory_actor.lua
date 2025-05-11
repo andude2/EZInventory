@@ -6,6 +6,7 @@ local json = require('dkjson')
 local M = {}
 
 M.pending_requests = {}
+M.deferred_tasks = {}
 
 -- Message types
 M.MSG_TYPE = {
@@ -351,7 +352,7 @@ local function handle_command_message(message)
     elseif command == "proxy_give" then
         local request = json.decode(args[1])
         if request then
-            mq.cmdf("/echo [DEBUG] Received proxy_give command for: %s to %s", 
+            mq.cmdf("/echo Received proxy_give command for: %s to %s", 
                 request.name, request.to)
             
             -- Add to our internal queue instead of using inventoryUI
@@ -364,10 +365,23 @@ local function handle_command_message(message)
                 bankslotid = request.bankslotid,
             })
             
-            mq.cmd("/echo [DEBUG] Added request to pending queue")
+            mq.cmd("/echo Added request to pending queue")
         else
             mq.cmd("/echo [ERROR] Failed to decode proxy_give request")
         end
+    elseif command == "auto_accept_trade" then
+        table.insert(M.deferred_tasks, function()
+            mq.cmd("/echo Auto accepting trade")
+            local timeout = os.time() + 5
+            while not mq.TLO.Window("TradeWnd").Open() and os.time() < timeout do
+                mq.delay(100)
+            end
+            if mq.TLO.Window("TradeWnd").Open() then
+                mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
+            else
+                mq.cmd("/popcustom 5 TradeWnd did not open for auto-accept")
+            end
+        end)
     else
         print(string.format("[EZInventory] Unknown command: %s", tostring(command)))
     end
