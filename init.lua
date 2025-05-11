@@ -1564,14 +1564,17 @@ function inventoryUI.render()
 
         -- Search results with filter applied
         local results = searchAcrossPeers()
+        ImGui.Separator()
+        local avail = ImGui.GetContentRegionAvail()
+        ImGui.BeginChild("AllBotsResultsRegion", x, y, true, ImGuiChildFlags.Border)
         if #results == 0 then
             ImGui.Text("No matching items found across all peers.")
         else
-            if ImGui.BeginTable("AllPeersTable", 7, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingFixedFit) then
+            if ImGui.BeginTable("AllPeersTable", 7, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
                 -- Define columns
-                ImGui.TableSetupColumn("Peer", ImGuiTableColumnFlags.WidthStretch, 80)
-                ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthStretch, 60)
-                ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthStretch, 80)
+                ImGui.TableSetupColumn("Peer", ImGuiTableColumnFlags.WidthStretch, 60)
+                ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthStretch, 50)
+                ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthStretch, 60)
                 ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 30)
                 ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 200)
                 ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 40)
@@ -1757,6 +1760,7 @@ function inventoryUI.render()
                 ImGui.EndTable()
             end
         end
+        ImGui.EndChild()
         ImGui.EndTabItem()
     end
     ImGui.EndTabBar()
