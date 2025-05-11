@@ -787,11 +787,9 @@ function inventoryUI.render()
         end
         ImGui.Separator()
 
-        local matchingBags = {}  -- Table to store IDs of bags that contain matching items
+        local matchingBags = {}
 
-        -- Helper function to filter items based on the search term
         local function matchesSearch(item)
-            -- If there's no search text, show all items
             if not searchText or searchText == "" then
                 return true
             end
@@ -799,12 +797,10 @@ function inventoryUI.render()
             local searchTerm = searchText:lower()
             local itemName = (item.name or ""):lower()
 
-            -- Check item name first
             if itemName:find(searchTerm) then
                 return true
             end
 
-            -- Then check all augment slots
             for i = 1, 6 do
                 local augField = "aug" .. i .. "Name"
                 if item[augField] and item[augField] ~= "" then
@@ -815,26 +811,25 @@ function inventoryUI.render()
                 end
             end
 
-            -- No match found in item name or any augment
             return false
         end
 
     ------------------------------
     -- Equipped Items Section
     ------------------------------
+    
+    local avail = ImGui.GetContentRegionAvail()
+    ImGui.BeginChild("TabbedContentRegion", x, y, true, ImGuiChildFlags.Border)
+    
     if ImGui.BeginTabBar("InventoryTabs") then
 
         if ImGui.BeginTabItem("Equipped") then
-            -- Add tabs for different view modes
             if ImGui.BeginTabBar("EquippedViewTabs") then
-                -- Table View Tab
                 if ImGui.BeginTabItem("Table View") then
                     inventoryUI.equipView = "table"
 
-                    -- Begin a child region with horizontal scrolling
                     if ImGui.BeginChild("EquippedScrollRegion", 0, 0, true, ImGuiChildFlags.HorizontalScrollbar) then
 
-                        -- Add checkboxes to toggle column visibility
                         ImGui.Text("Show Columns:")
                         ImGui.SameLine()
                         inventoryUI.showAug1 = ImGui.Checkbox("Aug 1", inventoryUI.showAug1)
@@ -849,7 +844,6 @@ function inventoryUI.render()
                         ImGui.SameLine()
                         inventoryUI.showAug6 = ImGui.Checkbox("Aug 6", inventoryUI.showAug6)
 
-                        -- Calculate the number of visible columns
                         local numColumns = 2 -- Icon and Item Name are always visible
                         local visibleAugs = 0
                         local augVisibility = {
@@ -861,7 +855,6 @@ function inventoryUI.render()
                             inventoryUI.showAug6
                         }
 
-                        -- Count visible augs
                         for _, isVisible in ipairs(augVisibility) do
                             if isVisible then
                                 visibleAugs = visibleAugs + 1
@@ -869,24 +862,19 @@ function inventoryUI.render()
                             end
                         end
 
-                        -- Calculate the available width for the table
                         local availableWidth = ImGui.GetWindowContentRegionWidth()
                         local iconWidth = 30 -- Fixed width for the icon column
                         local itemWidth = 150 -- Fixed width for the item name column
                         local augWidth = 0
 
-                        -- Only calculate augWidth if there are visible augs
                         if visibleAugs > 0 then
                             augWidth = math.max(80, (availableWidth - iconWidth - itemWidth) / visibleAugs)
                         end
 
-                        -- Start the table with dynamic columns based on visibility toggles
                         if ImGui.BeginTable("EquippedTable", numColumns, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingStretchProp) then
-                            -- Define column headers with proper width settings
                             ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, iconWidth) -- First column for item icon
                             ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthFixed, itemWidth) -- Second column for item name
 
-                            -- Add columns for augs based on visibility toggles with proper sizing
                             for i = 1, 6 do
                                 if augVisibility[i] then
                                     ImGui.TableSetupColumn("Aug " .. i, ImGuiTableColumnFlags.WidthStretch, 1.0)
@@ -914,8 +902,7 @@ function inventoryUI.render()
                                         mq.cmd('/echo No item link found in the database.')
                                     end
                                 end
-                            
-                                -- Add columns for visible augs only
+
                                 for i = 1, 6 do
                                     if augVisibility[i] then
                                         ImGui.TableNextColumn()
@@ -956,15 +943,8 @@ function inventoryUI.render()
 
                         -- Visual Layout Tab
                         if ImGui.BeginTabItem("Visual") then
-                            -- Add the hover toggle checkbox at the top of the tab
-                            inventoryUI.enableHover = ImGui.Checkbox("Enable Hover Tooltips", inventoryUI.enableHover)
-                            if ImGui.IsItemHovered() then
-                                ImGui.SetTooltip("When enabled, hovering over items shows their tooltips and opens the item window.\nWhen disabled, you must click on items to see details.")
-                            end
 
-                            -- Add a spacer between the checkbox and the dropdown
-                            ImGui.SameLine()  -- Place the dropdown on the same line as the checkbox
-                            ImGui.Dummy(120, 0)  -- Add a 20-pixel horizontal spacer
+                            ImGui.Dummy(235, 0) 
 
                             -- Add armor type filter dropdown
                             local armorTypes = { "All", "Plate", "Chain", "Cloth", "Leather" }
@@ -997,45 +977,52 @@ function inventoryUI.render()
                                 {13, 14, 11, 22}    -- Row 8: Finger 1, Finger 2, Hands, Power Source
                             }
 
-                            -- Create a table to map slot IDs to equipped items
                             local equippedItems = {}
                             for _, item in ipairs(inventoryUI.inventoryData.equipped) do
                                 equippedItems[item.slotid] = item
                             end
 
-                            -- Track the selected item
                             inventoryUI.selectedItem = inventoryUI.selectedItem or nil
 
-                            -- Reset hover states each frame to prevent state persistence issues
                             inventoryUI.hoverStates = {}
 
-                            -- Track which window is currently open
                             inventoryUI.openItemWindow = inventoryUI.openItemWindow or nil
 
-                            -- Track if we're hovering over any item this frame
                             local hoveringAnyItem = false
 
-                            -- Split the window into two columns
-                            ImGui.Columns(2, "EquippedColumns", true)  -- true means border between columns
-                            ImGui.SetColumnWidth(0, 300)
+                            local function calculateEquippedTableWidth()
+                                local contentWidth = 4 * 50  
+                                local borderWidth = 1        
+                                local borders = borderWidth * (4 + 1)
+                                local padding = 30           
+                                local extraMargin = 8        
+                                
+                                return contentWidth + borders + padding + extraMargin 
+                            end
+
+                            ImGui.Columns(2, "EquippedColumns", true)
+
+                            local equippedTableWidth = calculateEquippedTableWidth()
+                            ImGui.SetColumnWidth(0, equippedTableWidth)
 
                             -- Column 1: Equipped Table
                             local ok, err = pcall(function()
-                                if ImGui.BeginTable("EquippedTable", 4, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
-                                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 30)
-                                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 30)
-                                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 30)
-                                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 30)
+                                if ImGui.BeginTable("EquippedTable", 4, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.SizingFixedFit) then
+                                    ImGui.TableSetupColumn(" ", ImGuiTableColumnFlags.WidthFixed, 45)
+                                    ImGui.TableSetupColumn(" ", ImGuiTableColumnFlags.WidthFixed, 45)
+                                    ImGui.TableSetupColumn(" ", ImGuiTableColumnFlags.WidthFixed, 45)
+                                    ImGui.TableSetupColumn(" ", ImGuiTableColumnFlags.WidthFixed, 45)
                                     ImGui.TableHeadersRow()
-                            
+
                                     local function renderEquippedSlot(slotID, item, slotName)
                                         local slotButtonID = "slot_" .. tostring(slotID)
                                         if item and item.icon and item.icon ~= 0 then
-                                            local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 40, 40)
+                                            -- Make sure button size matches column size
+                                            local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 45, 45)
                                             local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
                                             ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
                                             drawItemIcon(item.icon, 40, 40)
-                                    
+
                                             if clicked then
                                                 if mq.TLO.Window("ItemDisplayWindow").Open() then
                                                     mq.TLO.Window("ItemDisplayWindow").DoClose()
@@ -1046,7 +1033,13 @@ function inventoryUI.render()
                                                 inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
                                             end
                                         else
+                                            -- Center text for empty slots
+                                            local textWidth = ImGui.CalcTextSize(slotName)
+                                            local cellWidth = 40
+                                            local xOffset = (cellWidth - textWidth) * 0.5
+                                            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + xOffset)
                                             ImGui.Text(slotName)
+                                            
                                             if ImGui.IsItemClicked() then
                                                 if mq.TLO.Window("ItemDisplayWindow").Open() then
                                                     mq.TLO.Window("ItemDisplayWindow").DoClose()
@@ -1067,7 +1060,7 @@ function inventoryUI.render()
                                                 local slotButtonID = "slot_" .. tostring(slotID)
                                                 local slotName = getSlotNameFromID(slotID)
                                                 local item = equippedItems[slotID]
-                                    
+
                                                 ImGui.PushID(slotButtonID)
                                                 local success, err = pcall(renderEquippedSlot, slotID, item, slotName)
                                                 ImGui.PopID()
@@ -1087,7 +1080,6 @@ function inventoryUI.render()
                             ImGui.NextColumn()
 
                             if inventoryUI.selectedSlotID then
-                                -- Header for the comparison table
                                 ImGui.Text("Comparing " .. inventoryUI.selectedSlotName .. " slot across all characters:")
                                 ImGui.Separator()
 
@@ -1101,28 +1093,67 @@ function inventoryUI.render()
                                         ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
                                         ImGui.TableHeadersRow()
 
-                                        -- Track if we're hovering over any comparison item
-                                        local hoveringAnyCompare = false
+                                        local peerMap = {}
+                                        for _, result in ipairs(inventoryUI.compareResults) do
+                                            if result.peerName then
+                                                peerMap[result.peerName] = true
+                                            end
+                                        end
 
+                                        local allConnectedPeers = {}
+                                        
+                                        for peerID, invData in pairs(inventory_actor.peer_inventories) do
+                                            if invData and invData.name then
+                                                table.insert(allConnectedPeers, invData.name)
+                                            end
+                                        end
+                                    
+                                        local processedResults = {}
+                                        
                                         for idx, result in ipairs(inventoryUI.compareResults) do
+                                            if result.peerName then
+                                                table.insert(processedResults, result)
+                                                --mq.cmdf("/echo [DEBUG] Added result for peer with item: %s", result.peerName)
+                                            end
+                                        end
+
+                                        for _, peerName in ipairs(allConnectedPeers) do
+                                            if not peerMap[peerName] then
+                                                table.insert(processedResults, {
+                                                    peerName = peerName,
+                                                    item = nil
+                                                })
+                                                --mq.cmdf("/echo [DEBUG] Added empty result for peer: %s", peerName)
+                                            end
+                                        end
+                                        
+                                        table.sort(processedResults, function(a, b) 
+                                            return (a.peerName or "zzz") < (b.peerName or "zzz") 
+                                        end)
+
+                                        for idx, result in ipairs(processedResults) do
                                             local safePeerName = result.peerName or "UnknownPeer"
                                             ImGui.PushID(safePeerName .. "_" .. tostring(idx))
 
-                                            -- Filter by armor type
-                                            local peerClass = mq.TLO.Spawn("pc = " .. result.peerName).Class.ShortName()
-                                            local armorType = getArmorTypeByClass(peerClass)
+                                            local showRow = true
+                                            if result.peerName then
+                                                local peerSpawn = mq.TLO.Spawn("pc = " .. result.peerName)
+                                                if peerSpawn.ID() then
+                                                    local peerClass = peerSpawn.Class.ShortName() or "UNK"
+                                                    local armorType = getArmorTypeByClass(peerClass)
+                                                    showRow = (inventoryUI.armorTypeFilter == "All" or armorType == inventoryUI.armorTypeFilter)
+                                                end
+                                            end
 
-                                            if inventoryUI.armorTypeFilter == "All" or armorType == inventoryUI.armorTypeFilter then
+                                            if showRow then
                                                 ImGui.TableNextRow()
 
-                                                -- Character column
                                                 ImGui.TableNextColumn()
                                                 if ImGui.Selectable(result.peerName) then
                                                     inventory_actor.send_inventory_command(result.peerName, "foreground", {})
                                                     mq.cmdf("/echo Bringing %s to the foreground...", result.peerName)
                                                 end
 
-                                                -- Icon column
                                                 ImGui.TableNextColumn()
                                                 if result.item and result.item.icon and result.item.icon > 0 then
                                                     drawItemIcon(result.item.icon)
@@ -1133,7 +1164,6 @@ function inventoryUI.render()
                                                 ImGui.TableNextColumn()
                                                 if result.item then
                                                     if ImGui.Selectable(result.item.name) then
-                                                        -- Execute the item link if available
                                                         if result.item.itemlink and result.item.itemlink ~= "" then
                                                             local links = mq.ExtractLinks(result.item.itemlink)
                                                             if links and #links > 0 then
@@ -1141,49 +1171,12 @@ function inventoryUI.render()
                                                             end
                                                         end
                                                     end
-
-                                                    if ImGui.IsItemHovered() then
-                                                        hoveringAnyCompare = true
-                                                        hoveringAnyItem = inventoryUI.enableHover 
-
-                                                        local hoverKey = "compare_" .. result.peerName .. "_" .. idx
-
-                                                        if inventoryUI.enableHover and not inventoryUI.openItemWindow then
-                                                            if result.item.itemlink and result.item.itemlink ~= "" then
-                                                                local links = mq.ExtractLinks(result.item.itemlink)
-                                                                if links and #links > 0 then
-                                                                    mq.ExecuteTextLink(links[1])
-                                                                    inventoryUI.openItemWindow = hoverKey
-                                                                end
-                                                            end
-                                                        end
-
-                                                        -- Always show tooltip with augments
-                                                        ImGui.BeginTooltip()
-                                                        ImGui.Text(result.item.name)
-
-                                                        -- Display augments if any
-                                                        for a = 1, 6 do
-                                                            local augField = "aug" .. a .. "Name"
-                                                            if result.item[augField] and result.item[augField] ~= "" then
-                                                                ImGui.Text(string.format("Aug %d: %s", a, result.item[augField]))
-                                                            end
-                                                        end
-
-                                                        ImGui.EndTooltip()
-
-                                                        if inventoryUI.enableHover then
-                                                            inventoryUI.hoverStates[hoverKey] = true
-                                                        end
-                                                    end
                                                 else
                                                     ImGui.Text("(empty)")
                                                 end
                                             end
                                             ImGui.PopID()
-                                        
                                         end
-
                                         ImGui.EndTable()
                                     end
                                 end
@@ -1191,7 +1184,7 @@ function inventoryUI.render()
                                 ImGui.Text("Click on a slot to compare it across all characters.")
                             end
 
-                            ImGui.Columns(1)  -- Reset to a single column
+                            ImGui.Columns(1)
 
                             if not hoveringAnyItem and inventoryUI.openItemWindow then
                                 if mq.TLO.Window("ItemDisplayWindow").Open() then
@@ -1564,21 +1557,41 @@ function inventoryUI.render()
 
         -- Search results with filter applied
         local results = searchAcrossPeers()
-        ImGui.Separator()
-        local avail = ImGui.GetContentRegionAvail()
-        ImGui.BeginChild("AllBotsResultsRegion", x, y, true, ImGuiChildFlags.Border)
         if #results == 0 then
             ImGui.Text("No matching items found across all peers.")
         else
-            if ImGui.BeginTable("AllPeersTable", 7, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
-                -- Define columns
-                ImGui.TableSetupColumn("Peer", ImGuiTableColumnFlags.WidthStretch, 60)
-                ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthStretch, 50)
-                ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthStretch, 60)
-                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 30)
-                ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 200)
-                ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 40)
-                ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 80)
+            
+            local availableWidth = ImGui.GetContentRegionMax()
+            local totalWidth = availableWidth
+
+            -- Fixed width columns
+            local iconWidth = 30
+            local qtyWidth = 40
+            local actionWidth = 80
+
+            -- Calculate remaining width for stretch columns
+            local remainingWidth = totalWidth - iconWidth - qtyWidth - actionWidth
+            local stretchTotalWeight = 60 + 50 + 60 + 200  -- Sum of all stretch weights
+            local peerWidth = (remainingWidth * 60) / stretchTotalWeight
+            local sourceWidth = (remainingWidth * 50) / stretchTotalWeight
+            local slotWidth = (remainingWidth * 60) / stretchTotalWeight
+            local itemWidth = (remainingWidth * 200) / stretchTotalWeight
+
+            -- Check for minimum widths to prevent column squishing
+            peerWidth = math.max(peerWidth, 60)
+            sourceWidth = math.max(sourceWidth, 50)
+            slotWidth = math.max(slotWidth, 60)
+            itemWidth = math.max(itemWidth, 120)
+
+            if ImGui.BeginTable("AllPeersTable", 7, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.ScrollX) then
+                -- Define columns with calculated widths
+                ImGui.TableSetupColumn("Peer", ImGuiTableColumnFlags.WidthFixed, peerWidth)
+                ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, sourceWidth)
+                ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthFixed, slotWidth)
+                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, iconWidth)
+                ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
+                ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, qtyWidth)
+                ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, actionWidth)
                 ImGui.TableHeadersRow()
 
                 -- Helper function to determine slot information
@@ -1627,7 +1640,10 @@ function inventoryUI.render()
 
                         -- Peer name column
                         ImGui.TableNextColumn()
-                        ImGui.Text(item.peerName)
+                        if ImGui.Selectable(item.peerName) then
+                            inventory_actor.send_inventory_command(item.peerName, "foreground", {})
+                            mq.cmdf("/echo Bringing %s to the foreground...", item.peerName)
+                        end
 
                         -- Source column (Inventory, Bank, Equipped)
                         ImGui.TableNextColumn()
@@ -1663,7 +1679,7 @@ function inventoryUI.render()
                             showContextMenu(item, item.peerName, mouseX, mouseY)
                         end
 
-                       -- Quantity column
+                    -- Quantity column
                         ImGui.TableNextColumn()
                         local qtyDisplay = tostring(item.qty or "?")
                         ImGui.Text(qtyDisplay)
@@ -1720,11 +1736,12 @@ function inventoryUI.render()
                             end
                         else
                             if item.nodrop == 0 then
+                                -- Simplified action buttons to fit in column better
                                 if ImGui.Button("Trade##" .. uniqueID) then
                                     inventoryUI.showGiveItemPanel = true
                                     inventoryUI.selectedGiveItem = itemName
-                                    inventoryUI.selectedGiveTarget = peerName  -- The target to receive the item
-                                    inventoryUI.selectedGiveSource = item.peerName  -- Store the original owner!
+                                    inventoryUI.selectedGiveTarget = peerName
+                                    inventoryUI.selectedGiveSource = item.peerName
                                 end
                                 ImGui.SameLine()
                                 ImGui.Text("--")  -- Horizontal padding
@@ -1760,10 +1777,10 @@ function inventoryUI.render()
                 ImGui.EndTable()
             end
         end
-        ImGui.EndChild()
         ImGui.EndTabItem()
     end
     ImGui.EndTabBar()
+    ImGui.EndChild()
   end
 
         --------------------------------------------------------
