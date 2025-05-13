@@ -11,6 +11,7 @@ local json = require("dkjson")
 ---@tag InventoryUI
 local inventoryUI = {
     visible = true,
+    showToggleButton = true,
     selectedPeer = mq.TLO.Me.Name(),
     peers = {},
     inventoryData = { equipped = {}, bags = {}, bank = {} },
@@ -308,6 +309,38 @@ local function draw_item_icon_cbb(item, cell_id)
     end
 end
 
+local function InventoryToggleButton()
+    ImGui.SetNextWindowSize(60, 60, ImGuiCond.Always)
+    ImGui.Begin("EZInvToggle", nil, bit.bor(ImGuiWindowFlags.NoDecoration, ImGuiWindowFlags.AlwaysAutoResize, ImGuiWindowFlags.NoBackground))
+
+    local time = mq.gettime() / 1000
+    local pulse = (math.sin(time * 3) + 1) * 0.5
+    local base_color = inventoryUI.visible and {0.2, 0.8, 0.2, 1.0} or {0.7, 0.2, 0.2, 1.0}
+    local hover_color = {
+        base_color[1] + 0.2 * pulse,
+        base_color[2] + 0.2 * pulse,
+        base_color[3] + 0.2 * pulse,
+        1.0
+    }
+
+    ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 10)
+    ImGui.PushStyleColor(ImGuiCol.Button,        ImVec4(base_color[1], base_color[2], base_color[3], 0.85))
+    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(hover_color[1], hover_color[2], hover_color[3], 1.0))
+    ImGui.PushStyleColor(ImGuiCol.ButtonActive,  ImVec4(base_color[1] * 0.8, base_color[2] * 0.8, base_color[3] * 0.8, 1.0))
+
+    local icon = icons.FA_ITALIC or "Inv"
+    if ImGui.Button(icon, 48, 48) then
+        inventoryUI.visible = not inventoryUI.visible
+    end
+
+    if ImGui.IsItemHovered() then
+        ImGui.SetTooltip(inventoryUI.visible and "Hide Inventory" or "Show Inventory")
+    end
+
+    ImGui.PopStyleColor(3)
+    ImGui.PopStyleVar()
+    ImGui.End()
+end
 
 --------------------------------------------------
 -- Helper: Update List of Connected Peers
@@ -749,29 +782,30 @@ function inventoryUI.render()
             inventoryUI.showGiveItemPanel = not inventoryUI.showGiveItemPanel
         end
 
-        -- Add the lock button (padlock icon)
         local cursorPosX = ImGui.GetCursorPosX()
-        local lockTextWidth = ImGui.CalcTextSize(icons.FA_UNLOCK)
-        local closeTextWidth = ImGui.CalcTextSize("Close")
-        local totalButtonWidth = lockTextWidth + closeTextWidth + 20  -- include spacing
-        local windowWidth = ImGui.GetWindowWidth()
-        local rightAlignPos = windowWidth - totalButtonWidth - 20
+        local iconSpacing = 10
+        local iconSize = 24
+        local totalIconWidth = (iconSize + iconSpacing) * 3 + 10
 
-        ImGui.SameLine(rightAlignPos)
-        if inventoryUI.windowLocked then
-            if ImGui.Button(icons.FA_LOCK) then
-                inventoryUI.windowLocked = false
-            end
-            if ImGui.IsItemHovered() then
-                ImGui.SetTooltip("Unlock window position and size")
-            end
-        else
-            if ImGui.Button(icons.FA_UNLOCK) then
-                inventoryUI.windowLocked = true
-            end
-            if ImGui.IsItemHovered() then
-                ImGui.SetTooltip("Lock window position and size")
-            end
+        local rightAlignX = ImGui.GetWindowWidth() - totalIconWidth - 10
+        ImGui.SameLine(rightAlignX)
+
+        local floatIcon = inventoryUI.showToggleButton and icons.FA_EYE or icons.FA_EYE_SLASH
+        if ImGui.Button(floatIcon, iconSize, iconSize) then
+            inventoryUI.showToggleButton = not inventoryUI.showToggleButton
+        end
+        if ImGui.IsItemHovered() then
+            ImGui.SetTooltip(inventoryUI.showToggleButton and "Hide Floating Button" or "Show Floating Button")
+        end
+
+        ImGui.SameLine()
+
+        local lockIcon = inventoryUI.windowLocked and icons.FA_LOCK or icons.FA_UNLOCK
+        if ImGui.Button(lockIcon, iconSize, iconSize) then
+            inventoryUI.windowLocked = not inventoryUI.windowLocked
+        end
+        if ImGui.IsItemHovered() then
+            ImGui.SetTooltip(inventoryUI.windowLocked and "Unlock window" or "Lock window")
         end
 
         ImGui.SameLine()
@@ -1859,8 +1893,14 @@ function inventoryUI.render()
   renderContextMenu()
 end
 
-mq.imgui.init("Inventory Window", function()
-  inventoryUI.render()
+mq.imgui.init("InventoryWindow", function()
+    if inventoryUI.showToggleButton then
+        InventoryToggleButton()
+    end
+    if inventoryUI.visible then
+        inventoryUI.render()
+    end
+    renderContextMenu()
 end)
 
 -- Define help information
