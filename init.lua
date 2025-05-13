@@ -745,22 +745,19 @@ function inventoryUI.render()
         end        
 
         ImGui.SameLine()
-        if ImGui.Button("Close") then
-            inventoryUI.visible = false
-        end
-        ImGui.SameLine()
         if ImGui.Button("Give Item") then
             inventoryUI.showGiveItemPanel = not inventoryUI.showGiveItemPanel
         end
 
-        ImGui.SameLine()
-
         -- Add the lock button (padlock icon)
         local cursorPosX = ImGui.GetCursorPosX()
-        local textWidth = ImGui.CalcTextSize(icons.FA_UNLOCK)
+        local lockTextWidth = ImGui.CalcTextSize(icons.FA_UNLOCK)
+        local closeTextWidth = ImGui.CalcTextSize("Close")
+        local totalButtonWidth = lockTextWidth + closeTextWidth + 20  -- include spacing
         local windowWidth = ImGui.GetWindowWidth()
-        local lockButtonPosX = windowWidth - textWidth - 40
-        ImGui.SameLine(lockButtonPosX)
+        local rightAlignPos = windowWidth - totalButtonWidth - 20
+
+        ImGui.SameLine(rightAlignPos)
         if inventoryUI.windowLocked then
             if ImGui.Button(icons.FA_LOCK) then
                 inventoryUI.windowLocked = false
@@ -776,6 +773,12 @@ function inventoryUI.render()
                 ImGui.SetTooltip("Lock window position and size")
             end
         end
+
+        ImGui.SameLine()
+        if ImGui.Button("Close") then
+            inventoryUI.visible = false
+        end
+
 
         ImGui.Separator()
         ImGui.Text("Search Items:")
