@@ -265,6 +265,12 @@ function M.process_pending_requests()
         mq.delay(500)
     end
 
+    -- close bank window
+    if mq.TLO.Window('BigBankWnd').Open() then
+        mq.TLO.Window('BigBankWnd').DoClose()
+        mq.delay(1)
+    end
+
     -- Step 2: Find recipient
     local spawn = mq.TLO.Spawn("pc =" .. request.toon)
     if not spawn or not spawn() then
