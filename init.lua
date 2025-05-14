@@ -973,8 +973,8 @@ function inventoryUI.render()
                                                     
                             ImGui.EndTable()
                         end
-                        ImGui.EndChild()
                     end
+                    ImGui.EndChild()
                     ImGui.EndTabItem()
                 end
 
