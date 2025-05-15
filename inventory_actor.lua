@@ -289,8 +289,14 @@ function M.process_pending_requests()
         end
     end
 
+    -- Check if Bank Window is open; close if necessary
+    local bankWindow = mq.TLO.Window("BigBankWnd")
+    if bankWindow.Open() then
+        mq.TLO.Window("BigBankWnd").DoClose()
+    end
+    mq.delay(50)
+
     -- Step 3: Trade the item
-    M.send_inventory_command(request.toon, "auto_accept_trade", {})
     mq.cmdf("/mqtar pc %s", request.toon)
     mq.delay(500)
     mq.cmd("/click left target")
@@ -306,6 +312,8 @@ function M.process_pending_requests()
     end
 
     mq.delay(500)
+    M.send_inventory_command(request.toon, "auto_accept_trade", {})
+    mq.delay(5)
     mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
 
     -- Optional: Close bank window
