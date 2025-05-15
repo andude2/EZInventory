@@ -1900,7 +1900,6 @@ mq.imgui.init("InventoryWindow", function()
     if inventoryUI.visible then
         inventoryUI.render()
     end
-    renderContextMenu()
 end)
 
 -- Define help information
