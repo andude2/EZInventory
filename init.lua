@@ -589,7 +589,6 @@ function showContextMenu(item, sourceChar, mouseX, mouseY)
         mouseX, mouseY = ImGui.GetMousePos()
     end
 
-    -- Store a deep copy of the item to prevent reference issues
     local itemCopy = {}
     for k, v in pairs(item) do
         itemCopy[k] = v
@@ -597,7 +596,7 @@ function showContextMenu(item, sourceChar, mouseX, mouseY)
 
     inventoryUI.contextMenu.visible = true
     inventoryUI.contextMenu.item = itemCopy
-    inventoryUI.contextMenu.source = sourceChar  -- Make sure this is set correctly
+    inventoryUI.contextMenu.source = sourceChar
     inventoryUI.contextMenu.x = mouseX
     inventoryUI.contextMenu.y = mouseY
 
@@ -1548,6 +1547,31 @@ function inventoryUI.render()
                     inventoryUI.bagOpen = inventoryUI.bagOpen or {}
                     local searchChanged = searchText ~= (inventoryUI.previousSearchText or "")
                     inventoryUI.previousSearchText = searchText
+                    
+                    -- Multi-select controls
+                    if inventoryUI.multiSelectMode then
+                        local selectedCount = getSelectedItemCount()
+                        ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1) -- Green text
+                        ImGui.Text(string.format("Multi-Select Mode: %d items selected", selectedCount))
+                        ImGui.PopStyleColor()
+                        ImGui.SameLine()
+                        if ImGui.Button("Exit Multi-Select") then
+                            inventoryUI.multiSelectMode = false
+                            clearItemSelection()
+                        end
+                        if selectedCount > 0 then
+                            ImGui.SameLine()
+                            if ImGui.Button("Show Trade Panel") then
+                                inventoryUI.showMultiTradePanel = true
+                            end
+                            ImGui.SameLine()
+                            if ImGui.Button("Clear Selection") then
+                                clearItemSelection()
+                            end
+                        end
+                        ImGui.Separator()
+                    end
+                    
                     local checkboxLabel = inventoryUI.globalExpandAll and "Collapse All Bags" or "Expand All Bags"
                     if ImGui.Checkbox(checkboxLabel, inventoryUI.globalExpandAll) ~= inventoryUI.globalExpandAll then
                         inventoryUI.globalExpandAll = not inventoryUI.globalExpandAll
@@ -1555,11 +1579,13 @@ function inventoryUI.render()
                             inventoryUI.bagOpen[bagid] = inventoryUI.globalExpandAll
                         end
                     end
+                    
                     local bagColumns = {}
                     for bagid, bagItems in pairs(inventoryUI.inventoryData.bags) do
                         table.insert(bagColumns, { bagid = bagid, items = bagItems })
                     end
                     table.sort(bagColumns, function(a, b) return a.bagid < b.bagid end)
+                    
                     for _, bag in ipairs(bagColumns) do
                         local bagid = bag.bagid
                         local bagName = bag.items[1] and bag.items[1].bagname or ("Bag " .. tostring(bagid))
@@ -1581,75 +1607,115 @@ function inventoryUI.render()
                                 ImGui.TableSetupColumn("Slot #", ImGuiTableColumnFlags.WidthFixed, 60)
                                 ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 80)
                                 ImGui.TableHeadersRow()
+                                
                                 for i, item in ipairs(bag.items) do
                                     if matchesSearch(item) then
                                         ImGui.TableNextRow()
+                                        
+                                        -- Create unique key for this item
+                                        local uniqueKey = string.format("%s_%s_%s_%s", 
+                                            inventoryUI.selectedPeer or "unknown",
+                                            item.name or "unnamed",
+                                            bagid,
+                                            item.slotid or "noslot")
+                                        
+                                        -- Icon column
                                         ImGui.TableNextColumn()
                                         if item.icon and item.icon > 0 then
                                             drawItemIcon(item.icon)
                                         else
                                             ImGui.Text("N/A")
                                         end
+                                        
+                                        -- Item Name column (with multi-select support)
                                         ImGui.TableNextColumn()
-                                        local function handleBagItemClick(item, bagid, i)
-                                            local uniqueKey = string.format("%s_%s_%s_%s", 
-                                                inventoryUI.selectedPeer or "unknown",
-                                                item.name or "unnamed",
-                                                item.bagid or "nobag",
-                                                item.slotid or "noslot")
-                                            
-                                            if inventoryUI.multiSelectMode then
-                                                -- In multi-select mode, toggle selection
-                                                if ImGui.IsItemClicked(ImGuiMouseButton.Left) then
-                                                    toggleItemSelection(item, uniqueKey)
-                                                    return true -- Indicate we handled the click
-                                                end
+                                        local itemClicked = false
+                                        
+                                        if inventoryUI.multiSelectMode then
+                                            -- Visual indication for selected items
+                                            if inventoryUI.selectedItems[uniqueKey] then
+                                                ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1) -- Green for selected
+                                                itemClicked = ImGui.Selectable(item.name .. "##" .. bagid .. "_" .. i)
+                                                ImGui.PopStyleColor()
                                             else
-                                                -- Normal mode - examine item
-                                                if ImGui.IsItemClicked(ImGuiMouseButton.Left) then
-                                                    local links = mq.ExtractLinks(item.itemlink)
-                                                    if links and #links > 0 then
-                                                        mq.ExecuteTextLink(links[1])
-                                                    else
-                                                        mq.cmd('/echo No item link found in the database.')
-                                                    end
-                                                    return true
+                                                itemClicked = ImGui.Selectable(item.name .. "##" .. bagid .. "_" .. i)
+                                            end
+                                            
+                                            if itemClicked then
+                                                toggleItemSelection(item, uniqueKey, inventoryUI.selectedPeer)
+                                            end
+                                            
+                                            -- Draw selection indicator
+                                            drawSelectionIndicator(uniqueKey, ImGui.IsItemHovered())
+                                        else
+                                            -- Normal mode - examine item
+                                            if ImGui.Selectable(item.name .. "##" .. bagid .. "_" .. i) then
+                                                local links = mq.ExtractLinks(item.itemlink)
+                                                if links and #links > 0 then
+                                                    mq.ExecuteTextLink(links[1])
+                                                else
+                                                    mq.cmd('/echo No item link found in the database.')
                                                 end
                                             end
-                                            return false
                                         end
+                                        
+                                        -- Right-click context menu
                                         if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
                                             local mouseX, mouseY = ImGui.GetMousePos()
                                             showContextMenu(item, inventoryUI.selectedPeer, mouseX, mouseY)
                                         end
+                                        
+                                        -- Tooltip
                                         if ImGui.IsItemHovered() then
                                             ImGui.BeginTooltip()
                                             ImGui.Text(item.name)
                                             ImGui.Text("Qty: " .. tostring(item.qty))
+                                            if inventoryUI.multiSelectMode then
+                                                ImGui.Text("Right-click for options")
+                                                ImGui.Text("Left-click to select/deselect")
+                                            end
                                             ImGui.EndTooltip()
                                         end
+                                        
+                                        -- Quantity column
                                         ImGui.TableNextColumn()
                                         ImGui.Text(tostring(item.qty or ""))
+                                        
+                                        -- Slot column
                                         ImGui.TableNextColumn()
                                         ImGui.Text(tostring(item.slotid or ""))
+                                        
+                                        -- Action column
                                         ImGui.TableNextColumn()
-                                        if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
-                                            if ImGui.Button("Pickup##" .. item.name .. "_" .. tostring(item.slotid or i)) then
-                                                mq.cmdf('/shift /itemnotify "%s" leftmouseup', item.name)
+                                        if inventoryUI.multiSelectMode then
+                                            -- Show selection status in multi-select mode
+                                            if inventoryUI.selectedItems[uniqueKey] then
+                                                ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
+                                                ImGui.Text("Selected")
+                                                ImGui.PopStyleColor()
+                                            else
+                                                ImGui.Text("--")
                                             end
                                         else
-                                            if item.nodrop == 0 then
-                                                local itemName = item.name or "Unknown"
-                                                local peerName = item.peerName or "Unknown"
-                                                local uniqueID = string.format("%s_%s_%d", itemName, peerName, i)
-                                                if ImGui.Button("Trade##" .. uniqueID) then
-                                                    inventoryUI.showGiveItemPanel = true
-                                                    inventoryUI.selectedGiveItem = itemName
-                                                    inventoryUI.selectedGiveTarget = peerName  -- The target to receive the item
-                                                    inventoryUI.selectedGiveSource = item.peerName  -- Store the original owner!
+                                            -- Normal action buttons
+                                            if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
+                                                if ImGui.Button("Pickup##" .. item.name .. "_" .. tostring(item.slotid or i)) then
+                                                    mq.cmdf('/shift /itemnotify "%s" leftmouseup', item.name)
                                                 end
                                             else
-                                                ImGui.Text("No Drop")
+                                                if item.nodrop == 0 then
+                                                    local itemName = item.name or "Unknown"
+                                                    local peerName = inventoryUI.selectedPeer or "Unknown"
+                                                    local uniqueID = string.format("%s_%s_%d", itemName, peerName, i)
+                                                    if ImGui.Button("Trade##" .. uniqueID) then
+                                                        inventoryUI.showGiveItemPanel = true
+                                                        inventoryUI.selectedGiveItem = itemName
+                                                        inventoryUI.selectedGiveTarget = peerName
+                                                        inventoryUI.selectedGiveSource = inventoryUI.selectedPeer
+                                                    end
+                                                else
+                                                    ImGui.Text("No Drop")
+                                                end
                                             end
                                         end
                                     end
