@@ -854,6 +854,9 @@ function initiateMultiItemTrade(targetChar)
     clearItemSelection()
 end
 
+-- Find the renderMultiTradePanel function in your init.lua file (around line 800)
+-- Replace the existing Close button code with this:
+
 function renderMultiTradePanel()
     if not inventoryUI.showMultiTradePanel then return end
     
@@ -956,6 +959,7 @@ function renderMultiTradePanel()
                 initiateMultiItemTrade(inventoryUI.multiTradeTarget)
                 inventoryUI.showMultiTradePanel = false
                 inventoryUI.multiSelectMode = false
+                clearItemSelection()
             end
             ImGui.SameLine()
         end
@@ -965,8 +969,11 @@ function renderMultiTradePanel()
         end
         ImGui.SameLine()
         
+        -- UPDATED CLOSE BUTTON - This is the key change
         if ImGui.Button("Close") then
             inventoryUI.showMultiTradePanel = false
+            inventoryUI.multiSelectMode = false
+            clearItemSelection()
         end
     end
     
