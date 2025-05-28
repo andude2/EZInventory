@@ -702,7 +702,6 @@ function renderContextMenu()
         -- Single item trade options (only if not in multi-select mode)
         if not inventoryUI.multiSelectMode then
             local isNoDrop = false
-            -- Safe access to nodrop property
             if inventoryUI.contextMenu.item and inventoryUI.contextMenu.item.nodrop and inventoryUI.contextMenu.item.nodrop == 1 then
                 isNoDrop = true
             end
@@ -764,18 +763,15 @@ function initiateProxyTrade(item, sourceChar, targetChar)
 end
 
 function initiateMultiItemTrade(targetChar)
-    mq.cmdf("/echo [DEBUG] initiateMultiItemTrade called for target: %s", tostring(targetChar))
+    --mq.cmdf("/echo [DEBUG] initiateMultiItemTrade called for target: %s", tostring(targetChar))
     local tradableItems = {}
     local noDropItems = {}
     local sourceChar = nil
     local sourceCounts = {}  -- Track items per source character
     
-    -- Analyze selected items and group by source
     for _, selectedData in pairs(inventoryUI.selectedItems) do
         local item = selectedData.item
         local itemSource = selectedData.source or inventoryUI.selectedPeer or mq.TLO.Me.Name()
-        
-        -- Count items per source
         sourceCounts[itemSource] = (sourceCounts[itemSource] or 0) + 1
         
         if item.nodrop == 0 then
@@ -787,8 +783,7 @@ function initiateMultiItemTrade(targetChar)
             table.insert(noDropItems, item)
         end
     end
-    
-    -- Determine the primary source character (most items)
+
     local maxCount = 0
     for source, count in pairs(sourceCounts) do
         if count > maxCount then
@@ -796,8 +791,6 @@ function initiateMultiItemTrade(targetChar)
             sourceChar = source
         end
     end
-    
-    -- Fallback source determination
     if not sourceChar then
         sourceChar = inventoryUI.contextMenu.source or inventoryUI.selectedPeer or mq.TLO.Me.Name()
     end
@@ -808,8 +801,6 @@ function initiateMultiItemTrade(targetChar)
     
     if #tradableItems > 0 and sourceChar and targetChar then
         mq.cmdf("/echo Initiating multi-item trade: %d items from %s to %s", #tradableItems, sourceChar, targetChar)
-        
-        -- Group items by their actual source character
         local itemsBySource = {}
         for _, tradableItem in ipairs(tradableItems) do
             local source = tradableItem.source
@@ -818,8 +809,7 @@ function initiateMultiItemTrade(targetChar)
             end
             table.insert(itemsBySource[source], tradableItem.item)
         end
-        
-        -- Send batch requests for each source character
+
         for source, items in pairs(itemsBySource) do
             if #items > 0 then
                 local batchRequest = {
@@ -955,6 +945,7 @@ function renderMultiTradePanel()
                 inventoryUI.showMultiTradePanel = false
                 inventoryUI.multiSelectMode = false
                 clearItemSelection()
+                clearItemSelection()
             end
             ImGui.SameLine()
         end
@@ -965,6 +956,8 @@ function renderMultiTradePanel()
         ImGui.SameLine()
         if ImGui.Button("Close") then
             inventoryUI.showMultiTradePanel = false
+            inventoryUI.multiSelectMode = false
+            clearItemSelection()
             inventoryUI.multiSelectMode = false
             clearItemSelection()
         end
