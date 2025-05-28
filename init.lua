@@ -124,7 +124,7 @@ local function draw_empty_slot_cbb(cell_id)
         if pack_number and slotIndex then
             pack_number = tonumber(pack_number)
             slotIndex = tonumber(slotIndex)
-            mq.cmdf("/echo [DEBUG] Drop Attempt: pack_number=%s, slotIndex=%s", tostring(pack_number), tostring(slotIndex))
+            --mq.cmdf("/echo [DEBUG] Drop Attempt: pack_number=%s, slotIndex=%s", tostring(pack_number), tostring(slotIndex))
             if pack_number >= 1 and pack_number <= 12 and slotIndex >= 1 then
                 if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
                     mq.cmdf("/itemnotify in pack%d %d leftmouseup", pack_number, slotIndex)
@@ -146,7 +146,7 @@ local function draw_empty_slot_cbb(cell_id)
                     local bagItems = inventoryUI.inventoryData.bags[pack_number]
                     for i = #bagItems, 1, -1 do
                         if tonumber(bagItems[i].slotid) == slotIndex then
-                            mq.cmdf("/echo [DEBUG] Optimistically replacing existing item in UI data: Bag %d, Slot %d", pack_number, slotIndex)
+                            --mq.cmdf("/echo [DEBUG] Optimistically replacing existing item in UI data: Bag %d, Slot %d", pack_number, slotIndex)
                             bagItems[i] = newItem -- Replace existing entry
                             replaced = true
                             break
@@ -154,7 +154,7 @@ local function draw_empty_slot_cbb(cell_id)
                     end
 
                     if not replaced then
-                        mq.cmdf("/echo [DEBUG] Optimistically adding new item to UI data: Bag %d, Slot %d", pack_number, slotIndex)
+                        --mq.cmdf("/echo [DEBUG] Optimistically adding new item to UI data: Bag %d, Slot %d", pack_number, slotIndex)
                         table.insert(inventoryUI.inventoryData.bags[pack_number], newItem)
                     end
 
@@ -213,7 +213,7 @@ local function draw_live_item_icon_cbb(item_tlo, cell_id)
         local mainSlot = item_tlo.ItemSlot()
         local subSlot = item_tlo.ItemSlot2()
 
-        mq.cmdf("/echo [DEBUG] Live Pickup Click: mainSlot=%s, subSlot=%s", tostring(mainSlot), tostring(subSlot))
+        --mq.cmdf("/echo [DEBUG] Live Pickup Click: mainSlot=%s, subSlot=%s", tostring(mainSlot), tostring(subSlot))
 
         if mainSlot >= 23 and mainSlot <= 34 then -- It's in a bag slot
             local pack_number = mainSlot - 22 -- Convert 23-34 to 1-12
@@ -286,7 +286,7 @@ local function draw_item_icon_cbb(item, cell_id)
     if ImGui.IsItemClicked(ImGuiMouseButton.Left) then
         local bagid_raw = item.bagid
         local slotid_raw = item.slotid
-        mq.cmdf("/echo [DEBUG] Clicked '%s': DB bagid=%s, DB slotid=%s", item.name, tostring(bagid_raw), tostring(slotid_raw))
+        --mq.cmdf("/echo [DEBUG] Clicked '%s': DB bagid=%s, DB slotid=%s", item.name, tostring(bagid_raw), tostring(slotid_raw))
 
         local pack_number = tonumber(bagid_raw)
         local command_slotid = tonumber(slotid_raw)
@@ -294,7 +294,7 @@ local function draw_item_icon_cbb(item, cell_id)
         if not pack_number or not command_slotid then
             mq.cmdf("/echo [ERROR] Missing or non-numeric bagid/slotid in database item: %s (bagid_raw=%s, slotid_raw=%s)", item.name, tostring(bagid_raw), tostring(slotid_raw))
         else
-            mq.cmdf("/echo [DEBUG] Interpreted: pack_number=%s, command_slotid=%s", tostring(pack_number), tostring(command_slotid))
+            --mq.cmdf("/echo [DEBUG] Interpreted: pack_number=%s, command_slotid=%s", tostring(pack_number), tostring(command_slotid))
 
             if pack_number >= 1 and pack_number <= 12 and command_slotid >= 1 then
                 if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
@@ -304,7 +304,7 @@ local function draw_item_icon_cbb(item, cell_id)
                         local bagItems = inventoryUI.inventoryData.bags[pack_number]
                         for i = #bagItems, 1, -1 do 
                             if tonumber(bagItems[i].slotid) == command_slotid then
-                                mq.cmdf("/echo [DEBUG] Optimistically removing item from UI data: Bag %d, Slot %d", pack_number, command_slotid)
+                                --mq.cmdf("/echo [DEBUG] Optimistically removing item from UI data: Bag %d, Slot %d", pack_number, command_slotid)
                                 table.remove(bagItems, i)
                                 break
                             end
@@ -615,7 +615,7 @@ function showContextMenu(item, sourceChar, mouseX, mouseY)
     table.sort(inventoryUI.contextMenu.peers)
     inventoryUI.contextMenu.selectedPeer = nil
 
-    mq.cmdf("/echo [DEBUG] Context menu opened for %s from %s", (itemCopy.name or "Unknown Item"), (sourceChar or "Unknown Source"))
+    --mq.cmdf("/echo [DEBUG] Context menu opened for %s from %s", (itemCopy.name or "Unknown Item"), (sourceChar or "Unknown Source"))
 end
 
 function hideContextMenu()

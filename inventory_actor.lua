@@ -494,7 +494,7 @@ function M.perform_multi_item_trade_step()
                 filled_slots = filled_slots + 1
             end
         end
-        mq.cmdf("/echo [DEBUG] Trade window has %d filled slots.", filled_slots)
+        mq.cmdf("/echo Trade window has %d filled slots.", filled_slots)
 
         if item_to_trade and filled_slots < 8 then
             mq.cmdf("/echo [BATCH STATE] Placing item %d/%d: %s",
