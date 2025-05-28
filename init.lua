@@ -864,8 +864,6 @@ function renderMultiTradePanel()
         local selectedCount = getSelectedItemCount()
         ImGui.Text(string.format("Selected Items: %d", selectedCount))
         ImGui.Separator()
-        
-        -- Show selected items list
         if ImGui.BeginChild("SelectedItemsList", 0, 250, true) then
             if selectedCount == 0 then
                 ImGui.Text("No items selected")
@@ -956,6 +954,7 @@ function renderMultiTradePanel()
                 initiateMultiItemTrade(inventoryUI.multiTradeTarget)
                 inventoryUI.showMultiTradePanel = false
                 inventoryUI.multiSelectMode = false
+                clearItemSelection()
             end
             ImGui.SameLine()
         end
@@ -964,9 +963,10 @@ function renderMultiTradePanel()
             clearItemSelection()
         end
         ImGui.SameLine()
-        
         if ImGui.Button("Close") then
             inventoryUI.showMultiTradePanel = false
+            inventoryUI.multiSelectMode = false
+            clearItemSelection()
         end
     end
     
