@@ -888,8 +888,7 @@ function renderContextMenu()
         
         ImGui.End()
     end
-    
-    -- Check for clicks outside the context menu to close it
+
     if ImGui.IsMouseClicked(ImGuiMouseButton.Left) and not ImGui.IsWindowHovered(ImGuiHoveredFlags.AnyWindow) then
         hideContextMenu()
     end
