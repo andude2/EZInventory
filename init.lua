@@ -45,25 +45,29 @@ local inventoryUI = {
     itemSuggestionsSlot = nil,
     itemSuggestionsSlotName = "",
     availableItems = {},
+    selectedComparisonItemId = "",
+    selectedComparisonItem = nil,
+    itemSuggestionsSourceFilter = "All",
+    itemSuggestionsLocationFilter = "All",
 }
 
 local EQ_ICON_OFFSET = 500
 local ICON_WIDTH = 20
 local ICON_HEIGHT = 20
 local animItems = mq.FindTextureAnimation("A_DragItem")
-local animBox   = mq.FindTextureAnimation("A_RecessedBox") -- Used for optional background
+local animBox   = mq.FindTextureAnimation("A_RecessedBox")
 local server = mq.TLO.MacroQuest.Server()
 local CBB_ICON_WIDTH       = 40
 local CBB_ICON_HEIGHT      = 40
-local CBB_COUNT_X_OFFSET   = 39 -- Offset for stack count text (X)
-local CBB_COUNT_Y_OFFSET   = 23 -- Offset for stack count text (Y)
-local CBB_BAG_ITEM_SIZE    = 40 -- Size of each item cell for layout calculation
-local CBB_MAX_SLOTS_PER_BAG = 10 -- Assumption for bag size if not otherwise known
-local show_item_background_cbb = true -- Toggle for the cbb style background
+local CBB_COUNT_X_OFFSET   = 39 
+local CBB_COUNT_Y_OFFSET   = 23 
+local CBB_BAG_ITEM_SIZE    = 40 
+local CBB_MAX_SLOTS_PER_BAG = 10 
+local show_item_background_cbb = true
 
 local function refreshPeerCache()
     local now = os.time()
-    if now - lastCacheTime > 2 then  -- throttle updates every 2 seconds
+    if now - lastCacheTime > 2 then
         peerCache = {}
 
         for peerID, inv in pairs(inventory_actor.peer_inventories) do
@@ -893,80 +897,231 @@ end
 
 function renderItemSuggestions()
     if not inventoryUI.showItemSuggestions then return end
-    
-    -- Calculate dynamic size based on content
+
+    local function getEquippedItemForPeerSlot(peerName, slotID)
+        if not peerName or not slotID then return nil end
+
+        if peerName == mq.TLO.Me.Name() then
+            -- Use live data if looking at ourselves
+            local equipped = inventory_actor.gather_inventory().equipped or {}
+            for _, item in ipairs(equipped) do
+                if tonumber(item.slotid) == tonumber(slotID) then
+                    return item
+                end
+            end
+        else
+            for _, peer in pairs(inventory_actor.peer_inventories) do
+                if peer.name == peerName and peer.equipped then
+                    for _, item in ipairs(peer.equipped) do
+                        if tonumber(item.slotid) == tonumber(slotID) then
+                            return item
+                        end
+                    end
+                end
+            end
+        end
+
+        return nil
+    end
+
+    local currentlyEquipped = getEquippedItemForPeerSlot(inventoryUI.itemSuggestionsTarget, inventoryUI.itemSuggestionsSlot)    
     local numItems = #inventoryUI.availableItems
-    local baseHeight = 120 -- Header + separator + buttons
-    local rowHeight = 25   -- Approximate height per table row
-    local maxTableHeight = 400 -- Maximum height for the table
-    local minWindowHeight = 200 -- Minimum window height
-    
-    -- Calculate table height (header + rows + some padding)
+    local baseHeight = 200 
+    local comparisonHeight = (inventoryUI.selectedComparisonItem and inventoryUI.selectedComparisonItemId ~= "") and 250 or 0
+    local rowHeight = 25  
+    local maxTableHeight = 300 
+    local minWindowHeight = 350 
+
     local tableHeight = math.min(maxTableHeight, math.max(100, (numItems + 1) * rowHeight + 30))
-    local windowHeight = math.max(minWindowHeight, baseHeight + tableHeight)
-    
-    -- Set window size (width can be smaller too)
-    ImGui.SetNextWindowSize(650, windowHeight, ImGuiCond.Once)
-    local isOpen = ImGui.Begin("Available Items for " .. inventoryUI.itemSuggestionsTarget, nil, ImGuiWindowFlags.None)
+    local windowHeight = math.max(minWindowHeight, baseHeight + tableHeight + comparisonHeight)
+
+    ImGui.SetNextWindowSize(900, windowHeight, ImGuiCond.Once) 
+    local isOpen = ImGui.Begin("Available Items for " .. inventoryUI.itemSuggestionsTarget)
     
     if isOpen then
         ImGui.Text(string.format("Finding %s items for %s:", 
             inventoryUI.itemSuggestionsSlotName, 
             inventoryUI.itemSuggestionsTarget))
+
+        ImGui.PushStyleColor(ImGuiCol.Text, 0.8, 0.8, 0.8, 1.0)
+        if inventoryUI.selectedPeer and inventoryUI.selectedPeer ~= inventoryUI.itemSuggestionsTarget then
+            ImGui.Text(string.format("(Right-clicked %s slot while viewing %s's inventory)", 
+                inventoryUI.itemSuggestionsSlotName, inventoryUI.selectedPeer))
+        else
+            ImGui.Text(string.format("(Right-clicked %s slot on visual equipment display)", 
+                inventoryUI.itemSuggestionsSlotName))
+        end
+        ImGui.PopStyleColor()
+
+        if currentlyEquipped then
+            ImGui.Spacing()
+            ImGui.Text("Currently Equipped:")
+            ImGui.SameLine()
+            ImGui.PushStyleColor(ImGuiCol.Text, 0.9, 0.9, 0.6, 1.0)
+            ImGui.Text(currentlyEquipped.name or "Unknown")
+            ImGui.PopStyleColor()
+        else
+            ImGui.Spacing()
+            ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0)
+            ImGui.Text("Currently Equipped: (empty slot)")
+            ImGui.PopStyleColor()
+        end
+        
         ImGui.Separator()
         
         if #inventoryUI.availableItems == 0 then
             ImGui.Text("No suitable tradeable items found for this slot.")
+            ImGui.Spacing()
+            ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0)
+            ImGui.Text("This could mean:")
+            ImGui.Text("No other characters have items for this slot")
+            ImGui.Text("All available items are No Drop")
+            ImGui.Text("Items don't match class/level requirements")
+            ImGui.PopStyleColor()
         else
             ImGui.Text(string.format("Found %d available items:", #inventoryUI.availableItems))
             
-            -- Use calculated table height with scroll
-            if ImGui.BeginTable("AvailableItemsTable", 5, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.ScrollY, 0, tableHeight) then
+            -- Filter controls
+            ImGui.Spacing()
+            ImGui.Text("Filters:")
+            ImGui.SameLine()
+            
+            -- Source character filter
+            local sources = {}
+            local sourceMap = {}
+            for _, availableItem in ipairs(inventoryUI.availableItems) do
+                if not sourceMap[availableItem.source] then
+                    sourceMap[availableItem.source] = true
+                    table.insert(sources, availableItem.source)
+                end
+            end
+            table.sort(sources)
+            
+            inventoryUI.itemSuggestionsSourceFilter = inventoryUI.itemSuggestionsSourceFilter or "All"
+            ImGui.SetNextItemWidth(120)
+            if ImGui.BeginCombo("##SourceFilter", inventoryUI.itemSuggestionsSourceFilter) then
+                if ImGui.Selectable("All", inventoryUI.itemSuggestionsSourceFilter == "All") then
+                    inventoryUI.itemSuggestionsSourceFilter = "All"
+                end
+                for _, source in ipairs(sources) do
+                    if ImGui.Selectable(source, inventoryUI.itemSuggestionsSourceFilter == source) then
+                        inventoryUI.itemSuggestionsSourceFilter = source
+                    end
+                end
+                ImGui.EndCombo()
+            end
+            
+            ImGui.SameLine()
+            -- Location filter
+            inventoryUI.itemSuggestionsLocationFilter = inventoryUI.itemSuggestionsLocationFilter or "All"
+            ImGui.SetNextItemWidth(100)
+            if ImGui.BeginCombo("##LocationFilter", inventoryUI.itemSuggestionsLocationFilter) then
+                local locations = {"All", "Equipped", "Inventory", "Bank"}
+                for _, location in ipairs(locations) do
+                    if ImGui.Selectable(location, inventoryUI.itemSuggestionsLocationFilter == location) then
+                        inventoryUI.itemSuggestionsLocationFilter = location
+                    end
+                end
+                ImGui.EndCombo()
+            end
+            
+            -- Filter the items based on selected filters
+            local filteredItems = {}
+            for _, availableItem in ipairs(inventoryUI.availableItems) do
+                local includeItem = true
+                
+                if inventoryUI.itemSuggestionsSourceFilter ~= "All" and 
+                    availableItem.source ~= inventoryUI.itemSuggestionsSourceFilter then
+                    includeItem = false
+                end
+                
+                if inventoryUI.itemSuggestionsLocationFilter ~= "All" and 
+                    availableItem.location ~= inventoryUI.itemSuggestionsLocationFilter then
+                    includeItem = false
+                end
+                
+                if includeItem then
+                    table.insert(filteredItems, availableItem)
+                end
+            end
+            
+            ImGui.Spacing()
+            if #filteredItems ~= #inventoryUI.availableItems then
+                ImGui.Text(string.format("Showing %d of %d items (filtered)", #filteredItems, #inventoryUI.availableItems))
+            end
+
+            if ImGui.BeginTable("AvailableItemsTable", 6, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.ScrollY + ImGuiTableFlags.Sortable, 0, tableHeight) then
+                ImGui.TableSetupColumn("Select", ImGuiTableColumnFlags.WidthFixed, 50)
                 ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
                 ImGui.TableSetupColumn("Item Name", ImGuiTableColumnFlags.WidthStretch)
-                ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 120)
-                ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthFixed, 150)
-                ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 100)
+                ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 100)
+                ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthFixed, 100)
+                ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 80)
+
                 ImGui.TableHeadersRow()
+
+                if inventoryUI.selectedComparisonItemId == nil then
+                    inventoryUI.selectedComparisonItemId = ""
+                end
+                if inventoryUI.selectedComparisonItem == nil then
+                    inventoryUI.selectedComparisonItem = nil
+                end
                 
-                for idx, availableItem in ipairs(inventoryUI.availableItems) do
+                for idx, availableItem in ipairs(filteredItems) do
                     ImGui.TableNextRow()
                     ImGui.PushID("available_item_" .. idx)
                     
-                    -- Icon
+                    -- Create unique identifier for this item
+                    local itemId = string.format("%s_%s_%s_%d", 
+                        availableItem.source or "unknown", 
+                        availableItem.name or "unnamed", 
+                        availableItem.location or "nowhere",
+                        idx)
+                    local isSelected = (inventoryUI.selectedComparisonItemId == itemId)
+
+                    ImGui.TableNextColumn()
+                    if ImGui.RadioButton("##radio_" .. idx, isSelected) then
+                        inventoryUI.selectedComparisonItemId = itemId
+                        inventoryUI.selectedComparisonItem = availableItem
+                    end
+
                     ImGui.TableNextColumn()
                     if availableItem.icon and availableItem.icon > 0 then
                         drawItemIcon(availableItem.icon)
                     else
                         ImGui.Text("N/A")
                     end
-                    
-                    -- Item Name (clickable to examine)
+
                     ImGui.TableNextColumn()
-                    if ImGui.Selectable(availableItem.name) then
-                        if availableItem.item.itemlink then
-                            local links = mq.ExtractLinks(availableItem.item.itemlink)
-                            if links and #links > 0 then
-                                mq.ExecuteTextLink(links[1])
-                            end
+                    ImGui.Text(availableItem.name)
+
+                    if ImGui.IsItemHovered() then
+                        ImGui.BeginTooltip()
+                        ImGui.Text(availableItem.name or "Unknown Item")
+                        ImGui.Text("Select to compare with equipped item")
+                        if availableItem.item.ac and availableItem.item.ac > 0 then
+                            ImGui.Text("AC: " .. tostring(availableItem.item.ac))
                         end
+                        if availableItem.item.hp and availableItem.item.hp > 0 then
+                            ImGui.Text("HP: " .. tostring(availableItem.item.hp))
+                        end
+                        if availableItem.item.mana and availableItem.item.mana > 0 then
+                            ImGui.Text("Mana: " .. tostring(availableItem.item.mana))
+                        end
+                        ImGui.EndTooltip()
                     end
-                    
-                    -- Source Character
+
                     ImGui.TableNextColumn()
                     if ImGui.Selectable(availableItem.source) then
                         inventory_actor.send_inventory_command(availableItem.source, "foreground", {})
                         mq.cmdf("/echo Bringing %s to the foreground...", availableItem.source)
                     end
-                    
-                    -- Location
+
                     ImGui.TableNextColumn()
                     ImGui.Text(availableItem.location)
-                    
-                    -- Action (Trade button)
+
                     ImGui.TableNextColumn()
                     if ImGui.Button("Trade##" .. idx) then
-                        -- Initiate trade
                         local peerRequest = {
                             name = availableItem.name,
                             to = inventoryUI.itemSuggestionsTarget,
@@ -981,8 +1136,6 @@ function renderItemSuggestions()
                             availableItem.source, 
                             availableItem.name, 
                             inventoryUI.itemSuggestionsTarget)
-                            
-                        -- Close the suggestions window after initiating trade
                         inventoryUI.showItemSuggestions = false
                     end
                     
@@ -993,21 +1146,114 @@ function renderItemSuggestions()
             end
         end
         
+        if inventoryUI.selectedComparisonItem and inventoryUI.selectedComparisonItemId ~= "" then
+            ImGui.Separator()
+            ImGui.Text("Stat Comparison:")
+            ImGui.SameLine()
+            ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0)
+            ImGui.Text(inventoryUI.selectedComparisonItem.name)
+            ImGui.PopStyleColor()
+            ImGui.SameLine()
+            ImGui.Text(" vs ")
+            ImGui.SameLine()
+            if currentlyEquipped then
+                ImGui.PushStyleColor(ImGuiCol.Text, 0.9, 0.9, 0.6, 1.0)
+                ImGui.Text(currentlyEquipped.name)
+                ImGui.PopStyleColor()
+            else
+                ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0)
+                ImGui.Text("(empty slot)")
+                ImGui.PopStyleColor()
+            end
+
+            local selectedItem = inventoryUI.selectedComparisonItem.item
+            local equippedItem = currentlyEquipped or {}
+
+            local function showStatComparisonColumn(statList, selectedItem, equippedItem)
+                if ImGui.BeginTable("StatColumn", 2, ImGuiTableFlags.SizingFixedFit) then
+                    ImGui.TableSetupColumn("Stat", ImGuiTableColumnFlags.WidthFixed, 100)
+                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthFixed, 50)
+
+                    for _, stat in ipairs(statList) do
+                        local label = stat.label
+                        local suffix = stat.suffix or ""
+                        local newVal = tonumber(selectedItem[label:lower()]) or 0
+                        local oldVal = tonumber(equippedItem[label:lower()]) or 0
+                        local diff = newVal - oldVal
+
+                        if diff ~= 0 then
+                            ImGui.TableNextRow()
+                            ImGui.TableSetColumnIndex(0)
+                            ImGui.Text(label .. ":")
+
+                            ImGui.TableSetColumnIndex(1)
+                            if diff > 0 then
+                                ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0)
+                                ImGui.Text(string.format("+%d%s", diff, suffix))
+                            else
+                                ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
+                                ImGui.Text(string.format("%d%s", diff, suffix))
+                            end
+                            ImGui.PopStyleColor()
+                        end
+                    end
+
+                    ImGui.EndTable()
+                end
+            end
+
+            if ImGui.BeginTable("StatComparisonTable", 3, ImGuiTableFlags.BordersInnerV + ImGuiTableFlags.RowBg) then
+                ImGui.TableSetupColumn("Primary Stats")
+                ImGui.TableSetupColumn("Attributes")
+                ImGui.TableSetupColumn("Resists / Combat")
+                ImGui.TableHeadersRow()
+                ImGui.TableNextRow()
+
+                ImGui.TableSetColumnIndex(0)
+                showStatComparisonColumn({
+                    {label="AC"}, {label="HP"}, {label="Mana"}, {label="Endurance"},
+                }, selectedItem, equippedItem)
+
+                ImGui.TableSetColumnIndex(1)
+                showStatComparisonColumn({
+                    {label="STR"}, {label="STA"}, {label="AGI"}, {label="DEX"},
+                    {label="WIS"}, {label="INT"}, {label="CHA"},
+                }, selectedItem, equippedItem)
+
+                ImGui.TableSetColumnIndex(2)
+                showStatComparisonColumn({
+                    {label="SvMagic"}, {label="SvFire"}, {label="SvCold"}, {label="SvDisease"}, {label="SvPoison"},
+                    {label="Attack"}, {label="Haste", suffix="%"},
+                }, selectedItem, equippedItem)
+
+                ImGui.EndTable()
+            end
+        end
+
         ImGui.Separator()
+        if ImGui.Button("Refresh") then
+            local targetChar = inventoryUI.itemSuggestionsTarget
+            local slotID = inventoryUI.itemSuggestionsSlot
+            inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
+            inventoryUI.selectedComparisonItem = nil
+            inventoryUI.selectedComparisonItemId = ""
+        end
+        ImGui.SameLine()
+        if ImGui.Button("Clear Selection") then
+            inventoryUI.selectedComparisonItem = nil
+            inventoryUI.selectedComparisonItemId = ""
+        end
+        ImGui.SameLine()
         if ImGui.Button("Close") then
             inventoryUI.showItemSuggestions = false
+            inventoryUI.selectedComparisonItem = nil
+            inventoryUI.selectedComparisonItemId = ""
         end
     end
     
     if isOpen then ImGui.End() end
-    
-    -- Close if user clicks outside or presses escape
-    if not isOpen then
-        inventoryUI.showItemSuggestions = false
-    end
 end
 
--- Function to initiate the proxy trade
 function initiateProxyTrade(item, sourceChar, targetChar)
     mq.cmdf("/echo Initiating trade: %s from %s to %s", item.name, sourceChar, targetChar)
     
@@ -1029,7 +1275,7 @@ function initiateMultiItemTrade(targetChar)
     local tradableItems = {}
     local noDropItems = {}
     local sourceChar = nil
-    local sourceCounts = {}  -- Track items per source character
+    local sourceCounts = {}
     
     for _, selectedData in pairs(inventoryUI.selectedItems) do
         local item = selectedData.item
@@ -1263,7 +1509,6 @@ function inventoryUI.render()
                 ImGui.PushID(string.format("server_%s_%d", srv, i))
                 if ImGui.Selectable(srv, inventoryUI.selectedServer == srv) then
                     inventoryUI.selectedServer = srv
-                    -- Reset selectedPeer if not valid for the new server
                     local validPeer = false
                     for _, peer in ipairs(inventoryUI.servers[srv] or {}) do
                         if peer.name == inventoryUI.selectedPeer then
@@ -1515,8 +1760,6 @@ function inventoryUI.render()
                                 table.insert(sortedEquippedItems, item)
                             end
                         end
-                        
-                        -- Sort by slot name alphabetically
                         table.sort(sortedEquippedItems, function(a, b)
                             local slotNameA = getSlotNameFromID(a.slotid) or "Unknown"
                             local slotNameB = getSlotNameFromID(b.slotid) or "Unknown"
@@ -1615,64 +1858,103 @@ function inventoryUI.render()
                                     ImGui.TableHeadersRow()
 
                                     local function renderEquippedSlot(slotID, item, slotName)
-                                    local slotButtonID = "slot_" .. tostring(slotID)
-                                    if item and item.icon and item.icon ~= 0 then
-                                        -- Make sure button size matches column size
-                                        local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 45, 45)
-                                        local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
-                                        ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
-                                        drawItemIcon(item.icon, 40, 40)
+                                        local slotButtonID = "slot_" .. tostring(slotID)
+                                        if item and item.icon and item.icon ~= 0 then
+                                            -- Make sure button size matches column size
+                                            local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 45, 45)
+                                            local rightClicked = ImGui.IsItemClicked(ImGuiMouseButton.Right)
+                                            local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
+                                            ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
+                                            drawItemIcon(item.icon, 40, 40)
 
-                                        if clicked then
-                                            if mq.TLO.Window("ItemDisplayWindow").Open() then
-                                                mq.TLO.Window("ItemDisplayWindow").DoClose()
-                                                inventoryUI.openItemWindow = nil
+                                            if clicked then
+                                                if mq.TLO.Window("ItemDisplayWindow").Open() then
+                                                    mq.TLO.Window("ItemDisplayWindow").DoClose()
+                                                    inventoryUI.openItemWindow = nil
+                                                end
+                                                inventoryUI.selectedSlotID = slotID
+                                                inventoryUI.selectedSlotName = slotName
+                                                inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
                                             end
-                                            inventoryUI.selectedSlotID = slotID
-                                            inventoryUI.selectedSlotName = slotName
-                                            inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
-                                        end
-                                    else
-                                        -- Empty slot: Create invisible button that covers the entire cell
-                                        local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 45, 45)
-                                        
-                                        -- Get the button's position and size for centering text
-                                        local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
-                                        local buttonMaxX, buttonMaxY = ImGui.GetItemRectMax()
-                                        local buttonWidth = buttonMaxX - buttonMinX
-                                        local buttonHeight = buttonMaxY - buttonMinY
-                                        
-                                        -- Calculate text size for centering
-                                        local textSize = ImGui.CalcTextSize(slotName)
-                                        local textX = buttonMinX + (buttonWidth - textSize) * 0.5
-                                        local textY = buttonMinY + (buttonHeight - ImGui.GetTextLineHeight()) * 0.5
-                                        
-                                        -- Draw centered text over the invisible button
-                                        ImGui.SetCursorScreenPos(textX, textY)
-                                        ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0) -- Slightly dimmed text for empty slots
-                                        ImGui.Text(slotName)
-                                        ImGui.PopStyleColor()
-                                        
-                                        -- Handle click on the entire button area
-                                        if clicked then
-                                            if mq.TLO.Window("ItemDisplayWindow").Open() then
-                                                mq.TLO.Window("ItemDisplayWindow").DoClose()
-                                                inventoryUI.openItemWindow = nil
+                                            
+                                            -- Handle right-click to show available items for this slot
+                                            if rightClicked then
+                                                local targetChar = inventoryUI.selectedPeer or mq.TLO.Me.Name()
+                                                inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
+                                                inventoryUI.showItemSuggestions = true
+                                                inventoryUI.itemSuggestionsTarget = targetChar
+                                                inventoryUI.itemSuggestionsSlot = slotID
+                                                inventoryUI.itemSuggestionsSlotName = slotName
+                                                -- Clear any previous comparison selection when opening new suggestions
+                                                inventoryUI.selectedComparisonItemId = ""
+                                                inventoryUI.selectedComparisonItem = nil
                                             end
-                                            inventoryUI.selectedSlotID = slotID
-                                            inventoryUI.selectedSlotName = slotName
-                                            inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
-                                        end
-                                        
-                                        -- Optional: Add visual feedback on hover
-                                        if ImGui.IsItemHovered() then
-                                            -- Draw a subtle border or background when hovering over empty slots
-                                            local drawList = ImGui.GetWindowDrawList()
-                                            drawList:AddRect(ImVec2(buttonMinX, buttonMinY), ImVec2(buttonMaxX, buttonMaxY), 
-                                                        ImGui.GetColorU32(0.5, 0.5, 0.5, 0.3), 2.0)
+                                            
+                                            -- Tooltip for equipped items
+                                            if ImGui.IsItemHovered() then
+                                                ImGui.BeginTooltip()
+                                                ImGui.Text(item.name or "Unknown Item")
+                                                ImGui.Text("Left-click: Compare across characters")
+                                                ImGui.Text("Right-click: Find alternative items")
+                                                ImGui.EndTooltip()
+                                            end
+                                        else
+                                            -- Empty slot: Create invisible button that covers the entire cell
+                                            local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 45, 45)
+                                            local rightClicked = ImGui.IsItemClicked(ImGuiMouseButton.Right)
+                                            
+                                            -- Get the button's position and size for centering text
+                                            local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
+                                            local buttonMaxX, buttonMaxY = ImGui.GetItemRectMax()
+                                            local buttonWidth = buttonMaxX - buttonMinX
+                                            local buttonHeight = buttonMaxY - buttonMinY
+                                            
+                                            -- Calculate text size for centering
+                                            local textSize = ImGui.CalcTextSize(slotName)
+                                            local textX = buttonMinX + (buttonWidth - textSize) * 0.5
+                                            local textY = buttonMinY + (buttonHeight - ImGui.GetTextLineHeight()) * 0.5
+                                            
+                                            -- Draw centered text over the invisible button
+                                            ImGui.SetCursorScreenPos(textX, textY)
+                                            ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0) -- Slightly dimmed text for empty slots
+                                            ImGui.Text(slotName)
+                                            ImGui.PopStyleColor()
+                                            
+                                            -- Handle click on the entire button area
+                                            if clicked then
+                                                if mq.TLO.Window("ItemDisplayWindow").Open() then
+                                                    mq.TLO.Window("ItemDisplayWindow").DoClose()
+                                                    inventoryUI.openItemWindow = nil
+                                                end
+                                                inventoryUI.selectedSlotID = slotID
+                                                inventoryUI.selectedSlotName = slotName
+                                                inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
+                                            end
+                                            
+                                            -- Handle right-click for empty slots too
+                                            if rightClicked then
+                                                local targetChar = inventoryUI.selectedPeer or mq.TLO.Me.Name()
+                                                inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
+                                                inventoryUI.showItemSuggestions = true
+                                                inventoryUI.itemSuggestionsTarget = targetChar
+                                                inventoryUI.itemSuggestionsSlot = slotID
+                                                inventoryUI.itemSuggestionsSlotName = slotName
+                                                inventoryUI.selectedComparisonItemId = ""
+                                                inventoryUI.selectedComparisonItem = nil
+                                            end
+                                            
+                                            if ImGui.IsItemHovered() then
+                                                local drawList = ImGui.GetWindowDrawList()
+                                                drawList:AddRect(ImVec2(buttonMinX, buttonMinY), ImVec2(buttonMaxX, buttonMaxY), 
+                                                            ImGui.GetColorU32(0.5, 0.5, 0.5, 0.3), 2.0)
+                                                ImGui.BeginTooltip()
+                                                ImGui.Text(slotName .. " (Empty)")
+                                                ImGui.Text("Left-click: Compare across characters")
+                                                ImGui.Text("Right-click: Find items for this slot")
+                                                ImGui.EndTooltip()
+                                            end
                                         end
                                     end
-                                end
                                     
                                     for rowIndex, row in ipairs(slotLayout) do
                                         ImGui.TableNextRow(ImGuiTableRowFlags.None, 40)
@@ -1682,7 +1964,6 @@ function inventoryUI.render()
                                                 local slotButtonID = "slot_" .. tostring(slotID)
                                                 local slotName = getSlotNameFromID(slotID)
                                                 local item = equippedItems[slotID]
-
                                                 ImGui.PushID(slotButtonID)
                                                 local success, err = pcall(renderEquippedSlot, slotID, item, slotName)
                                                 ImGui.PopID()
@@ -1697,8 +1978,6 @@ function inventoryUI.render()
                                     ImGui.EndTable()
                                 end
                             end)                            
-
-                            -- Column 2: Comparison Table
                             ImGui.NextColumn()
                             if inventoryUI.selectedSlotID then
                                 ImGui.Text("Comparing " .. inventoryUI.selectedSlotName .. " slot across all characters:")

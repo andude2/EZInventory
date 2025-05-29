@@ -6,21 +6,23 @@ local Suggestions = {}
 
 local function isEquippableGear(item, slotID)
     local itemName = (item.name or ""):lower()
-    local excludeKeywords = {
-        "bag", "pouch", "satchel", "backpack", "container",
-        "food", "drink", "bread", "water", "ale", "wine",
-        "spell", "tome", "scroll", "component", "book",
-        "key", "gem", "note", "page", "parchment",
-        "poison", "ammo", "throwing", "arrow"
-    }
+
+    if item.type and tostring(item.type):lower():find("augment") then
+        return false
+    end
+
+    local excludeKeywords = {    }
+
     for _, word in ipairs(excludeKeywords) do
         if itemName:find(word) then
             if slotID == 22 and (word == "arrow" or word == "ammo") then return true end
             return false
         end
     end
+
     return true
 end
+
 
 local function isItemUsableInSlotFallback(item, slotID, class)
     local name = (item.name or ""):lower()
