@@ -19,6 +19,57 @@ M.peer_inventories = {}
 local actor_mailbox = nil
 local command_mailbox = nil
 
+-- Add a function to check if the actor system is initialized
+function M.is_initialized()
+    local actorReady = actor_mailbox ~= nil
+    local commandReady = command_mailbox ~= nil
+    local bothReady = actorReady and commandReady
+    
+    -- Debug output to help diagnose initialization issues
+    if not bothReady then
+        print(string.format("[Inventory Actor] Initialization status - Actor: %s, Command: %s", 
+            tostring(actorReady), tostring(commandReady)))
+    end
+    
+    return bothReady
+end
+
+local function get_item_class_info(item)
+    local classInfo = {
+        classes = {},
+        classCount = 0,
+        allClasses = false
+    }
+    
+    if item and item() then
+        local numClasses = item.Classes()
+        if numClasses then
+            classInfo.classCount = numClasses
+            if numClasses == 16 then
+                classInfo.allClasses = true
+            else
+                for i = 1, numClasses do
+                    local className = item.Class(i)()
+                    if className then
+                        table.insert(classInfo.classes, className)
+                    end
+                end
+            end
+        end
+    end
+    
+    return classInfo
+end
+
+local function get_valid_slots(item)
+    local slots = {}
+    local wornSlots = item.WornSlots() or 0
+    for i = 1, wornSlots do
+        local slot = item.WornSlot(i)
+        if slot() then table.insert(slots, slot()) end
+    end
+    return slots
+end
 
 local function scan_augment_links(item)
     local data = {}
@@ -37,14 +88,17 @@ function M.gather_inventory()
     local data = {
         name = mq.TLO.Me.Name(),
         server = mq.TLO.MacroQuest.Server(),
+        class = mq.TLO.Me.Class(),
         equipped = {},
         bags = {},
         bank = {},
     }
 
+    -- Equipped items (slots 0-22)
     for slot = 0, 22 do
         local item = mq.TLO.Me.Inventory(slot)
         if item() then
+            local classInfo = get_item_class_info(item)
             local entry = {
                 slotid = slot,
                 name = item.Name(),
@@ -53,6 +107,10 @@ function M.gather_inventory()
                 itemlink = item.ItemLink("CLICKABLE")(),
                 nodrop = item.NoDrop() and 1 or 0,
                 qty = item.Stack() or 1,
+                classCount = classInfo.classCount,
+                allClasses = classInfo.allClasses,
+                classes = classInfo.classes,
+                slots = get_valid_slots(item),
             }
             local augments = scan_augment_links(item)
             for k, v in pairs(augments) do entry[k] = v end
@@ -60,6 +118,7 @@ function M.gather_inventory()
         end
     end
 
+    -- Bag items (slots 23-34)
     for invSlot = 23, 34 do
         local pack = mq.TLO.Me.Inventory(invSlot)
         if pack() and pack.Container() > 0 then
@@ -68,6 +127,7 @@ function M.gather_inventory()
             for i = 1, pack.Container() do
                 local item = pack.Item(i)
                 if item() then
+                    local classInfo = get_item_class_info(item)
                     local entry = {
                         bagid = bagid,
                         slotid = i,
@@ -79,6 +139,10 @@ function M.gather_inventory()
                         bagname = pack.Name(),
                         nodrop = item.NoDrop() and 1 or 0,
                         qty = item.Stack() or item.StackSize() or 1,
+                        classCount = classInfo.classCount,
+                        allClasses = classInfo.allClasses,
+                        classes = classInfo.classes,
+                        slots = get_valid_slots(item),
                     }
                     local augments = scan_augment_links(item)
                     for k, v in pairs(augments) do entry[k] = v end
@@ -91,6 +155,7 @@ function M.gather_inventory()
     for bankSlot = 1, 24 do
         local item = mq.TLO.Me.Bank(bankSlot)
         if item.ID() then
+            local classInfo = get_item_class_info(item)
             local entry = {
                 bankslotid = bankSlot,
                 slotid = -1,
@@ -100,14 +165,20 @@ function M.gather_inventory()
                 qty = item.Stack() or 1,
                 itemlink = item.ItemLink() or "",
                 nodrop = item.NoDrop() and 1 or 0,
+                classCount = classInfo.classCount,
+                allClasses = classInfo.allClasses,
+                classes = classInfo.classes,
+                slots = get_valid_slots(item),
             }
             local augments = scan_augment_links(item)
             for k, v in pairs(augments) do entry[k] = v end
             table.insert(data.bank, entry)
+
             if item.Container() and item.Container() > 0 then
                 for i = 1, item.Container() do
                     local sub = item.Item(i)
                     if sub.ID() then  
+                        local subClassInfo = get_item_class_info(sub)
                         local subEntry = {
                             bankslotid = bankSlot,  
                             slotid = i, 
@@ -118,6 +189,10 @@ function M.gather_inventory()
                             itemlink = sub.ItemLink() or "",
                             bagname = item.Name(),
                             nodrop = sub.NoDrop() and 1 or 0,
+                            classCount = subClassInfo.classCount,
+                            allClasses = subClassInfo.allClasses,
+                            classes = subClassInfo.classes,
+                            slots = get_valid_slots(item),
                         }
                         local subAugments = scan_augment_links(sub)
                         for k, v in pairs(subAugments) do subEntry[k] = v end
@@ -146,10 +221,12 @@ local function message_handler(message)
         
     elseif content.type == M.MSG_TYPE.REQUEST then
         local myInventory = M.gather_inventory()
-        actor_mailbox:send(
-            { mailbox = 'inventory_exchange' },
-            { type = M.MSG_TYPE.RESPONSE, data = myInventory }
-        )
+        if actor_mailbox then
+            actor_mailbox:send(
+                { mailbox = 'inventory_exchange' },
+                { type = M.MSG_TYPE.RESPONSE, data = myInventory }
+            )
+        end
         
     elseif content.type == M.MSG_TYPE.RESPONSE then
         if content.data and content.data.name and content.data.server then
@@ -160,18 +237,30 @@ local function message_handler(message)
 end
 
 function M.publish_inventory()
+    if not actor_mailbox then
+        print("[Inventory Actor] Cannot publish inventory - actor system not initialized")
+        return false
+    end
+    
     local inventoryData = M.gather_inventory()
     actor_mailbox:send(
         { mailbox = 'inventory_exchange' },
         { type = M.MSG_TYPE.UPDATE, data = inventoryData }
     )
+    return true
 end
 
 function M.request_all_inventories()
+    if not actor_mailbox then
+        print("[Inventory Actor] Cannot request inventories - actor system not initialized")
+        return false
+    end
+    
     actor_mailbox:send(
         { mailbox = 'inventory_exchange' },
         { type = M.MSG_TYPE.REQUEST }
     )
+    return true
 end
 
 local function handle_proxy_give_batch(data)
@@ -765,21 +854,31 @@ local function handle_command_message(message)
 end
 
 function M.send_inventory_command(peer, command, args)
-    if not command_mailbox then return end
+    if not command_mailbox then 
+        print("[Inventory Actor] Cannot send command - command mailbox not initialized")
+        return false
+    end
     mq.cmdf("/echo [SEND CMD] Trying to send %s to %s", command, tostring(peer))
     command_mailbox:send(
         {character = peer},
         {type = 'command', command = command, args = args or {}, target = peer}
     )
+    return true
 end
 
 function M.broadcast_inventory_command(command, args)
+    if not command_mailbox then 
+        print("[Inventory Actor] Cannot broadcast command - command mailbox not initialized")
+        return false
+    end
+    
     for peerID, _ in pairs(M.peer_inventories) do
         local name = peerID:match("_(.+)$")
         if name and name ~= mq.TLO.Me.CleanName() then
             M.send_inventory_command(name, command, args)
         end
     end
+    return true
 end
 
 function M.init()
@@ -793,9 +892,11 @@ function M.init()
     local ok1, mailbox1 = pcall(function()
         return actors.register('inventory_exchange', message_handler)
     end)
-
-    if not ok1 or not mailbox1 then
+    if not ok1 then
         print(string.format('[Inventory Actor] Failed to register inventory_exchange: %s', tostring(mailbox1)))
+        return false
+    elseif not mailbox1 then
+        print('[Inventory Actor] actors.register returned nil for inventory_exchange')
         return false
     end
     actor_mailbox = mailbox1

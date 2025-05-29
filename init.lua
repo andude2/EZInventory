@@ -3,10 +3,12 @@
 local mq = require("mq")
 local ImGui = require("ImGui")
 local icons = require("mq.icons")
-local inventory_actor = require('inventory_actor')
+local inventory_actor = require("inventory_actor")
 local peerCache = {}
 local lastCacheTime = 0
 local json = require("dkjson")
+local Suggestions = require("suggestions")
+
 
 ---@tag InventoryUI
 local inventoryUI = {
@@ -38,6 +40,11 @@ local inventoryUI = {
     selectedItems = {},
     showMultiTradePanel = false,
     multiTradeTarget = "",
+    showItemSuggestions = false,
+    itemSuggestionsTarget = "",
+    itemSuggestionsSlot = nil,
+    itemSuggestionsSlotName = "",
+    availableItems = {},
 }
 
 local EQ_ICON_OFFSET = 500
@@ -318,6 +325,145 @@ local function draw_item_icon_cbb(item, cell_id)
             end
         end
     end
+end
+
+function isItemUsableInSlot(item, slotID, targetClass)
+    local itemName = item.name
+    if not itemName or itemName == "" then
+        return false
+    end
+    
+    -- Try to get item data from MQ2's DisplayItem
+    local displayItem = mq.TLO.DisplayItem(itemName)
+    if not displayItem or not displayItem.Item() then
+        -- Fallback to basic keyword matching if DisplayItem doesn't work
+        return isItemUsableInSlotFallback(item, slotID, targetClass)
+    end
+    
+    -- Check class restrictions
+    local numClasses = displayItem.Item.Classes()
+    if numClasses and numClasses > 0 then
+        local canUseClass = false
+        for cls = 1, numClasses do
+            local allowedClass = displayItem.Item.Class(cls)()
+            if allowedClass == targetClass then
+                canUseClass = true
+                break
+            end
+        end
+        if not canUseClass then
+            return false -- Character class can't use this item
+        end
+    end
+    
+    -- Check slot restrictions
+    local numWornSlots = displayItem.Item.WornSlots()
+    if numWornSlots and numWornSlots > 0 then
+        local canUseSlot = false
+        for slt = 1, numWornSlots do
+            local wornSlotNum = tonumber(displayItem.Item.WornSlot(slt)())
+            if wornSlotNum == slotID then
+                canUseSlot = true
+                break
+            end
+        end
+        if not canUseSlot then
+            return false -- Item can't be worn in this slot
+        end
+    end
+    
+    return true
+end
+
+function isItemUsableInSlot(item, slotID, targetClass)
+    local itemName = item.name
+    if not itemName or itemName == "" then
+        return false
+    end
+    
+    -- First check if the item is actually equippable gear vs consumables/bags
+    if not isEquippableGear(item, slotID) then
+        return false
+    end
+    
+    -- For now, use enhanced keyword matching since we can't use delays in ImGui context
+    -- TODO: Consider caching item restriction data outside of render loop
+    return isItemUsableInSlotFallback(item, slotID, targetClass)
+end
+
+-- Helper function to exclude non-equippable items
+function isEquippableGear(item, slotID)
+    local itemName = (item.name or ""):lower()
+    
+    -- Exclude obvious non-gear items
+    local excludeKeywords = {
+        "bag", "pouch", "satchel", "backpack", "container",
+        "food", "drink", "bread", "water", "ale", "wine", "stew", "meat",
+        "spell", "tome", "scroll", "page", "component",
+        "key", "note", "letter", "book", "parchment",
+        "gem", "diamond", "ruby", "emerald", "sapphire",
+        "poison", "arrow", "throwing", "ammo"
+    }
+    
+    for _, keyword in ipairs(excludeKeywords) do
+        if itemName:find(keyword) then
+            -- Special case: ammo for ammo slot is OK
+            if keyword == "arrow" and slotID == 22 then
+                return true
+            elseif keyword == "ammo" and slotID == 22 then
+                return true
+            else
+                return false
+            end
+        end
+    end
+    
+    return true
+end
+
+-- Fallback function using keyword matching (enhanced)
+function isItemUsableInSlotFallback(item, slotID, targetClass)
+    local itemName = (item.name or ""):lower()
+    
+    -- Basic slot type matching based on common item names
+    local slotKeywords = {
+        [0] = {"charm"},                    -- Charm
+        [1] = {"earring", "ear", "stud"},  -- Left Ear
+        [2] = {"cap", "helm", "crown", "hat", "coif", "circlet", "tiara"}, -- Head
+        [3] = {"mask", "veil", "face"},    -- Face
+        [4] = {"earring", "ear", "stud"},  -- Right Ear
+        [5] = {"necklace", "torque", "collar", "choker", "amulet"}, -- Neck
+        [6] = {"mantle", "pauldron", "shoulder", "spaulders"}, -- Shoulders
+        [7] = {"bracer", "sleeves", "arms", "armguards", "vambraces"}, -- Arms
+        [8] = {"cloak", "cape", "back"},   -- Back
+        [9] = {"bracer", "wrist", "bracelet", "armband"}, -- Left Wrist
+        [10] = {"bracer", "wrist", "bracelet", "armband"}, -- Right Wrist
+        [11] = {"bow", "crossbow", "thrown", "sling"}, -- Range
+        [12] = {"gauntlet", "glove", "hand", "mittens"}, -- Hands
+        [13] = {"sword", "axe", "mace", "staff", "dagger", "spear", "club", "hammer", "blade", "weapon"}, -- Primary
+        [14] = {"shield", "sword", "axe", "mace", "dagger", "buckler", "orb", "tome"}, -- Secondary
+        [15] = {"ring", "band", "signet"},  -- Left Ring
+        [16] = {"ring", "band", "signet"},  -- Right Ring
+        [17] = {"breastplate", "tunic", "robe", "vest", "chest", "chainmail", "hauberk", "jerkin"}, -- Chest
+        [18] = {"leggings", "pants", "legs", "greaves", "chaps", "breeches"}, -- Legs
+        [19] = {"boots", "shoes", "sandals", "feet", "slippers"}, -- Feet
+        [20] = {"belt", "girdle", "sash", "waist", "cord"}, -- Waist
+        [21] = {"power source", "orb", "source"}, -- Power Source
+        [22] = {"arrow", "ammo", "bolt", "stone"} -- Ammo
+    }
+    
+    local keywords = slotKeywords[slotID]
+    if not keywords then return false end
+    
+    -- Check if any keywords match the item name
+    for _, keyword in ipairs(keywords) do
+        if itemName:find(keyword) then
+            return true
+        end
+    end
+    
+    -- Be more restrictive - return false if no keyword match
+    return false
 end
 
 local function InventoryToggleButton()
@@ -745,6 +891,122 @@ function renderContextMenu()
     end
 end
 
+function renderItemSuggestions()
+    if not inventoryUI.showItemSuggestions then return end
+    
+    -- Calculate dynamic size based on content
+    local numItems = #inventoryUI.availableItems
+    local baseHeight = 120 -- Header + separator + buttons
+    local rowHeight = 25   -- Approximate height per table row
+    local maxTableHeight = 400 -- Maximum height for the table
+    local minWindowHeight = 200 -- Minimum window height
+    
+    -- Calculate table height (header + rows + some padding)
+    local tableHeight = math.min(maxTableHeight, math.max(100, (numItems + 1) * rowHeight + 30))
+    local windowHeight = math.max(minWindowHeight, baseHeight + tableHeight)
+    
+    -- Set window size (width can be smaller too)
+    ImGui.SetNextWindowSize(650, windowHeight, ImGuiCond.Once)
+    local isOpen = ImGui.Begin("Available Items for " .. inventoryUI.itemSuggestionsTarget, nil, ImGuiWindowFlags.None)
+    
+    if isOpen then
+        ImGui.Text(string.format("Finding %s items for %s:", 
+            inventoryUI.itemSuggestionsSlotName, 
+            inventoryUI.itemSuggestionsTarget))
+        ImGui.Separator()
+        
+        if #inventoryUI.availableItems == 0 then
+            ImGui.Text("No suitable tradeable items found for this slot.")
+        else
+            ImGui.Text(string.format("Found %d available items:", #inventoryUI.availableItems))
+            
+            -- Use calculated table height with scroll
+            if ImGui.BeginTable("AvailableItemsTable", 5, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.ScrollY, 0, tableHeight) then
+                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
+                ImGui.TableSetupColumn("Item Name", ImGuiTableColumnFlags.WidthStretch)
+                ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 120)
+                ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthFixed, 150)
+                ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 100)
+                ImGui.TableHeadersRow()
+                
+                for idx, availableItem in ipairs(inventoryUI.availableItems) do
+                    ImGui.TableNextRow()
+                    ImGui.PushID("available_item_" .. idx)
+                    
+                    -- Icon
+                    ImGui.TableNextColumn()
+                    if availableItem.icon and availableItem.icon > 0 then
+                        drawItemIcon(availableItem.icon)
+                    else
+                        ImGui.Text("N/A")
+                    end
+                    
+                    -- Item Name (clickable to examine)
+                    ImGui.TableNextColumn()
+                    if ImGui.Selectable(availableItem.name) then
+                        if availableItem.item.itemlink then
+                            local links = mq.ExtractLinks(availableItem.item.itemlink)
+                            if links and #links > 0 then
+                                mq.ExecuteTextLink(links[1])
+                            end
+                        end
+                    end
+                    
+                    -- Source Character
+                    ImGui.TableNextColumn()
+                    if ImGui.Selectable(availableItem.source) then
+                        inventory_actor.send_inventory_command(availableItem.source, "foreground", {})
+                        mq.cmdf("/echo Bringing %s to the foreground...", availableItem.source)
+                    end
+                    
+                    -- Location
+                    ImGui.TableNextColumn()
+                    ImGui.Text(availableItem.location)
+                    
+                    -- Action (Trade button)
+                    ImGui.TableNextColumn()
+                    if ImGui.Button("Trade##" .. idx) then
+                        -- Initiate trade
+                        local peerRequest = {
+                            name = availableItem.name,
+                            to = inventoryUI.itemSuggestionsTarget,
+                            fromBank = availableItem.location == "Bank",
+                            bagid = availableItem.item.bagid,
+                            slotid = availableItem.item.slotid,
+                            bankslotid = availableItem.item.bankslotid,
+                        }
+                        
+                        inventory_actor.send_inventory_command(availableItem.source, "proxy_give", {json.encode(peerRequest)})
+                        mq.cmdf("/echo Requesting %s to give %s to %s", 
+                            availableItem.source, 
+                            availableItem.name, 
+                            inventoryUI.itemSuggestionsTarget)
+                            
+                        -- Close the suggestions window after initiating trade
+                        inventoryUI.showItemSuggestions = false
+                    end
+                    
+                    ImGui.PopID()
+                end
+                
+                ImGui.EndTable()
+            end
+        end
+        
+        ImGui.Separator()
+        if ImGui.Button("Close") then
+            inventoryUI.showItemSuggestions = false
+        end
+    end
+    
+    if isOpen then ImGui.End() end
+    
+    -- Close if user clicks outside or presses escape
+    if not isOpen then
+        inventoryUI.showItemSuggestions = false
+    end
+end
+
 -- Function to initiate the proxy trade
 function initiateProxyTrade(item, sourceChar, targetChar)
     mq.cmdf("/echo Initiating trade: %s from %s to %s", item.name, sourceChar, targetChar)
@@ -1142,120 +1404,142 @@ function inventoryUI.render()
         if ImGui.BeginTabItem("Equipped") then
             if ImGui.BeginTabBar("EquippedViewTabs") then
                 if ImGui.BeginTabItem("Table View") then
-                    inventoryUI.equipView = "table"
+                inventoryUI.equipView = "table"
 
-                    if ImGui.BeginChild("EquippedScrollRegion", 0, 0, true, ImGuiChildFlags.HorizontalScrollbar) then
+                if ImGui.BeginChild("EquippedScrollRegion", 0, 0, true, ImGuiChildFlags.HorizontalScrollbar) then
 
-                        ImGui.Text("Show Columns:")
-                        ImGui.SameLine()
-                        inventoryUI.showAug1 = ImGui.Checkbox("Aug 1", inventoryUI.showAug1)
-                        ImGui.SameLine()
-                        inventoryUI.showAug2 = ImGui.Checkbox("Aug 2", inventoryUI.showAug2)
-                        ImGui.SameLine()
-                        inventoryUI.showAug3 = ImGui.Checkbox("Aug 3", inventoryUI.showAug3)
-                        ImGui.SameLine()
-                        inventoryUI.showAug4 = ImGui.Checkbox("Aug 4", inventoryUI.showAug4)
-                        ImGui.SameLine()
-                        inventoryUI.showAug5 = ImGui.Checkbox("Aug 5", inventoryUI.showAug5)
-                        ImGui.SameLine()
-                        inventoryUI.showAug6 = ImGui.Checkbox("Aug 6", inventoryUI.showAug6)
+                    ImGui.Text("Show Columns:")
+                    ImGui.SameLine()
+                    inventoryUI.showAug1 = ImGui.Checkbox("Aug 1", inventoryUI.showAug1)
+                    ImGui.SameLine()
+                    inventoryUI.showAug2 = ImGui.Checkbox("Aug 2", inventoryUI.showAug2)
+                    ImGui.SameLine()
+                    inventoryUI.showAug3 = ImGui.Checkbox("Aug 3", inventoryUI.showAug3)
+                    ImGui.SameLine()
+                    inventoryUI.showAug4 = ImGui.Checkbox("Aug 4", inventoryUI.showAug4)
+                    ImGui.SameLine()
+                    inventoryUI.showAug5 = ImGui.Checkbox("Aug 5", inventoryUI.showAug5)
+                    ImGui.SameLine()
+                    inventoryUI.showAug6 = ImGui.Checkbox("Aug 6", inventoryUI.showAug6)
 
-                        local numColumns = 2 -- Icon and Item Name are always visible
-                        local visibleAugs = 0
-                        local augVisibility = {
-                            inventoryUI.showAug1,
-                            inventoryUI.showAug2,
-                            inventoryUI.showAug3,
-                            inventoryUI.showAug4,
-                            inventoryUI.showAug5,
-                            inventoryUI.showAug6
-                        }
+                    local numColumns = 3 -- Slot Name, Icon and Item Name are always visible
+                    local visibleAugs = 0
+                    local augVisibility = {
+                        inventoryUI.showAug1,
+                        inventoryUI.showAug2,
+                        inventoryUI.showAug3,
+                        inventoryUI.showAug4,
+                        inventoryUI.showAug5,
+                        inventoryUI.showAug6
+                    }
 
-                        for _, isVisible in ipairs(augVisibility) do
-                            if isVisible then
-                                visibleAugs = visibleAugs + 1
-                                numColumns = numColumns + 1
+                    for _, isVisible in ipairs(augVisibility) do
+                        if isVisible then
+                            visibleAugs = visibleAugs + 1
+                            numColumns = numColumns + 1
+                        end
+                    end
+
+                    local availableWidth = ImGui.GetWindowContentRegionWidth()
+                    local slotNameWidth = 100  -- Fixed width for the slot name column
+                    local iconWidth = 30       -- Fixed width for the icon column
+                    local itemWidth = 150      -- Fixed width for the item name column
+                    local augWidth = 0
+
+                    if visibleAugs > 0 then
+                        augWidth = math.max(80, (availableWidth - slotNameWidth - iconWidth - itemWidth) / visibleAugs)
+                    end
+
+                    if ImGui.BeginTable("EquippedTable", numColumns, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingStretchProp) then
+                        ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthFixed, slotNameWidth) -- New first column for slot name
+                        ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, iconWidth)    -- Second column for item icon
+                        ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthFixed, itemWidth)    -- Third column for item name
+
+                        for i = 1, 6 do
+                            if augVisibility[i] then
+                                ImGui.TableSetupColumn("Aug " .. i, ImGuiTableColumnFlags.WidthStretch, 1.0)
                             end
                         end
 
-                        local availableWidth = ImGui.GetWindowContentRegionWidth()
-                        local iconWidth = 30 -- Fixed width for the icon column
-                        local itemWidth = 150 -- Fixed width for the item name column
-                        local augWidth = 0
+                        ImGui.TableHeadersRow()
 
-                        if visibleAugs > 0 then
-                            augWidth = math.max(80, (availableWidth - iconWidth - itemWidth) / visibleAugs)
-                        end
+                        local function renderEquippedTableRow(item, augVisibility)
+                            -- Column 1: Slot Name
+                            ImGui.TableNextColumn()
+                            local slotName = getSlotNameFromID(item.slotid) or "Unknown"
+                            ImGui.Text(slotName)
+                            
+                            -- Column 2: Item Icon
+                            ImGui.TableNextColumn()
+                            if item.icon and item.icon ~= 0 then
+                                drawItemIcon(item.icon)
+                            else
+                                ImGui.Text("N/A")
+                            end
+                        
+                            -- Column 3: Item Name (Clickable)
+                            ImGui.TableNextColumn()
+                            if ImGui.Selectable(item.name) then
+                                local links = mq.ExtractLinks(item.itemlink)
+                                if links and #links > 0 then
+                                    mq.ExecuteTextLink(links[1])
+                                else
+                                    mq.cmd('/echo No item link found in the database.')
+                                end
+                            end
 
-                        if ImGui.BeginTable("EquippedTable", numColumns, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingStretchProp) then
-                            ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, iconWidth) -- First column for item icon
-                            ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthFixed, itemWidth) -- Second column for item name
-
+                            -- Aug columns
                             for i = 1, 6 do
                                 if augVisibility[i] then
-                                    ImGui.TableSetupColumn("Aug " .. i, ImGuiTableColumnFlags.WidthStretch, 1.0)
-                                end
-                            end
-
-                            ImGui.TableHeadersRow()
-
-                            local function renderEquippedTableRow(item, augVisibility)
-                                -- Column 1: Item Icon
-                                ImGui.TableNextColumn()
-                                if item.icon and item.icon ~= 0 then
-                                    drawItemIcon(item.icon)
-                                else
-                                    ImGui.Text("N/A")
-                                end
-                            
-                                -- Column 2: Item Name (Clickable)
-                                ImGui.TableNextColumn()
-                                if ImGui.Selectable(item.name) then
-                                    local links = mq.ExtractLinks(item.itemlink)
-                                    if links and #links > 0 then
-                                        mq.ExecuteTextLink(links[1])
-                                    else
-                                        mq.cmd('/echo No item link found in the database.')
-                                    end
-                                end
-
-                                for i = 1, 6 do
-                                    if augVisibility[i] then
-                                        ImGui.TableNextColumn()
-                                        local augField = "aug" .. i .. "Name"
-                                        local augLinkField = "aug" .. i .. "link"
-                                        if item[augField] and item[augField] ~= "" then
-                                            if ImGui.Selectable(string.format("%s", item[augField])) then
-                                                local links = mq.ExtractLinks(item[augLinkField])
-                                                if links and #links > 0 then
-                                                    mq.ExecuteTextLink(links[1])
-                                                else
-                                                    mq.cmd('/echo No aug link found in the database.')
-                                                end
+                                    ImGui.TableNextColumn()
+                                    local augField = "aug" .. i .. "Name"
+                                    local augLinkField = "aug" .. i .. "link"
+                                    if item[augField] and item[augField] ~= "" then
+                                        if ImGui.Selectable(string.format("%s", item[augField])) then
+                                            local links = mq.ExtractLinks(item[augLinkField])
+                                            if links and #links > 0 then
+                                                mq.ExecuteTextLink(links[1])
+                                            else
+                                                mq.cmd('/echo No aug link found in the database.')
                                             end
                                         end
                                     end
                                 end
                             end
-                            
-                            for _, item in ipairs(inventoryUI.inventoryData.equipped) do
-                                if matchesSearch(item) then
-                                    ImGui.TableNextRow()
-                                    ImGui.PushID(item.name or "unknown_item")
-                                    local ok, err = pcall(renderEquippedTableRow, item, augVisibility)
-                                    ImGui.PopID()
-                                    if not ok then
-                                        mq.cmdf("/echo Error rendering item row: %s", err)
-                                    end
-                                end
-                            end
-                                                    
-                            ImGui.EndTable()
                         end
+                        
+                        -- Create a sorted copy of the equipped items
+                        local sortedEquippedItems = {}
+                        for _, item in ipairs(inventoryUI.inventoryData.equipped) do
+                            if matchesSearch(item) then
+                                table.insert(sortedEquippedItems, item)
+                            end
+                        end
+                        
+                        -- Sort by slot name alphabetically
+                        table.sort(sortedEquippedItems, function(a, b)
+                            local slotNameA = getSlotNameFromID(a.slotid) or "Unknown"
+                            local slotNameB = getSlotNameFromID(b.slotid) or "Unknown"
+                            return slotNameA < slotNameB
+                        end)
+                        
+                        -- Render the sorted items
+                        for _, item in ipairs(sortedEquippedItems) do
+                            ImGui.TableNextRow()
+                            ImGui.PushID(item.name or "unknown_item")
+                            local ok, err = pcall(renderEquippedTableRow, item, augVisibility)
+                            ImGui.PopID()
+                            if not ok then
+                                mq.cmdf("/echo Error rendering item row: %s", err)
+                            end
+                        end
+                                                
+                        ImGui.EndTable()
                     end
-                    ImGui.EndChild()
-                    ImGui.EndTabItem()
                 end
+                ImGui.EndChild()
+                ImGui.EndTabItem()
+            end
 
                         -- Visual Layout Tab
                         if ImGui.BeginTabItem("Visual") then
@@ -1331,42 +1615,64 @@ function inventoryUI.render()
                                     ImGui.TableHeadersRow()
 
                                     local function renderEquippedSlot(slotID, item, slotName)
-                                        local slotButtonID = "slot_" .. tostring(slotID)
-                                        if item and item.icon and item.icon ~= 0 then
-                                            -- Make sure button size matches column size
-                                            local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 45, 45)
-                                            local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
-                                            ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
-                                            drawItemIcon(item.icon, 40, 40)
+                                    local slotButtonID = "slot_" .. tostring(slotID)
+                                    if item and item.icon and item.icon ~= 0 then
+                                        -- Make sure button size matches column size
+                                        local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 45, 45)
+                                        local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
+                                        ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
+                                        drawItemIcon(item.icon, 40, 40)
 
-                                            if clicked then
-                                                if mq.TLO.Window("ItemDisplayWindow").Open() then
-                                                    mq.TLO.Window("ItemDisplayWindow").DoClose()
-                                                    inventoryUI.openItemWindow = nil
-                                                end
-                                                inventoryUI.selectedSlotID = slotID
-                                                inventoryUI.selectedSlotName = slotName
-                                                inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
+                                        if clicked then
+                                            if mq.TLO.Window("ItemDisplayWindow").Open() then
+                                                mq.TLO.Window("ItemDisplayWindow").DoClose()
+                                                inventoryUI.openItemWindow = nil
                                             end
-                                        else
-                                            -- Center text for empty slots
-                                            local textWidth = ImGui.CalcTextSize(slotName)
-                                            local cellWidth = 40
-                                            local xOffset = (cellWidth - textWidth) * 0.5
-                                            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + xOffset)
-                                            ImGui.Text(slotName)
-                                            
-                                            if ImGui.IsItemClicked() then
-                                                if mq.TLO.Window("ItemDisplayWindow").Open() then
-                                                    mq.TLO.Window("ItemDisplayWindow").DoClose()
-                                                    inventoryUI.openItemWindow = nil
-                                                end
-                                                inventoryUI.selectedSlotID = slotID
-                                                inventoryUI.selectedSlotName = slotName
-                                                inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
+                                            inventoryUI.selectedSlotID = slotID
+                                            inventoryUI.selectedSlotName = slotName
+                                            inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
+                                        end
+                                    else
+                                        -- Empty slot: Create invisible button that covers the entire cell
+                                        local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 45, 45)
+                                        
+                                        -- Get the button's position and size for centering text
+                                        local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
+                                        local buttonMaxX, buttonMaxY = ImGui.GetItemRectMax()
+                                        local buttonWidth = buttonMaxX - buttonMinX
+                                        local buttonHeight = buttonMaxY - buttonMinY
+                                        
+                                        -- Calculate text size for centering
+                                        local textSize = ImGui.CalcTextSize(slotName)
+                                        local textX = buttonMinX + (buttonWidth - textSize) * 0.5
+                                        local textY = buttonMinY + (buttonHeight - ImGui.GetTextLineHeight()) * 0.5
+                                        
+                                        -- Draw centered text over the invisible button
+                                        ImGui.SetCursorScreenPos(textX, textY)
+                                        ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0) -- Slightly dimmed text for empty slots
+                                        ImGui.Text(slotName)
+                                        ImGui.PopStyleColor()
+                                        
+                                        -- Handle click on the entire button area
+                                        if clicked then
+                                            if mq.TLO.Window("ItemDisplayWindow").Open() then
+                                                mq.TLO.Window("ItemDisplayWindow").DoClose()
+                                                inventoryUI.openItemWindow = nil
                                             end
+                                            inventoryUI.selectedSlotID = slotID
+                                            inventoryUI.selectedSlotName = slotName
+                                            inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
+                                        end
+                                        
+                                        -- Optional: Add visual feedback on hover
+                                        if ImGui.IsItemHovered() then
+                                            -- Draw a subtle border or background when hovering over empty slots
+                                            local drawList = ImGui.GetWindowDrawList()
+                                            drawList:AddRect(ImVec2(buttonMinX, buttonMinY), ImVec2(buttonMaxX, buttonMaxY), 
+                                                        ImGui.GetColorU32(0.5, 0.5, 0.5, 0.3), 2.0)
                                         end
                                     end
+                                end
                                     
                                     for rowIndex, row in ipairs(slotLayout) do
                                         ImGui.TableNextRow(ImGuiTableRowFlags.None, 40)
@@ -1394,7 +1700,6 @@ function inventoryUI.render()
 
                             -- Column 2: Comparison Table
                             ImGui.NextColumn()
-
                             if inventoryUI.selectedSlotID then
                                 ImGui.Text("Comparing " .. inventoryUI.selectedSlotName .. " slot across all characters:")
                                 ImGui.Separator()
@@ -1402,66 +1707,79 @@ function inventoryUI.render()
                                 if #inventoryUI.compareResults == 0 then
                                     ImGui.Text("No data available for comparison.")
                                 else
-                                    -- Create a table to display the comparison results
-                                    if ImGui.BeginTable("ComparisonTable", 3, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
-                                        ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 100)
-                                        ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
-                                        ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
-                                        ImGui.TableHeadersRow()
-
-                                        local peerMap = {}
-                                        for _, result in ipairs(inventoryUI.compareResults) do
-                                            if result.peerName then
-                                                peerMap[result.peerName] = true
-                                            end
+                                    local peerMap = {}
+                                    for _, result in ipairs(inventoryUI.compareResults) do
+                                        if result.peerName then
+                                            peerMap[result.peerName] = true
                                         end
+                                    end
 
-                                        local allConnectedPeers = {}
-                                        
-                                        for peerID, invData in pairs(inventory_actor.peer_inventories) do
-                                            if invData and invData.name then
-                                                table.insert(allConnectedPeers, invData.name)
-                                            end
-                                        end
+                                    local allConnectedPeers = {}
                                     
-                                        local processedResults = {}
-                                        
-                                        for idx, result in ipairs(inventoryUI.compareResults) do
-                                            if result.peerName then
-                                                table.insert(processedResults, result)
-                                                --mq.cmdf("/echo [DEBUG] Added result for peer with item: %s", result.peerName)
+                                    for peerID, invData in pairs(inventory_actor.peer_inventories) do
+                                        if invData and invData.name then
+                                            table.insert(allConnectedPeers, invData.name)
+                                        end
+                                    end
+                                
+                                    local processedResults = {}
+                                    local currentSlotID = inventoryUI.selectedSlotID
+
+                                    for idx, result in ipairs(inventoryUI.compareResults) do
+                                        if result.peerName then
+                                            table.insert(processedResults, result)
+                                        end
+                                    end
+
+                                    for _, peerName in ipairs(allConnectedPeers) do
+                                        if not peerMap[peerName] then
+                                            table.insert(processedResults, {
+                                                peerName = peerName,
+                                                item = nil,
+                                                slotid = currentSlotID
+                                            })
+                                        end
+                                    end
+                                    
+                                    table.sort(processedResults, function(a, b) 
+                                        return (a.peerName or "zzz") < (b.peerName or "zzz") 
+                                    end)
+                                    local equippedResults = {}
+                                    local emptyResults = {}
+                                    
+                                    for _, result in ipairs(processedResults) do
+                                        local showRow = true
+                                        if result.peerName then
+                                            local peerSpawn = mq.TLO.Spawn("pc = " .. result.peerName)
+                                            if peerSpawn.ID() then
+                                                local peerClass = peerSpawn.Class.ShortName() or "UNK"
+                                                local armorType = getArmorTypeByClass(peerClass)
+                                                showRow = (inventoryUI.armorTypeFilter == "All" or armorType == inventoryUI.armorTypeFilter)
                                             end
                                         end
-
-                                        for _, peerName in ipairs(allConnectedPeers) do
-                                            if not peerMap[peerName] then
-                                                table.insert(processedResults, {
-                                                    peerName = peerName,
-                                                    item = nil
-                                                })
-                                                --mq.cmdf("/echo [DEBUG] Added empty result for peer: %s", peerName)
+                                        
+                                        if showRow then
+                                            if result.item then
+                                                table.insert(equippedResults, result)
+                                            else
+                                                table.insert(emptyResults, result)
                                             end
                                         end
-                                        
-                                        table.sort(processedResults, function(a, b) 
-                                            return (a.peerName or "zzz") < (b.peerName or "zzz") 
-                                        end)
+                                    end
 
-                                        for idx, result in ipairs(processedResults) do
-                                            local safePeerName = result.peerName or "UnknownPeer"
-                                            ImGui.PushID(safePeerName .. "_" .. tostring(idx))
+                                    -- Primary table: Characters with items equipped
+                                    if #equippedResults > 0 then
+                                        ImGui.Text("Characters with " .. inventoryUI.selectedSlotName .. " equipped:")
+                                        if ImGui.BeginTable("EquippedComparisonTable", 3, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+                                            ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 100)
+                                            ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
+                                            ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
+                                            ImGui.TableHeadersRow()
 
-                                            local showRow = true
-                                            if result.peerName then
-                                                local peerSpawn = mq.TLO.Spawn("pc = " .. result.peerName)
-                                                if peerSpawn.ID() then
-                                                    local peerClass = peerSpawn.Class.ShortName() or "UNK"
-                                                    local armorType = getArmorTypeByClass(peerClass)
-                                                    showRow = (inventoryUI.armorTypeFilter == "All" or armorType == inventoryUI.armorTypeFilter)
-                                                end
-                                            end
+                                            for idx, result in ipairs(equippedResults) do
+                                                local safePeerName = result.peerName or "UnknownPeer"
+                                                ImGui.PushID(safePeerName .. "_equipped_" .. tostring(idx))
 
-                                            if showRow then
                                                 ImGui.TableNextRow()
 
                                                 ImGui.TableNextColumn()
@@ -1487,13 +1805,61 @@ function inventoryUI.render()
                                                             end
                                                         end
                                                     end
-                                                else
-                                                    ImGui.Text("(empty)")
                                                 end
+                                                
+                                                ImGui.PopID()
                                             end
-                                            ImGui.PopID()
+                                            ImGui.EndTable()
                                         end
-                                        ImGui.EndTable()
+                                    end
+
+                                    -- Secondary table: Characters with empty slots
+                                    if #emptyResults > 0 then
+                                        if #equippedResults > 0 then
+                                            ImGui.Spacing()
+                                            ImGui.Separator()
+                                            ImGui.Spacing()
+                                        end
+                                        
+                                        ImGui.Text("Characters with empty " .. inventoryUI.selectedSlotName .. " slot:")
+                                        if ImGui.BeginTable("EmptyComparisonTable", 2, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+                                            ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 100)
+                                            ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthStretch)
+                                            ImGui.TableHeadersRow()
+
+                                            for idx, result in ipairs(emptyResults) do
+                                                local safePeerName = result.peerName or "UnknownPeer"
+                                                ImGui.PushID(safePeerName .. "_empty_" .. tostring(idx))
+
+                                                ImGui.TableNextRow()
+                                                
+                                                -- Apply subtle red background to the entire row
+                                                ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, ImGui.GetColorU32(0.3, 0.1, 0.1, 0.3)) -- Subtle red highlight
+
+                                                ImGui.TableNextColumn()
+                                                if ImGui.Selectable(result.peerName) then
+                                                    inventory_actor.send_inventory_command(result.peerName, "foreground", {})
+                                                    mq.cmdf("/echo Bringing %s to the foreground...", result.peerName)
+                                                end
+
+                                                ImGui.TableNextColumn()
+                                                ImGui.PushStyleColor(ImGuiCol.Text, 0.6, 0.6, 0.6, 1.0) -- Gray text for empty
+                                                if ImGui.Selectable("(empty slot) - Click to find items") then
+                                                    local slotID = result.slotid
+                                                    local targetChar = result.peerName
+                                                    inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
+                                                    inventoryUI.showItemSuggestions = true
+                                                    inventoryUI.itemSuggestionsTarget = targetChar
+                                                    inventoryUI.itemSuggestionsSlot = slotID
+                                                    inventoryUI.itemSuggestionsSlotName = getSlotNameFromID(slotID) or tostring(slotID)
+
+                                                end
+                                                ImGui.PopStyleColor()
+                                                
+                                                ImGui.PopID()
+                                            end
+                                            ImGui.EndTable()
+                                        end
                                     end
                                 end
                             else
@@ -2217,6 +2583,7 @@ function inventoryUI.render()
     renderContextMenu()
     renderMultiSelectIndicator()
     renderMultiTradePanel()
+    renderItemSuggestions()
 end
 
 mq.imgui.init("InventoryWindow", function()
