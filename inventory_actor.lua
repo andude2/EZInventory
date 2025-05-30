@@ -90,8 +90,7 @@ local function get_item_stats(item)
     if not item or not item() then
         return stats
     end
-    
-    -- Helper function to safely get stat values
+
     local function safe_get(func, default)
         default = default or 0
         local success, result = pcall(func)
@@ -100,17 +99,7 @@ local function get_item_stats(item)
         end
         return default
     end
-    
-    -- Helper function for spell-like objects that might be nil or not have Name()
-    local function safe_spell_name(spellObj)
-        if not spellObj then return "" end
-        local success, result = pcall(function() return spellObj() end)
-        if not success or not result then return "" end
-        local nameSuccess, name = pcall(function() return result.Name() end)
-        return nameSuccess and name or ""
-    end
-    
-    -- Basic item stats that should be safe
+
     stats.ac = safe_get(function() return item.AC() end)
     stats.hp = safe_get(function() return item.HP() end)
     stats.mana = safe_get(function() return item.Mana() end)
@@ -126,12 +115,12 @@ local function get_item_stats(item)
     stats.cha = safe_get(function() return item.CHA() end)
     
     -- Resistances (trying different possible method names)
-    stats.svMagic = safe_get(function() return item.svMagic() end) or safe_get(function() return item.svMagic() end)
-    stats.svFire = safe_get(function() return item.svFire() end) or safe_get(function() return item.svFire() end)
-    stats.svCold = safe_get(function() return item.svCold() end) or safe_get(function() return item.svCold() end)
-    stats.svDisease = safe_get(function() return item.svDisease() end) or safe_get(function() return item.svDisease() end)
-    stats.svPoison = safe_get(function() return item.svPoison() end) or safe_get(function() return item.svPoison() end)
-    stats.svCorruption = safe_get(function() return item.svCorruption() end) or safe_get(function() return item.svCorruption() end)
+    stats.svMagic = safe_get(function() return item.svMagic() end)
+    stats.svFire = safe_get(function() return item.svFire() end)
+    stats.svCold = safe_get(function() return item.svCold() end)
+    stats.svDisease = safe_get(function() return item.svDisease() end)
+    stats.svPoison = safe_get(function() return item.svPoison() end)
+    stats.svCorruption = safe_get(function() return item.svCorruption() end)
     
     -- Combat Stats
     stats.attack = safe_get(function() return item.Attack() end)
@@ -175,51 +164,51 @@ local function get_item_stats(item)
     stats.spellDamage = safe_get(function() return item.SpellDamage() end)
     
     -- Item Properties
-    stats.weight = safe_get(function() return item.Weight() end)
+    --[[stats.weight = safe_get(function() return item.Weight() end)
     stats.size = safe_get(function() return item.Size() end)
     stats.value = safe_get(function() return item.Value() end)
     stats.tribute = safe_get(function() return item.Tribute() end)
     stats.augRestrictions = safe_get(function() return item.AugRestrictions() end)
-    stats.augType = safe_get(function() return item.AugType() end)
+    stats.augType = safe_get(function() return item.AugType() end)]]
     
     -- Aug slot types - try different possible method names
-    stats.augSlot1Type = safe_get(function() return item.AugSlot1() end) or safe_get(function() return item.AugSlot1Type() end)
+    --[[stats.augSlot1Type = safe_get(function() return item.AugSlot1() end) or safe_get(function() return item.AugSlot1Type() end)
     stats.augSlot2Type = safe_get(function() return item.AugSlot2() end) or safe_get(function() return item.AugSlot2Type() end)
     stats.augSlot3Type = safe_get(function() return item.AugSlot3() end) or safe_get(function() return item.AugSlot3Type() end)
     stats.augSlot4Type = safe_get(function() return item.AugSlot4() end) or safe_get(function() return item.AugSlot4Type() end)
     stats.augSlot5Type = safe_get(function() return item.AugSlot5() end) or safe_get(function() return item.AugSlot5Type() end)
-    stats.augSlot6Type = safe_get(function() return item.AugSlot6() end) or safe_get(function() return item.AugSlot6Type() end)
+    stats.augSlot6Type = safe_get(function() return item.AugSlot6() end) or safe_get(function() return item.AugSlot6Type() end)]]
     
     -- Level Requirements
     stats.requiredLevel = safe_get(function() return item.RequiredLevel() end)
     stats.recommendedLevel = safe_get(function() return item.RecommendedLevel() end)
     
     -- Item Type Information
-    stats.type = safe_get(function() return item.Type() end, "")
+    --[[stats.type = safe_get(function() return item.Type() end, "")
     stats.race = safe_get(function() return item.Race() end, "")
     stats.deity = safe_get(function() return item.Deity() end, "")
-    stats.tradeskills = safe_get(function() return item.Tradeskills() end)
+    stats.tradeskills = safe_get(function() return item.Tradeskills() end)]]
     
     -- Container Properties (for bags)
-    stats.container = safe_get(function() return item.Container() end)
+    --[[stats.container = safe_get(function() return item.Container() end)
     stats.weightReduction = safe_get(function() return item.WeightReduction() end)
-    stats.sizeCapacity = safe_get(function() return item.SizeCapacity() end)
+    stats.sizeCapacity = safe_get(function() return item.SizeCapacity() end)]]
     
     -- Spell/Proc Information - Use the safer approach
-    stats.spell = safe_spell_name(safe_get(function() return item.Spell end))
+    --[[stats.spell = safe_spell_name(safe_get(function() return item.Spell end))
     stats.proc = safe_spell_name(safe_get(function() return item.Proc end))
     stats.worn = safe_spell_name(safe_get(function() return item.Worn end))
     stats.focus = safe_spell_name(safe_get(function() return item.Focus end))
     stats.scroll = safe_spell_name(safe_get(function() return item.Scroll end))
-    stats.clickEffect = safe_get(function() return item.Clicky() end, "")
+    stats.clickEffect = safe_get(function() return item.Clicky() end, "")]]
     
     -- Charges and Timers
-    stats.charges = safe_get(function() return item.Charges() end)
+    --[[stats.charges = safe_get(function() return item.Charges() end)
     stats.timer = safe_get(function() return item.Timer() end)
-    stats.castTime = safe_get(function() return item.CastTime() end)
+    stats.castTime = safe_get(function() return item.CastTime() end)]]
     
     -- Item Flags - Convert to proper booleans
-    stats.magic = safe_get(function() return item.Magic() end, false) == true
+    --[[stats.magic = safe_get(function() return item.Magic() end, false) == true
     stats.lore = safe_get(function() return item.Lore() end, false) == true
     stats.noDrop = safe_get(function() return item.NoDrop() end, false) == true
     stats.noRent = safe_get(function() return item.NoRent() end, false) == true
@@ -227,7 +216,7 @@ local function get_item_stats(item)
     stats.attunable = safe_get(function() return item.Attunable() end, false) == true
     stats.expendable = safe_get(function() return item.Expendable() end, false) == true
     stats.artifact = safe_get(function() return item.Artifact() end, false) == true
-    stats.prestige = safe_get(function() return item.Prestige() end, false) == true
+    stats.prestige = safe_get(function() return item.Prestige() end, false) == true]]
     
     return stats
 end
@@ -300,12 +289,9 @@ function M.gather_inventory()
                         classes = classInfo.classes,
                         slots = get_valid_slots(item),
                     }
-                    
-                    -- Add all the stats to the entry
                     for k, v in pairs(stats) do
                         entry[k] = v
-                    end
-                    
+                    end                   
                     local augments = scan_augment_links(item)
                     for k, v in pairs(augments) do entry[k] = v end
                     table.insert(data.bags[bagid], entry)
@@ -334,12 +320,9 @@ function M.gather_inventory()
                 classes = classInfo.classes,
                 slots = get_valid_slots(item),
             }
-            
-            -- Add all the stats to the entry
             for k, v in pairs(stats) do
                 entry[k] = v
             end
-            
             local augments = scan_augment_links(item)
             for k, v in pairs(augments) do entry[k] = v end
             table.insert(data.bank, entry)
@@ -366,12 +349,9 @@ function M.gather_inventory()
                             classes = subClassInfo.classes,
                             slots = get_valid_slots(sub),
                         }
-                        
-                        -- Add all the stats to the subEntry
                         for k, v in pairs(subStats) do
                             subEntry[k] = v
                         end
-                        
                         local subAugments = scan_augment_links(sub)
                         for k, v in pairs(subAugments) do subEntry[k] = v end
                         table.insert(data.bank, subEntry)
@@ -434,7 +414,6 @@ function M.request_all_inventories()
         print("[Inventory Actor] Cannot request inventories - actor system not initialized")
         return false
     end
-    
     actor_mailbox:send(
         { mailbox = 'inventory_exchange' },
         { type = M.MSG_TYPE.REQUEST }
@@ -449,14 +428,12 @@ local function handle_proxy_give_batch(data)
         mq.cmd("/echo [ERROR] Failed to decode batch trade request")
         return
     end
-
     local session = {
         target = batchRequest.target,
         items = {},
         source = mq.TLO.Me.CleanName(),
         status = "INITIATING"
     }
-
     for i, itemRequest in ipairs(batchRequest.items) do
         table.insert(session.items, itemRequest)
         if #session.items >= 8 then
@@ -542,8 +519,7 @@ function M.perform_multi_item_trade_step()
     local targetToon = state.target_toon
     local itemsToTrade = state.items_to_trade
     local spawn = mq.TLO.Spawn("pc =" .. targetToon)
-    if not spawn() and state.status ~= "IDLE" and state.status ~= "COMPLETED" and
-       state.status ~= "WAIT_NAVIGATING_TO_BANKER" and state.status ~= "RETRIEVING_BANK_ITEMS" then
+    if not spawn() and state.status ~= "IDLE" and state.status ~= "COMPLETED" and state.status ~= "WAIT_NAVIGATING_TO_BANKER" and state.status ~= "RETRIEVING_BANK_ITEMS" then
         mq.cmdf("/popcustom 5 %s not found in the zone! Aborting multi-item trade.", targetToon)
         return false
     end
