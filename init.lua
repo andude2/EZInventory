@@ -1,6 +1,6 @@
 -- ezinventory.lua
 -- developed by psatty82
--- updated 05/31/2025 4:00 PM
+-- updated 05/31/2025 4:50 PM
 local mq = require("mq")
 local ImGui = require("ImGui")
 local icons = require("mq.icons")
