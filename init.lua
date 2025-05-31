@@ -70,6 +70,99 @@ local CBB_BAG_ITEM_SIZE    = 40
 local CBB_MAX_SLOTS_PER_BAG = 10 
 local show_item_background_cbb = true
 
+local function getPeerConnectionStatus()
+    local connectionMethod = "None"
+    local connectedPeers = {}
+
+    local function string_trim(s)
+        return s:match("^%s*(.-)%s*$")
+    end
+
+    if mq.TLO.Plugin("MQ2Mono") and mq.TLO.Plugin("MQ2Mono").IsLoaded() then
+        connectionMethod = "MQ2Mono"
+        local e3Query = "e3,E3Bots.ConnectedClients"
+        local peersStr = mq.TLO.MQ2Mono.Query(e3Query)()
+        
+        if peersStr and type(peersStr) == "string" and peersStr:lower() ~= "null" and peersStr ~= "" then
+            for peer in string.gmatch(peersStr, "([^,]+)") do
+                peer = string_trim(peer)
+                if peer ~= "" and peer ~= mq.TLO.Me.CleanName() then
+                    table.insert(connectedPeers, {
+                        name = peer,
+                        method = "MQ2Mono",
+                        online = true
+                    })
+                end
+            end
+        end
+    elseif mq.TLO.Plugin("MQ2DanNet") and mq.TLO.Plugin("MQ2DanNet").IsLoaded() then
+        connectionMethod = "DanNet"
+        local peersStr = mq.TLO.DanNet.Peers() or ""
+        
+        if peersStr and peersStr ~= "" then
+            for peer in string.gmatch(peersStr, "([^|]+)") do
+                peer = string_trim(peer)
+                if peer ~= "" and peer ~= mq.TLO.Me.CleanName() then
+                    table.insert(connectedPeers, {
+                        name = peer,
+                        method = "DanNet",
+                        online = true
+                    })
+                end
+            end
+        end
+    elseif mq.TLO.Plugin("MQ2EQBC") and mq.TLO.Plugin("MQ2EQBC").IsLoaded() and mq.TLO.EQBC.Connected() then
+        connectionMethod = "EQBC"
+        local names = mq.TLO.EQBC.Names() or ""
+        if names ~= "" then
+            for name in names:gmatch("([^%s]+)") do
+                if name ~= mq.TLO.Me.CleanName() then
+                    table.insert(connectedPeers, {
+                        name = name,
+                        method = "EQBC", 
+                        online = true
+                    })
+                end
+            end
+        end
+    end
+    return connectionMethod, connectedPeers
+end
+
+local function broadcastLuaRun(connectionMethod)
+    local command = "/lua run ezinventory"
+    
+    if connectionMethod == "MQ2Mono" then
+        mq.cmd("/e3bcaa " .. command)
+        mq.cmd("/echo Broadcasting via MQ2Mono: " .. command)
+    elseif connectionMethod == "DanNet" then
+        mq.cmd("/dgaexecute " .. command)
+        mq.cmd("/echo Broadcasting via DanNet: " .. command)
+    elseif connectionMethod == "EQBC" then
+        mq.cmd("/bca /" .. command)
+        mq.cmd("/echo Broadcasting via EQBC: " .. command)
+    else
+        mq.cmd("/echo No valid connection method available for broadcasting")
+    end
+end
+
+local function sendLuaRunToPeer(peerName, connectionMethod)
+    local command = "/lua run ezinventory"
+    
+    if connectionMethod == "DanNet" then
+        mq.cmdf("/dgt %s %s", peerName, command)
+        mq.cmdf("/echo Sent to %s via DanNet: %s", peerName, command)
+    elseif connectionMethod == "EQBC" then
+        mq.cmdf("/bct %s /%s", peerName, command)
+        mq.cmdf("/echo Sent to %s via EQBC: %s", peerName, command)
+    elseif connectionMethod == "MQ2Mono" then
+        mq.cmdf("/e3bct %s %s", peerName, command)
+        mq.cmdf("/echo Sent to %s via MQ2Mono: %s", peerName, command)
+    else
+        mq.cmdf("/echo Cannot send to %s - no valid connection method", peerName)
+    end
+end
+
 local function refreshPeerCache()
     local now = os.time()
     if now - lastCacheTime > 2 then
@@ -2741,6 +2834,180 @@ function inventoryUI.render()
                     ImGui.EndTable()
                 end
             end
+            ImGui.EndTabItem()
+        end
+
+        --------------------------------------------------------
+        --- Peer Connection Tab
+        --------------------------------------------------------
+        if ImGui.BeginTabItem("Peer Management") then
+            ImGui.Text("Connection Management and Peer Discovery")
+            ImGui.Separator()
+            
+            -- Get connection info
+            local connectionMethod, connectedPeers = getPeerConnectionStatus()
+            
+            -- Display connection status
+            ImGui.Text("Connection Method: ")
+            ImGui.SameLine()
+            if connectionMethod ~= "None" then
+                ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
+                ImGui.Text(connectionMethod)
+                ImGui.PopStyleColor()
+            else
+                ImGui.PushStyleColor(ImGuiCol.Text, 1, 0, 0, 1)
+                ImGui.Text("None Available")
+                ImGui.PopStyleColor()
+            end
+            
+            ImGui.Spacing()
+            
+            -- Broadcast section
+            if connectionMethod ~= "None" then
+                ImGui.Text("Broadcast Commands:")
+                ImGui.SameLine()
+                if ImGui.Button("Start EZInventory on All Peers") then
+                    broadcastLuaRun(connectionMethod)
+                end
+                ImGui.SameLine()
+                if ImGui.Button("Request All Inventories") then
+                    inventory_actor.request_all_inventories()
+                    mq.cmd("/echo Requested inventory updates from all peers")
+                end
+            else
+                ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0)
+                ImGui.Text("No connection method available - Load MQ2Mono, MQ2DanNet, or MQ2EQBC")
+                ImGui.PopStyleColor()
+            end
+            
+            ImGui.Separator()
+            
+            local peerStatus = {}
+            for _, peer in ipairs(connectedPeers) do
+                peerStatus[peer.name] = {
+                    name = peer.name,
+                    connected = true,
+                    hasInventory = false,
+                    method = peer.method,
+                    lastSeen = "Connected"
+                }
+            end
+            for peerID, invData in pairs(inventory_actor.peer_inventories) do
+                local peerName = invData.name or "Unknown"
+                if peerName ~= mq.TLO.Me.CleanName() then
+                    if peerStatus[peerName] then
+                        peerStatus[peerName].hasInventory = true
+                        peerStatus[peerName].lastSeen = "Has Inventory Data"
+                    else
+                        peerStatus[peerName] = {
+                            name = peerName,
+                            connected = false,
+                            hasInventory = true,
+                            method = "Unknown",
+                            lastSeen = "Has Inventory Data"
+                        }
+                    end
+                end
+            end
+            
+            ImGui.Text(string.format("Peer Status (%d total):", table.maxn(peerStatus) or 0))
+            
+            if ImGui.BeginTable("PeerStatusTable", 5, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+                ImGui.TableSetupColumn("Peer Name", ImGuiTableColumnFlags.WidthStretch)
+                ImGui.TableSetupColumn("Connected", ImGuiTableColumnFlags.WidthFixed, 80)
+                ImGui.TableSetupColumn("Has Inventory", ImGuiTableColumnFlags.WidthFixed, 100)
+                ImGui.TableSetupColumn("Method", ImGuiTableColumnFlags.WidthFixed, 80)
+                ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 120)
+                ImGui.TableHeadersRow()
+                
+                for peerName, status in pairs(peerStatus) do
+                    ImGui.TableNextRow()
+                    ImGui.TableNextColumn()
+                    ImGui.Text(status.name)
+                    ImGui.TableNextColumn()
+                    if status.connected then
+                        ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
+                        ImGui.Text("Yes")
+                        ImGui.PopStyleColor()
+                    else
+                        ImGui.PushStyleColor(ImGuiCol.Text, 1, 0, 0, 1)
+                        ImGui.Text("No")
+                        ImGui.PopStyleColor()
+                    end
+                    ImGui.TableNextColumn()
+                    if status.hasInventory then
+                        ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
+                        ImGui.Text("Yes")
+                        ImGui.PopStyleColor()
+                    else
+                        ImGui.PushStyleColor(ImGuiCol.Text, 1, 1, 0, 1)
+                        ImGui.Text("No")
+                        ImGui.PopStyleColor()
+                    end
+                    ImGui.TableNextColumn()
+                    ImGui.Text(status.method)
+                    ImGui.TableNextColumn()
+                    if status.connected and not status.hasInventory then
+                        if ImGui.Button("Start Script##" .. peerName) then
+                            sendLuaRunToPeer(peerName, connectionMethod)
+                        end
+                    elseif status.connected and status.hasInventory then
+                        if ImGui.Button("Refresh##" .. peerName) then
+                            inventory_actor.send_inventory_command(peerName, "echo", {"Requesting inventory refresh"})
+                            mq.cmdf("/echo Sent refresh request to %s", peerName)
+                        end
+                    elseif not status.connected and status.hasInventory then
+                        ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0)
+                        ImGui.Text("Offline")
+                        ImGui.PopStyleColor()
+                    else
+                        ImGui.Text("--")
+                    end
+                end
+                
+                ImGui.EndTable()
+            end
+            ImGui.Separator()
+            if ImGui.CollapsingHeader("Debug Information") then
+                ImGui.Text("Connection Method Details:")
+                ImGui.Indent()
+                
+                if connectionMethod == "MQ2Mono" then
+                    ImGui.Text("MQ2Mono Status: Loaded")
+                    local e3Query = "e3,E3Bots.ConnectedClients"
+                    local peersStr = mq.TLO.MQ2Mono.Query(e3Query)()
+                    if peersStr and peersStr ~= "" and peersStr:lower() ~= "null" then
+                        ImGui.Text(string.format("E3 Connected Clients: %s", peersStr))
+                    else
+                        ImGui.Text("E3 Connected Clients: None or query failed")
+                    end
+                elseif connectionMethod == "DanNet" then
+                    ImGui.Text("DanNet Status: Loaded and Connected")
+                    local peerCount = mq.TLO.DanNet.PeerCount() or 0
+                    ImGui.Text(string.format("DanNet Peer Count: %d", peerCount))
+                elseif connectionMethod == "EQBC" then
+                    ImGui.Text("EQBC Status: Loaded and Connected")
+                    local names = mq.TLO.EQBC.Names() or ""
+                    ImGui.Text(string.format("EQBC Names: %s", names))
+                end
+                
+                ImGui.Unindent()
+                
+                ImGui.Spacing()
+                ImGui.Text("Inventory Actor Status:")
+                ImGui.Indent()
+                
+                local inventoryPeerCount = 0
+                for _ in pairs(inventory_actor.peer_inventories) do
+                    inventoryPeerCount = inventoryPeerCount + 1
+                end
+                
+                ImGui.Text(string.format("Known Inventory Peers: %d", inventoryPeerCount))
+                ImGui.Text(string.format("Actor Initialized: %s", inventory_actor.is_initialized() and "Yes" or "No"))
+                
+                ImGui.Unindent()
+            end
+            
             ImGui.EndTabItem()
         end
         ImGui.EndTabBar()
