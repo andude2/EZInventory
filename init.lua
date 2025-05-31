@@ -51,7 +51,7 @@ local inventoryUI = {
     itemSuggestionsLocationFilter = "All",
     isLoadingData = true,
     pendingStatsRequests = {},
-    statsRequestTimeout = 5, -- seconds
+    statsRequestTimeout = 5,
     isLoadingComparison = false,
     comparisonError = nil,
 }
@@ -183,7 +183,7 @@ local function toggleItemSelection(item, uniqueKey, sourcePeer)
         inventoryUI.selectedItems[uniqueKey] = {
             item = item,
             key = uniqueKey,
-            source = sourcePeer or mq.TLO.Me.Name() -- fallback
+            source = sourcePeer or mq.TLO.Me.Name()
         }
     else
         inventoryUI.selectedItems[uniqueKey] = nil
@@ -256,7 +256,7 @@ local function draw_empty_slot_cbb(cell_id)
                     for i = #bagItems, 1, -1 do
                         if tonumber(bagItems[i].slotid) == slotIndex then
                             --mq.cmdf("/echo [DEBUG] Optimistically replacing existing item in UI data: Bag %d, Slot %d", pack_number, slotIndex)
-                            bagItems[i] = newItem -- Replace existing entry
+                            bagItems[i] = newItem
                             replaced = true
                             break
                         end
@@ -325,12 +325,12 @@ local function draw_live_item_icon_cbb(item_tlo, cell_id)
         --mq.cmdf("/echo [DEBUG] Live Pickup Click: mainSlot=%s, subSlot=%s", tostring(mainSlot), tostring(subSlot))
 
         if mainSlot >= 23 and mainSlot <= 34 then -- It's in a bag slot
-            local pack_number = mainSlot - 22 -- Convert 23-34 to 1-12
+            local pack_number = mainSlot - 22 
             if subSlot == -1 then
                 mq.cmdf('/shift /itemnotify "%s" leftmouseup', item_tlo.Name())
                 mq.cmd('/echo [WARN] Pickup fallback: Used item name for item not in subslot.')
             else
-                local command_slotid = subSlot + 1 -- Convert 0-based TLO subslot to 1-based command slot
+                local command_slotid = subSlot + 1
                 mq.cmdf("/shift /itemnotify in pack%d %d leftmouseup", pack_number, command_slotid)
             end
         else
