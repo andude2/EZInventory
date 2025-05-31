@@ -2923,7 +2923,22 @@ function inventoryUI.render()
                 for peerName, status in pairs(peerStatus) do
                     ImGui.TableNextRow()
                     ImGui.TableNextColumn()
-                    ImGui.Text(status.name)
+                    if status.connected then
+                        ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.8, 1.0, 1.0)
+                        if ImGui.Selectable(status.name .. "##peer_" .. peerName) then
+                            inventory_actor.send_inventory_command(peerName, "foreground", {})
+                            mq.cmdf("/echo Bringing %s to the foreground...", peerName)
+                        end
+                        ImGui.PopStyleColor()
+                        if ImGui.IsItemHovered() then
+                            ImGui.SetTooltip("Click to bring " .. peerName .. " to foreground")
+                        end
+                    else
+                        ImGui.PushStyleColor(ImGuiCol.Text, 0.6, 0.6, 0.6, 1.0)
+                        ImGui.Text(status.name)
+                        ImGui.PopStyleColor()
+                    end
+                    
                     ImGui.TableNextColumn()
                     if status.connected then
                         ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)

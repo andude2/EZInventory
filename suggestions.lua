@@ -61,14 +61,10 @@ end
 
 function Suggestions.requestDetailedStats(peerName, itemName, location, callback)
     local cacheKey = string.format("%s_%s_%s", peerName, itemName, location)
-    
-    -- Check cache first
     if Suggestions.detailed_stats_cache[cacheKey] then
         callback(Suggestions.detailed_stats_cache[cacheKey])
         return
     end
-    
-    -- If it's our own character, get stats directly
     if peerName == mq.TLO.Me.CleanName() then
         local stats = inventory_actor.get_item_detailed_stats(itemName, location, nil)
         if stats then
@@ -79,8 +75,6 @@ function Suggestions.requestDetailedStats(peerName, itemName, location, callback
         end
         return
     end
-    
-    -- Request from peer
     inventory_actor.request_item_stats(peerName, itemName, location, nil, function(stats)
         if stats then
             Suggestions.detailed_stats_cache[cacheKey] = stats
@@ -170,6 +164,7 @@ function Suggestions.getAvailableItemsForSlot(targetCharacter, slotID)
                     source = sourceName,
                     location = loc,
                     item = item,
+                    hasDetailedStats = false,
                 })
             end
         end
