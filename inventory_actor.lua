@@ -11,7 +11,9 @@ M.deferred_tasks = {}
 M.MSG_TYPE = {
     UPDATE = "inventory_update",
     REQUEST = "inventory_request",
-    RESPONSE = "inventory_response"
+    RESPONSE = "inventory_response",
+    STATS_REQUEST = "stats_request",
+    STATS_RESPONSE = "stats_response"
 }
 
 M.peer_inventories = {}
@@ -84,7 +86,47 @@ local function scan_augment_links(item)
     return data
 end
 
-local function get_item_stats(item)
+local function get_basic_item_info(item)
+    local basic = {}
+    
+    if not item or not item() then
+        return basic
+    end
+
+    local function safe_get(func, default)
+        default = default or 0
+        local success, result = pcall(func)
+        if success and result ~= nil then
+            return result
+        end
+        return default
+    end
+
+    -- Only gather essential data for initial scan
+    basic.name = item.Name() or ""
+    basic.id = item.ID() or 0
+    basic.icon = item.Icon() or 0
+    basic.itemlink = item.ItemLink("CLICKABLE")() or ""
+    basic.nodrop = item.NoDrop() and 1 or 0
+    basic.qty = item.Stack() or 1
+    
+    -- Class and slot info (needed for filtering)
+    local classInfo = get_item_class_info(item)
+    basic.classCount = classInfo.classCount
+    basic.allClasses = classInfo.allClasses
+    basic.classes = classInfo.classes
+    basic.slots = get_valid_slots(item)
+    
+    -- Basic aug names for search functionality
+    local augments = scan_augment_links(item)
+    for k, v in pairs(augments) do 
+        basic[k] = v 
+    end
+    
+    return basic
+end
+
+local function get_detailed_item_stats(item)
     local stats = {}
     
     if not item or not item() then
@@ -100,6 +142,7 @@ local function get_item_stats(item)
         return default
     end
 
+    -- All the detailed stats from the original get_item_stats function
     stats.ac = safe_get(function() return item.AC() end)
     stats.hp = safe_get(function() return item.HP() end)
     stats.mana = safe_get(function() return item.Mana() end)
@@ -114,7 +157,7 @@ local function get_item_stats(item)
     stats.int = safe_get(function() return item.INT() end)
     stats.cha = safe_get(function() return item.CHA() end)
     
-    -- Resistances (trying different possible method names)
+    -- Resistances
     stats.svMagic = safe_get(function() return item.svMagic() end)
     stats.svFire = safe_get(function() return item.svFire() end)
     stats.svCold = safe_get(function() return item.svCold() end)
@@ -163,63 +206,75 @@ local function get_item_stats(item)
     stats.healAmount = safe_get(function() return item.HealAmount() end)
     stats.spellDamage = safe_get(function() return item.SpellDamage() end)
     
-    -- Item Properties
-    --[[stats.weight = safe_get(function() return item.Weight() end)
-    stats.size = safe_get(function() return item.Size() end)
-    stats.value = safe_get(function() return item.Value() end)
-    stats.tribute = safe_get(function() return item.Tribute() end)
-    stats.augRestrictions = safe_get(function() return item.AugRestrictions() end)
-    stats.augType = safe_get(function() return item.AugType() end)]]
-    
-    -- Aug slot types - try different possible method names
-    --[[stats.augSlot1Type = safe_get(function() return item.AugSlot1() end) or safe_get(function() return item.AugSlot1Type() end)
-    stats.augSlot2Type = safe_get(function() return item.AugSlot2() end) or safe_get(function() return item.AugSlot2Type() end)
-    stats.augSlot3Type = safe_get(function() return item.AugSlot3() end) or safe_get(function() return item.AugSlot3Type() end)
-    stats.augSlot4Type = safe_get(function() return item.AugSlot4() end) or safe_get(function() return item.AugSlot4Type() end)
-    stats.augSlot5Type = safe_get(function() return item.AugSlot5() end) or safe_get(function() return item.AugSlot5Type() end)
-    stats.augSlot6Type = safe_get(function() return item.AugSlot6() end) or safe_get(function() return item.AugSlot6Type() end)]]
-    
     -- Level Requirements
     stats.requiredLevel = safe_get(function() return item.RequiredLevel() end)
     stats.recommendedLevel = safe_get(function() return item.RecommendedLevel() end)
     
-    -- Item Type Information
-    --[[stats.type = safe_get(function() return item.Type() end, "")
-    stats.race = safe_get(function() return item.Race() end, "")
-    stats.deity = safe_get(function() return item.Deity() end, "")
-    stats.tradeskills = safe_get(function() return item.Tradeskills() end)]]
-    
-    -- Container Properties (for bags)
-    --[[stats.container = safe_get(function() return item.Container() end)
-    stats.weightReduction = safe_get(function() return item.WeightReduction() end)
-    stats.sizeCapacity = safe_get(function() return item.SizeCapacity() end)]]
-    
-    -- Spell/Proc Information - Use the safer approach
-    --[[stats.spell = safe_spell_name(safe_get(function() return item.Spell end))
-    stats.proc = safe_spell_name(safe_get(function() return item.Proc end))
-    stats.worn = safe_spell_name(safe_get(function() return item.Worn end))
-    stats.focus = safe_spell_name(safe_get(function() return item.Focus end))
-    stats.scroll = safe_spell_name(safe_get(function() return item.Scroll end))
-    stats.clickEffect = safe_get(function() return item.Clicky() end, "")]]
-    
-    -- Charges and Timers
-    --[[stats.charges = safe_get(function() return item.Charges() end)
-    stats.timer = safe_get(function() return item.Timer() end)
-    stats.castTime = safe_get(function() return item.CastTime() end)]]
-    
-    -- Item Flags - Convert to proper booleans
-    --[[stats.magic = safe_get(function() return item.Magic() end, false) == true
-    stats.lore = safe_get(function() return item.Lore() end, false) == true
-    stats.noDrop = safe_get(function() return item.NoDrop() end, false) == true
-    stats.noRent = safe_get(function() return item.NoRent() end, false) == true
-    stats.noTrade = safe_get(function() return item.NoTrade() end, false) == true
-    stats.attunable = safe_get(function() return item.Attunable() end, false) == true
-    stats.expendable = safe_get(function() return item.Expendable() end, false) == true
-    stats.artifact = safe_get(function() return item.Artifact() end, false) == true
-    stats.prestige = safe_get(function() return item.Prestige() end, false) == true]]
-    
     return stats
 end
+
+function M.get_item_detailed_stats(itemName, location, slotInfo)
+    print(string.format("[Inventory Actor] Getting detailed stats for %s in %s", itemName, location))
+    
+    local function findAndGetStats(item)
+        if item() and item.Name() == itemName then
+            local basic = get_basic_item_info(item)
+            local stats = get_detailed_item_stats(item)
+            
+            -- Merge basic and detailed info
+            for k, v in pairs(stats) do
+                basic[k] = v
+            end
+            
+            return basic
+        end
+        return nil
+    end
+    
+    -- Search equipped items
+    if location == "Equipped" then
+        for slot = 0, 22 do
+            local item = mq.TLO.Me.Inventory(slot)
+            local result = findAndGetStats(item)
+            if result then return result end
+        end
+    end
+    
+    -- Search bag items
+    if location == "Bags" then
+        for invSlot = 23, 34 do
+            local pack = mq.TLO.Me.Inventory(invSlot)
+            if pack() and pack.Container() > 0 then
+                for i = 1, pack.Container() do
+                    local item = pack.Item(i)
+                    local result = findAndGetStats(item)
+                    if result then return result end
+                end
+            end
+        end
+    end
+    
+    -- Search bank items
+    if location == "Bank" then
+        for bankSlot = 1, 24 do
+            local item = mq.TLO.Me.Bank(bankSlot)
+            local result = findAndGetStats(item)
+            if result then return result end
+            
+            -- Check items inside bank bags
+            if item.ID() and item.Container() and item.Container() > 0 then
+                for i = 1, item.Container() do
+                    local sub = item.Item(i)
+                    local result = findAndGetStats(sub)
+                    if result then return result end
+                end
+            end
+        end
+    end
+    
+    return nil
+end
+
 
 function M.gather_inventory()
     local data = {
@@ -231,38 +286,17 @@ function M.gather_inventory()
         bank = {},
     }
 
-    -- Equipped items (slots 0-22)
+    -- Equipped items (slots 0-22) - basic info only
     for slot = 0, 22 do
         local item = mq.TLO.Me.Inventory(slot)
         if item() then
-            local classInfo = get_item_class_info(item)
-            local stats = get_item_stats(item)
-            local entry = {
-                slotid = slot,
-                name = item.Name(),
-                id = item.ID(),
-                icon = item.Icon(),
-                itemlink = item.ItemLink("CLICKABLE")(),
-                nodrop = item.NoDrop() and 1 or 0,
-                qty = item.Stack() or 1,
-                classCount = classInfo.classCount,
-                allClasses = classInfo.allClasses,
-                classes = classInfo.classes,
-                slots = get_valid_slots(item),
-            }
-            
-            -- Add all the stats to the entry
-            for k, v in pairs(stats) do
-                entry[k] = v
-            end
-            
-            local augments = scan_augment_links(item)
-            for k, v in pairs(augments) do entry[k] = v end
+            local entry = get_basic_item_info(item)
+            entry.slotid = slot
             table.insert(data.equipped, entry)
         end
     end
 
-    -- Bag items (slots 23-34)
+    -- Bag items (slots 23-34) - basic info only
     for invSlot = 23, 34 do
         local pack = mq.TLO.Me.Inventory(invSlot)
         if pack() and pack.Container() > 0 then
@@ -271,60 +305,23 @@ function M.gather_inventory()
             for i = 1, pack.Container() do
                 local item = pack.Item(i)
                 if item() then
-                    local classInfo = get_item_class_info(item)
-                    local stats = get_item_stats(item)
-                    local entry = {
-                        bagid = bagid,
-                        slotid = i,
-                        name = item.Name(),
-                        id = item.ID(),
-                        icon = item.Icon(),
-                        qty = item.StackCount(),
-                        itemlink = item.ItemLink("CLICKABLE")(),
-                        bagname = pack.Name(),
-                        nodrop = item.NoDrop() and 1 or 0,
-                        qty = item.Stack() or item.StackSize() or 1,
-                        classCount = classInfo.classCount,
-                        allClasses = classInfo.allClasses,
-                        classes = classInfo.classes,
-                        slots = get_valid_slots(item),
-                    }
-                    for k, v in pairs(stats) do
-                        entry[k] = v
-                    end                   
-                    local augments = scan_augment_links(item)
-                    for k, v in pairs(augments) do entry[k] = v end
+                    local entry = get_basic_item_info(item)
+                    entry.bagid = bagid
+                    entry.slotid = i
+                    entry.bagname = pack.Name()
                     table.insert(data.bags[bagid], entry)
                 end
             end
         end
     end
 
-    -- Bank items (slots 1-24 for regular bank, 25-26 for shared bank)
+    -- Bank items - basic info only
     for bankSlot = 1, 24 do
         local item = mq.TLO.Me.Bank(bankSlot)
         if item.ID() then
-            local classInfo = get_item_class_info(item)
-            local stats = get_item_stats(item)
-            local entry = {
-                bankslotid = bankSlot,
-                slotid = -1,
-                name = item.Name() or "",
-                id = item.ID(),
-                icon = item.Icon() or 0,
-                qty = item.Stack() or 1,
-                itemlink = item.ItemLink() or "",
-                nodrop = item.NoDrop() and 1 or 0,
-                classCount = classInfo.classCount,
-                allClasses = classInfo.allClasses,
-                classes = classInfo.classes,
-                slots = get_valid_slots(item),
-            }
-            for k, v in pairs(stats) do
-                entry[k] = v
-            end
-            local augments = scan_augment_links(item)
-            for k, v in pairs(augments) do entry[k] = v end
+            local entry = get_basic_item_info(item)
+            entry.bankslotid = bankSlot
+            entry.slotid = -1
             table.insert(data.bank, entry)
 
             -- Check for items inside bank bags
@@ -332,28 +329,10 @@ function M.gather_inventory()
                 for i = 1, item.Container() do
                     local sub = item.Item(i)
                     if sub.ID() then  
-                        local subClassInfo = get_item_class_info(sub)
-                        local subStats = get_item_stats(sub)
-                        local subEntry = {
-                            bankslotid = bankSlot,  
-                            slotid = i, 
-                            name = sub.Name() or "",
-                            id = sub.ID(),
-                            icon = sub.Icon() or 0,
-                            qty = sub.Stack() or 1,
-                            itemlink = sub.ItemLink() or "",
-                            bagname = item.Name(),
-                            nodrop = sub.NoDrop() and 1 or 0,
-                            classCount = subClassInfo.classCount,
-                            allClasses = subClassInfo.allClasses,
-                            classes = subClassInfo.classes,
-                            slots = get_valid_slots(sub),
-                        }
-                        for k, v in pairs(subStats) do
-                            subEntry[k] = v
-                        end
-                        local subAugments = scan_augment_links(sub)
-                        for k, v in pairs(subAugments) do subEntry[k] = v end
+                        local subEntry = get_basic_item_info(sub)
+                        subEntry.bankslotid = bankSlot
+                        subEntry.slotid = i
+                        subEntry.bagname = item.Name()
                         table.insert(data.bank, subEntry)
                     end
                 end
@@ -392,7 +371,56 @@ local function message_handler(message)
             local peerId = content.data.server .. "_" .. content.data.name
             M.peer_inventories[peerId] = content.data
         end
+    elseif content.type == M.MSG_TYPE.STATS_REQUEST then
+        local itemName = content.itemName
+        local location = content.location
+        local slotInfo = content.slotInfo
+        local requestId = content.requestId
+        
+        local detailedStats = M.get_item_detailed_stats(itemName, location, slotInfo)
+        
+        if actor_mailbox then
+            actor_mailbox:send(
+                { mailbox = 'inventory_exchange' },
+                { 
+                    type = M.MSG_TYPE.STATS_RESPONSE, 
+                    requestId = requestId,
+                    itemName = itemName,
+                    location = location,
+                    stats = detailedStats
+                }
+            )
+        end
+    elseif content.type == M.MSG_TYPE.STATS_RESPONSE then
+        if M.stats_callbacks and M.stats_callbacks[content.requestId] then
+            M.stats_callbacks[content.requestId](content.stats)
+            M.stats_callbacks[content.requestId] = nil
+        end
     end
+end
+
+M.stats_callbacks = {}
+function M.request_item_stats(peerName, itemName, location, slotInfo, callback)
+    if not actor_mailbox then
+        print("[Inventory Actor] Cannot request stats - actor system not initialized")
+        return false
+    end
+    
+    local requestId = string.format("%s_%s_%d", peerName, itemName, os.time())
+    M.stats_callbacks[requestId] = callback
+    
+    actor_mailbox:send(
+        { character = peerName },
+        { 
+            type = M.MSG_TYPE.STATS_REQUEST, 
+            itemName = itemName,
+            location = location,
+            slotInfo = slotInfo,
+            requestId = requestId
+        }
+    )
+    
+    return true
 end
 
 function M.publish_inventory()

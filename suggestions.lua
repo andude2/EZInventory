@@ -3,6 +3,7 @@ local mq = require("mq")
 local inventory_actor = require("inventory_actor")
 
 local Suggestions = {}
+Suggestions.detailed_stats_cache = {}
 
 local function isItemUsableInSlot(item, slotID, targetClass)
     if not item.name or item.name == "" then return false end
@@ -56,6 +57,40 @@ function Suggestions.canClassUseItem(item, targetClass)
     end
 
     return false
+end
+
+function Suggestions.requestDetailedStats(peerName, itemName, location, callback)
+    local cacheKey = string.format("%s_%s_%s", peerName, itemName, location)
+    
+    -- Check cache first
+    if Suggestions.detailed_stats_cache[cacheKey] then
+        callback(Suggestions.detailed_stats_cache[cacheKey])
+        return
+    end
+    
+    -- If it's our own character, get stats directly
+    if peerName == mq.TLO.Me.CleanName() then
+        local stats = inventory_actor.get_item_detailed_stats(itemName, location, nil)
+        if stats then
+            Suggestions.detailed_stats_cache[cacheKey] = stats
+            callback(stats)
+        else
+            callback(nil)
+        end
+        return
+    end
+    
+    -- Request from peer
+    inventory_actor.request_item_stats(peerName, itemName, location, nil, function(stats)
+        if stats then
+            Suggestions.detailed_stats_cache[cacheKey] = stats
+        end
+        callback(stats)
+    end)
+end
+
+function Suggestions.clearStatsCache()
+    Suggestions.detailed_stats_cache = {}
 end
 
 function Suggestions.getAvailableItemsForSlot(targetCharacter, slotID)

@@ -50,6 +50,10 @@ local inventoryUI = {
     itemSuggestionsSourceFilter = "All",
     itemSuggestionsLocationFilter = "All",
     isLoadingData = true,
+    pendingStatsRequests = {},
+    statsRequestTimeout = 5, -- seconds
+    isLoadingComparison = false,
+    comparisonError = nil,
 }
 
 local EQ_ICON_OFFSET = 500
@@ -389,130 +393,79 @@ local function renderLoadingScreen(message, subMessage, tipMessage)
     ImGui.PopStyleColor()
 end
 
-function isItemUsableInSlot(item, slotID, targetClass)
-    local itemName = item.name
-    if not itemName or itemName == "" then
-        return false
+local function requestDetailedStatsForComparison(availableItem, currentlyEquipped, callback)
+    inventoryUI.isLoadingComparison = true
+    inventoryUI.comparisonError = nil
+    
+    local statsCollected = {}
+    local requestsCompleted = 0
+    local totalRequests = 0
+    
+    -- Count total requests needed
+    if availableItem then totalRequests = totalRequests + 1 end
+    if currentlyEquipped then totalRequests = totalRequests + 1 end
+    
+    if totalRequests == 0 then
+        inventoryUI.isLoadingComparison = false
+        callback(nil, nil)
+        return
     end
-    local displayItem = mq.TLO.DisplayItem(itemName)
-    if not displayItem or not displayItem.Item() then
-        return isItemUsableInSlotFallback(item, slotID, targetClass)
+    
+    local function checkCompletion()
+        requestsCompleted = requestsCompleted + 1
+        if requestsCompleted >= totalRequests then
+            inventoryUI.isLoadingComparison = false
+            callback(statsCollected.available, statsCollected.equipped)
+        end
     end
-    local numClasses = displayItem.Item.Classes()
-    if numClasses and numClasses > 0 then
-        local canUseClass = false
-        for cls = 1, numClasses do
-            local allowedClass = displayItem.Item.Class(cls)()
-            if allowedClass == targetClass then
-                canUseClass = true
-                break
+    
+    -- Request stats for available item
+    if availableItem then
+        Suggestions.requestDetailedStats(
+            availableItem.source, 
+            availableItem.name, 
+            availableItem.location,
+            function(detailedStats)
+                if detailedStats then
+                    -- Merge basic and detailed stats
+                    statsCollected.available = {}
+                    for k, v in pairs(availableItem.item) do
+                        statsCollected.available[k] = v
+                    end
+                    for k, v in pairs(detailedStats) do
+                        statsCollected.available[k] = v
+                    end
+                else
+                    inventoryUI.comparisonError = "Failed to get stats for " .. (availableItem.name or "selected item")
+                    statsCollected.available = availableItem.item -- fallback to basic stats
+                end
+                checkCompletion()
             end
-        end
-        if not canUseClass then
-            return false
-        end
+        )
     end
-    local numWornSlots = displayItem.Item.WornSlots()
-    if numWornSlots and numWornSlots > 0 then
-        local canUseSlot = false
-        for slt = 1, numWornSlots do
-            local wornSlotNum = tonumber(displayItem.Item.WornSlot(slt)())
-            if wornSlotNum == slotID then
-                canUseSlot = true
-                break
+    
+    -- Request stats for currently equipped item
+    if currentlyEquipped then
+        -- Determine location for equipped item
+        local equipLocation = "Equipped"
+        
+        Suggestions.requestDetailedStats(
+            inventoryUI.itemSuggestionsTarget,
+            currentlyEquipped.name,
+            equipLocation,
+            function(detailedStats)
+                if detailedStats then
+                    statsCollected.equipped = detailedStats
+                else
+                    inventoryUI.comparisonError = "Failed to get stats for equipped item"
+                    statsCollected.equipped = currentlyEquipped -- fallback to basic stats
+                end
+                checkCompletion()
             end
-        end
-        if not canUseSlot then
-            return false
-        end
+        )
+    else
+        checkCompletion()
     end
-    
-    return true
-end
-
-function isItemUsableInSlot(item, slotID, targetClass)
-    local itemName = item.name
-    if not itemName or itemName == "" then
-        return false
-    end
-    if not isEquippableGear(item, slotID) then
-        return false
-    end
-    return isItemUsableInSlotFallback(item, slotID, targetClass)
-end
-
-function isEquippableGear(item, slotID)
-    local itemName = (item.name or ""):lower()
-    
-    -- Exclude obvious non-gear items
-    local excludeKeywords = {
-        "bag", "pouch", "satchel", "backpack", "container",
-        "food", "drink", "bread", "water", "ale", "wine", "stew", "meat",
-        "spell", "tome", "scroll", "page", "component",
-        "key", "note", "letter", "book", "parchment",
-        "gem", "diamond", "ruby", "emerald", "sapphire",
-        "poison", "arrow", "throwing", "ammo"
-    }
-    
-    for _, keyword in ipairs(excludeKeywords) do
-        if itemName:find(keyword) then
-            -- Special case: ammo for ammo slot is OK
-            if keyword == "arrow" and slotID == 22 then
-                return true
-            elseif keyword == "ammo" and slotID == 22 then
-                return true
-            else
-                return false
-            end
-        end
-    end
-    
-    return true
-end
-
--- Fallback function using keyword matching (enhanced)
-function isItemUsableInSlotFallback(item, slotID, targetClass)
-    local itemName = (item.name or ""):lower()
-    
-    -- Basic slot type matching based on common item names
-    local slotKeywords = {
-        [0] = {"charm"},                    -- Charm
-        [1] = {"earring", "ear", "stud"},  -- Left Ear
-        [2] = {"cap", "helm", "crown", "hat", "coif", "circlet", "tiara"}, -- Head
-        [3] = {"mask", "veil", "face"},    -- Face
-        [4] = {"earring", "ear", "stud"},  -- Right Ear
-        [5] = {"necklace", "torque", "collar", "choker", "amulet"}, -- Neck
-        [6] = {"mantle", "pauldron", "shoulder", "spaulders"}, -- Shoulders
-        [7] = {"bracer", "sleeves", "arms", "armguards", "vambraces"}, -- Arms
-        [8] = {"cloak", "cape", "back"},   -- Back
-        [9] = {"bracer", "wrist", "bracelet", "armband"}, -- Left Wrist
-        [10] = {"bracer", "wrist", "bracelet", "armband"}, -- Right Wrist
-        [11] = {"bow", "crossbow", "thrown", "sling"}, -- Range
-        [12] = {"gauntlet", "glove", "hand", "mittens"}, -- Hands
-        [13] = {"sword", "axe", "mace", "staff", "dagger", "spear", "club", "hammer", "blade", "weapon"}, -- Primary
-        [14] = {"shield", "sword", "axe", "mace", "dagger", "buckler", "orb", "tome"}, -- Secondary
-        [15] = {"ring", "band", "signet"},  -- Left Ring
-        [16] = {"ring", "band", "signet"},  -- Right Ring
-        [17] = {"breastplate", "tunic", "robe", "vest", "chest", "chainmail", "hauberk", "jerkin"}, -- Chest
-        [18] = {"leggings", "pants", "legs", "greaves", "chaps", "breeches"}, -- Legs
-        [19] = {"boots", "shoes", "sandals", "feet", "slippers"}, -- Feet
-        [20] = {"belt", "girdle", "sash", "waist", "cord"}, -- Waist
-        [21] = {"power source", "orb", "source"}, -- Power Source
-        [22] = {"arrow", "ammo", "bolt", "stone"} -- Ammo
-    }
-    
-    local keywords = slotKeywords[slotID]
-    if not keywords then return false end
-    
-    -- Check if any keywords match the item name
-    for _, keyword in ipairs(keywords) do
-        if itemName:find(keyword) then
-            return true
-        end
-    end
-    
-    -- Be more restrictive - return false if no keyword match
-    return false
 end
 
 local function InventoryToggleButton()
@@ -763,6 +716,13 @@ end
 
 local function clearItemSelection()
     inventoryUI.selectedItems = {}
+end
+
+local function clearComparisonCache()
+    Suggestions.clearStatsCache()
+    inventoryUI.detailedAvailableStats = nil
+    inventoryUI.detailedEquippedStats = nil
+    inventoryUI.comparisonError = nil
 end
 
 --------------------------------------------------
@@ -1125,6 +1085,20 @@ function renderItemSuggestions()
                     if ImGui.RadioButton("##radio_" .. idx, isSelected) then
                         inventoryUI.selectedComparisonItemId = itemId
                         inventoryUI.selectedComparisonItem = availableItem
+                        
+                        -- NEW: Clear previous detailed stats and trigger loading
+                        inventoryUI.detailedAvailableStats = nil
+                        inventoryUI.detailedEquippedStats = nil
+                        
+                        -- Request detailed stats for comparison
+                        requestDetailedStatsForComparison(
+                            availableItem,
+                            currentlyEquipped,
+                            function(availableStats, equippedStats)
+                                inventoryUI.detailedAvailableStats = availableStats
+                                inventoryUI.detailedEquippedStats = equippedStats
+                            end
+                        )
                     end
 
                     ImGui.TableNextColumn()
@@ -1208,67 +1182,103 @@ function renderItemSuggestions()
                 ImGui.PopStyleColor()
             end
 
-            local selectedItem = inventoryUI.selectedComparisonItem.item
-            local equippedItem = currentlyEquipped or {}
-
-            local function showStatComparisonColumn(statList, selectedItem, equippedItem)
-                if ImGui.BeginTable("StatColumn", 2, ImGuiTableFlags.SizingFixedFit) then
-                    ImGui.TableSetupColumn("Stat", ImGuiTableColumnFlags.WidthFixed, 100)
-                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthFixed, 50)
-
-                    for _, stat in ipairs(statList) do
-                        local label = stat.label
-                        local suffix = stat.suffix or ""
-                        local newVal = tonumber(selectedItem[label:lower()]) or 0
-                        local oldVal = tonumber(equippedItem[label:lower()]) or 0
-                        local diff = newVal - oldVal
-
-                        if diff ~= 0 then
-                            ImGui.TableNextRow()
-                            ImGui.TableSetColumnIndex(0)
-                            ImGui.Text(label .. ":")
-
-                            ImGui.TableSetColumnIndex(1)
-                            if diff > 0 then
-                                ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0)
-                                ImGui.Text(string.format("+%d%s", diff, suffix))
-                            else
-                                ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
-                                ImGui.Text(string.format("%d%s", diff, suffix))
+            if inventoryUI.isLoadingComparison then
+                ImGui.Spacing()
+                ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 1.0, 0.0, 1.0)
+                ImGui.Text("Loading detailed stats for comparison...")
+                ImGui.PopStyleColor()
+                local time = mq.gettime() / 1000
+                local dots = ""
+                local dotCount = math.floor((time * 2) % 4)
+                for i = 1, dotCount do
+                    dots = dots .. "."
+                end
+                ImGui.SameLine()
+                ImGui.Text(dots)
+                
+            elseif inventoryUI.comparisonError then
+                ImGui.Spacing()
+                ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
+                ImGui.Text("Error: " .. inventoryUI.comparisonError)
+                ImGui.PopStyleColor()
+                ImGui.SameLine()
+                if ImGui.Button("Retry") then
+                    inventoryUI.comparisonError = nil
+                    -- Trigger comparison again
+                    if inventoryUI.selectedComparisonItem then
+                        requestDetailedStatsForComparison(
+                            inventoryUI.selectedComparisonItem,
+                            currentlyEquipped,
+                            function(availableStats, equippedStats)
+                                inventoryUI.detailedAvailableStats = availableStats
+                                inventoryUI.detailedEquippedStats = equippedStats
                             end
-                            ImGui.PopStyleColor()
-                        end
+                        )
                     end
+                end
+                
+            elseif inventoryUI.detailedAvailableStats and inventoryUI.detailedEquippedStats then
+                local selectedItem = inventoryUI.detailedAvailableStats
+                local equippedItem = inventoryUI.detailedEquippedStats or {}
+                local function showStatComparisonColumn(statList, selectedItem, equippedItem)
+                    if ImGui.BeginTable("StatColumn", 2, ImGuiTableFlags.SizingFixedFit) then
+                        ImGui.TableSetupColumn("Stat", ImGuiTableColumnFlags.WidthFixed, 100)
+                        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthFixed, 50)
+
+                        for _, stat in ipairs(statList) do
+                            local label = stat.label
+                            local suffix = stat.suffix or ""
+                            local newVal = tonumber(selectedItem[label:lower()]) or 0
+                            local oldVal = tonumber(equippedItem[label:lower()]) or 0
+                            local diff = newVal - oldVal
+
+                            if diff ~= 0 then
+                                ImGui.TableNextRow()
+                                ImGui.TableSetColumnIndex(0)
+                                ImGui.Text(label .. ":")
+
+                                ImGui.TableSetColumnIndex(1)
+                                if diff > 0 then
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0)
+                                    ImGui.Text(string.format("+%d%s", diff, suffix))
+                                else
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
+                                    ImGui.Text(string.format("%d%s", diff, suffix))
+                                end
+                                ImGui.PopStyleColor()
+                            end
+                        end
+
+                        ImGui.EndTable()
+                    end
+                end
+
+                if ImGui.BeginTable("StatComparisonTable", 3, ImGuiTableFlags.BordersInnerV + ImGuiTableFlags.RowBg) then
+                    ImGui.TableSetupColumn("Primary Stats")
+                    ImGui.TableSetupColumn("Attributes")
+                    ImGui.TableSetupColumn("Resists / Combat")
+                    ImGui.TableHeadersRow()
+                    ImGui.TableNextRow()
+
+                    ImGui.TableSetColumnIndex(0)
+                    showStatComparisonColumn({
+                        {label="AC"}, {label="HP"}, {label="Mana"}, {label="Endurance"},
+                    }, selectedItem, equippedItem)
+
+                    ImGui.TableSetColumnIndex(1)
+                    showStatComparisonColumn({
+                        {label="STR"}, {label="STA"}, {label="AGI"}, {label="DEX"},
+                        {label="WIS"}, {label="INT"}, {label="CHA"},
+                    }, selectedItem, equippedItem)
+
+                    ImGui.TableSetColumnIndex(2)
+                    showStatComparisonColumn({
+                        {label="SvMagic"}, {label="SvFire"}, {label="SvCold"}, {label="SvDisease"}, {label="SvPoison"},
+                        {label="Attack"}, {label="Haste", suffix="%"},
+                    }, selectedItem, equippedItem)
 
                     ImGui.EndTable()
                 end
-            end
-
-            if ImGui.BeginTable("StatComparisonTable", 3, ImGuiTableFlags.BordersInnerV + ImGuiTableFlags.RowBg) then
-                ImGui.TableSetupColumn("Primary Stats")
-                ImGui.TableSetupColumn("Attributes")
-                ImGui.TableSetupColumn("Resists / Combat")
-                ImGui.TableHeadersRow()
-                ImGui.TableNextRow()
-
-                ImGui.TableSetColumnIndex(0)
-                showStatComparisonColumn({
-                    {label="AC"}, {label="HP"}, {label="Mana"}, {label="Endurance"},
-                }, selectedItem, equippedItem)
-
-                ImGui.TableSetColumnIndex(1)
-                showStatComparisonColumn({
-                    {label="STR"}, {label="STA"}, {label="AGI"}, {label="DEX"},
-                    {label="WIS"}, {label="INT"}, {label="CHA"},
-                }, selectedItem, equippedItem)
-
-                ImGui.TableSetColumnIndex(2)
-                showStatComparisonColumn({
-                    {label="SvMagic"}, {label="SvFire"}, {label="SvCold"}, {label="SvDisease"}, {label="SvPoison"},
-                    {label="Attack"}, {label="Haste", suffix="%"},
-                }, selectedItem, equippedItem)
-
-                ImGui.EndTable()
             end
         end
 
@@ -1276,6 +1286,9 @@ function renderItemSuggestions()
         if ImGui.Button("Refresh") then
             local targetChar = inventoryUI.itemSuggestionsTarget
             local slotID = inventoryUI.itemSuggestionsSlot
+            clearComparisonCache()
+            inventory_actor.request_all_inventories()
+            mq.delay(200)
             inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
             inventoryUI.selectedComparisonItem = nil
             inventoryUI.selectedComparisonItemId = ""
