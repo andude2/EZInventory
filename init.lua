@@ -71,65 +71,6 @@ local CBB_BAG_ITEM_SIZE    = 40
 local CBB_MAX_SLOTS_PER_BAG = 10 
 local show_item_background_cbb = true
 
-local function getPeerConnectionStatus()
-    local connectionMethod = "None"
-    local connectedPeers = {}
-
-    local function string_trim(s)
-        return s:match("^%s*(.-)%s*$")
-    end
-
-    if mq.TLO.Plugin("MQ2Mono") and mq.TLO.Plugin("MQ2Mono").IsLoaded() then
-        connectionMethod = "MQ2Mono"
-        local e3Query = "e3,E3Bots.ConnectedClients"
-        local peersStr = mq.TLO.MQ2Mono.Query(e3Query)()
-        
-        if peersStr and type(peersStr) == "string" and peersStr:lower() ~= "null" and peersStr ~= "" then
-            for peer in string.gmatch(peersStr, "([^,]+)") do
-                peer = string_trim(peer)
-                if peer ~= "" and peer ~= mq.TLO.Me.CleanName() then
-                    table.insert(connectedPeers, {
-                        name = peer,
-                        method = "MQ2Mono",
-                        online = true
-                    })
-                end
-            end
-        end
-    elseif mq.TLO.Plugin("MQ2DanNet") and mq.TLO.Plugin("MQ2DanNet").IsLoaded() then
-        connectionMethod = "DanNet"
-        local peersStr = mq.TLO.DanNet.Peers() or ""
-        
-        if peersStr and peersStr ~= "" then
-            for peer in string.gmatch(peersStr, "([^|]+)") do
-                peer = string_trim(peer)
-                if peer ~= "" and peer ~= mq.TLO.Me.CleanName() then
-                    table.insert(connectedPeers, {
-                        name = peer,
-                        method = "DanNet",
-                        online = true
-                    })
-                end
-            end
-        end
-    elseif mq.TLO.Plugin("MQ2EQBC") and mq.TLO.Plugin("MQ2EQBC").IsLoaded() and mq.TLO.EQBC.Connected() then
-        connectionMethod = "EQBC"
-        local names = mq.TLO.EQBC.Names() or ""
-        if names ~= "" then
-            for name in names:gmatch("([^%s]+)") do
-                if name ~= mq.TLO.Me.CleanName() then
-                    table.insert(connectedPeers, {
-                        name = name,
-                        method = "EQBC", 
-                        online = true
-                    })
-                end
-            end
-        end
-    end
-    return connectionMethod, connectedPeers
-end
-
 local function broadcastLuaRun(connectionMethod)
     local command = "/lua run ezinventory"
     
@@ -177,6 +118,85 @@ local function refreshPeerCache()
 
         lastCacheTime = now
     end
+end
+
+local function extractCharacterName(dannetPeerName)
+    if dannetPeerName and dannetPeerName:find("_") then
+        local parts = {}
+        for part in dannetPeerName:gmatch("[^_]+") do
+            table.insert(parts, part)
+        end
+        local charName = parts[#parts]
+        if charName and #charName > 0 then
+            return charName:sub(1,1):upper() .. charName:sub(2):lower()
+        end
+    end
+    return dannetPeerName
+end
+
+local function getPeerConnectionStatus()
+    local connectionMethod = "None"
+    local connectedPeers = {}
+
+    local function string_trim(s)
+        return s:match("^%s*(.-)%s*$")
+    end
+
+    if mq.TLO.Plugin("MQ2Mono") and mq.TLO.Plugin("MQ2Mono").IsLoaded() then
+        connectionMethod = "MQ2Mono"
+        local e3Query = "e3,E3Bots.ConnectedClients"
+        local peersStr = mq.TLO.MQ2Mono.Query(e3Query)()
+        
+        if peersStr and type(peersStr) == "string" and peersStr:lower() ~= "null" and peersStr ~= "" then
+            for peer in string.gmatch(peersStr, "([^,]+)") do
+                peer = string_trim(peer)
+                if peer ~= "" and peer ~= mq.TLO.Me.CleanName() then
+                    table.insert(connectedPeers, {
+                        name = peer,
+                        displayName = peer,
+                        method = "MQ2Mono",
+                        online = true
+                    })
+                end
+            end
+        end
+    elseif mq.TLO.Plugin("MQ2DanNet") and mq.TLO.Plugin("MQ2DanNet").IsLoaded() then
+        connectionMethod = "DanNet"
+        local peersStr = mq.TLO.DanNet.Peers() or ""
+        
+        if peersStr and peersStr ~= "" then
+            for peer in string.gmatch(peersStr, "([^|]+)") do
+                peer = string_trim(peer)
+                if peer ~= "" then
+                    local charName = extractCharacterName(peer)
+                    if charName ~= mq.TLO.Me.CleanName() then
+                        table.insert(connectedPeers, {
+                            name = charName,
+                            displayName = peer,
+                            method = "DanNet",
+                            online = true
+                        })
+                    end
+                end
+            end
+        end
+    elseif mq.TLO.Plugin("MQ2EQBC") and mq.TLO.Plugin("MQ2EQBC").IsLoaded() and mq.TLO.EQBC.Connected() then
+        connectionMethod = "EQBC"
+        local names = mq.TLO.EQBC.Names() or ""
+        if names ~= "" then
+            for name in names:gmatch("([^%s]+)") do
+                if name ~= mq.TLO.Me.CleanName() then
+                    table.insert(connectedPeers, {
+                        name = name,
+                        displayName = name,
+                        method = "EQBC", 
+                        online = true
+                    })
+                end
+            end
+        end
+    end
+    return connectionMethod, connectedPeers
 end
 
 local function toggleItemSelection(item, uniqueKey, sourcePeer)
@@ -1382,7 +1402,6 @@ function renderItemSuggestions()
             local slotID = inventoryUI.itemSuggestionsSlot
             clearComparisonCache()
             inventory_actor.request_all_inventories()
-            mq.delay(200)
             inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
             inventoryUI.selectedComparisonItem = nil
             inventoryUI.selectedComparisonItemId = ""
@@ -2883,35 +2902,54 @@ function inventoryUI.render()
             
             ImGui.Separator()
             
+            -- Build peer status with stable ordering and proper name matching
             local peerStatus = {}
+            local peerNames = {} -- For stable ordering
+            
+            -- First pass: Add all connected peers
             for _, peer in ipairs(connectedPeers) do
-                peerStatus[peer.name] = {
-                    name = peer.name,
-                    connected = true,
-                    hasInventory = false,
-                    method = peer.method,
-                    lastSeen = "Connected"
-                }
+                if not peerStatus[peer.name] then
+                    peerStatus[peer.name] = {
+                        name = peer.name,
+                        displayName = peer.displayName, -- Store both names
+                        connected = true,
+                        hasInventory = false,
+                        method = peer.method,
+                        lastSeen = "Connected"
+                    }
+                    table.insert(peerNames, peer.name)
+                end
             end
+            
+            -- Second pass: Add peers with inventory data (but may not be connected)
             for peerID, invData in pairs(inventory_actor.peer_inventories) do
                 local peerName = invData.name or "Unknown"
                 if peerName ~= mq.TLO.Me.CleanName() then
                     if peerStatus[peerName] then
+                        -- Update existing entry
                         peerStatus[peerName].hasInventory = true
                         peerStatus[peerName].lastSeen = "Has Inventory Data"
                     else
+                        -- Add new entry for offline peer with inventory data
                         peerStatus[peerName] = {
                             name = peerName,
+                            displayName = peerName, -- No display name for offline peers
                             connected = false,
                             hasInventory = true,
                             method = "Unknown",
                             lastSeen = "Has Inventory Data"
                         }
+                        table.insert(peerNames, peerName)
                     end
                 end
             end
             
-            ImGui.Text(string.format("Peer Status (%d total):", table.maxn(peerStatus) or 0))
+            -- Sort peer names alphabetically for consistent display order
+            table.sort(peerNames, function(a, b) 
+                return a:lower() < b:lower() 
+            end)
+            
+            ImGui.Text(string.format("Peer Status (%d total):", #peerNames))
             
             if ImGui.BeginTable("PeerStatusTable", 5, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
                 ImGui.TableSetupColumn("Peer Name", ImGuiTableColumnFlags.WidthStretch)
@@ -2921,68 +2959,81 @@ function inventoryUI.render()
                 ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 120)
                 ImGui.TableHeadersRow()
                 
-                for peerName, status in pairs(peerStatus) do
-                    ImGui.TableNextRow()
-                    ImGui.TableNextColumn()
-                    if status.connected then
-                        ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.8, 1.0, 1.0)
-                        if ImGui.Selectable(status.name .. "##peer_" .. peerName) then
-                            inventory_actor.send_inventory_command(peerName, "foreground", {})
-                            mq.cmdf("/echo Bringing %s to the foreground...", peerName)
+                -- Use the sorted peer names list for consistent ordering
+                for _, peerName in ipairs(peerNames) do
+                    local status = peerStatus[peerName]
+                    if status then -- Safety check
+                        ImGui.TableNextRow()
+                        ImGui.TableNextColumn()
+                        
+                        -- Show display name if available, otherwise use character name
+                        local nameToShow = status.displayName or status.name
+                        
+                        if status.connected then
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.8, 1.0, 1.0)
+                            if ImGui.Selectable(nameToShow .. "##peer_" .. peerName) then
+                                inventory_actor.send_inventory_command(peerName, "foreground", {})
+                                mq.cmdf("/echo Bringing %s to the foreground...", peerName)
+                            end
+                            ImGui.PopStyleColor()
+                            if ImGui.IsItemHovered() then
+                                ImGui.SetTooltip("Click to bring " .. peerName .. " to foreground")
+                            end
+                        else
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.6, 0.6, 0.6, 1.0)
+                            ImGui.Text(nameToShow)
+                            ImGui.PopStyleColor()
                         end
-                        ImGui.PopStyleColor()
-                        if ImGui.IsItemHovered() then
-                            ImGui.SetTooltip("Click to bring " .. peerName .. " to foreground")
+                        
+                        ImGui.TableNextColumn()
+                        if status.connected then
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
+                            ImGui.Text("Yes")
+                            ImGui.PopStyleColor()
+                        else
+                            ImGui.PushStyleColor(ImGuiCol.Text, 1, 0, 0, 1)
+                            ImGui.Text("No")
+                            ImGui.PopStyleColor()
                         end
-                    else
-                        ImGui.PushStyleColor(ImGuiCol.Text, 0.6, 0.6, 0.6, 1.0)
-                        ImGui.Text(status.name)
-                        ImGui.PopStyleColor()
-                    end
-                    
-                    ImGui.TableNextColumn()
-                    if status.connected then
-                        ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
-                        ImGui.Text("Yes")
-                        ImGui.PopStyleColor()
-                    else
-                        ImGui.PushStyleColor(ImGuiCol.Text, 1, 0, 0, 1)
-                        ImGui.Text("No")
-                        ImGui.PopStyleColor()
-                    end
-                    ImGui.TableNextColumn()
-                    if status.hasInventory then
-                        ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
-                        ImGui.Text("Yes")
-                        ImGui.PopStyleColor()
-                    else
-                        ImGui.PushStyleColor(ImGuiCol.Text, 1, 1, 0, 1)
-                        ImGui.Text("No")
-                        ImGui.PopStyleColor()
-                    end
-                    ImGui.TableNextColumn()
-                    ImGui.Text(status.method)
-                    ImGui.TableNextColumn()
-                    if status.connected and not status.hasInventory then
-                        if ImGui.Button("Start Script##" .. peerName) then
-                            sendLuaRunToPeer(peerName, connectionMethod)
+                        
+                        ImGui.TableNextColumn()
+                        if status.hasInventory then
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
+                            ImGui.Text("Yes")
+                            ImGui.PopStyleColor()
+                        else
+                            ImGui.PushStyleColor(ImGuiCol.Text, 1, 1, 0, 1)
+                            ImGui.Text("No")
+                            ImGui.PopStyleColor()
                         end
-                    elseif status.connected and status.hasInventory then
-                        if ImGui.Button("Refresh##" .. peerName) then
-                            inventory_actor.send_inventory_command(peerName, "echo", {"Requesting inventory refresh"})
-                            mq.cmdf("/echo Sent refresh request to %s", peerName)
+                        
+                        ImGui.TableNextColumn()
+                        ImGui.Text(status.method)
+                        
+                        ImGui.TableNextColumn()
+                        if status.connected and not status.hasInventory then
+                            if ImGui.Button("Start Script##" .. peerName) then
+                                sendLuaRunToPeer(peerName, connectionMethod)
+                            end
+                        elseif status.connected and status.hasInventory then
+                            if ImGui.Button("Refresh##" .. peerName) then
+                                inventory_actor.send_inventory_command(peerName, "echo", {"Requesting inventory refresh"})
+                                mq.cmdf("/echo Sent refresh request to %s", peerName)
+                            end
+                        elseif not status.connected and status.hasInventory then
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0)
+                            ImGui.Text("Offline")
+                            ImGui.PopStyleColor()
+                        else
+                            ImGui.Text("--")
                         end
-                    elseif not status.connected and status.hasInventory then
-                        ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0)
-                        ImGui.Text("Offline")
-                        ImGui.PopStyleColor()
-                    else
-                        ImGui.Text("--")
                     end
                 end
                 
                 ImGui.EndTable()
             end
+            
+            -- Debug section remains the same...
             ImGui.Separator()
             if ImGui.CollapsingHeader("Debug Information") then
                 ImGui.Text("Connection Method Details:")
@@ -3001,6 +3052,8 @@ function inventoryUI.render()
                     ImGui.Text("DanNet Status: Loaded and Connected")
                     local peerCount = mq.TLO.DanNet.PeerCount() or 0
                     ImGui.Text(string.format("DanNet Peer Count: %d", peerCount))
+                    local peersStr = mq.TLO.DanNet.Peers() or ""
+                    ImGui.Text(string.format("Raw DanNet Peers: %s", peersStr))
                 elseif connectionMethod == "EQBC" then
                     ImGui.Text("EQBC Status: Loaded and Connected")
                     local names = mq.TLO.EQBC.Names() or ""
