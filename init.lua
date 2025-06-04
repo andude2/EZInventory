@@ -10,19 +10,19 @@ local lastCacheTime = 0
 local json = require("dkjson")
 local Suggestions = require("suggestions")
 local bot_inventory = nil
-if mq.TLO.MacroQuest.Build() == 4 then
+local isEMU = mq.TLO.MacroQuest.BuildName() == "EMU"
+
+if isEMU then
     bot_inventory = require("bot_inventory")
 end
 
-
-
 ---@tag InventoryUI
-local inventoryUI = {
+local inventoryUI              = {
     visible = true,
     showToggleButton = true,
     selectedPeer = mq.TLO.Me.Name(),
     peers = {},
-    inventoryData = { equipped = {}, bags = {}, bank = {} },
+    inventoryData = { equipped = {}, bags = {}, bank = {}, },
     expandBags = false,
     bagOpen = {},
     showAug1 = true,
@@ -64,23 +64,23 @@ local inventoryUI = {
     selectedBotInventory = nil,
 }
 
-local EQ_ICON_OFFSET = 500
-local ICON_WIDTH = 20
-local ICON_HEIGHT = 20
-local animItems = mq.FindTextureAnimation("A_DragItem")
-local animBox   = mq.FindTextureAnimation("A_RecessedBox")
-local server = mq.TLO.MacroQuest.Server()
-local CBB_ICON_WIDTH       = 40
-local CBB_ICON_HEIGHT      = 40
-local CBB_COUNT_X_OFFSET   = 39 
-local CBB_COUNT_Y_OFFSET   = 23 
-local CBB_BAG_ITEM_SIZE    = 40 
-local CBB_MAX_SLOTS_PER_BAG = 10 
+local EQ_ICON_OFFSET           = 500
+local ICON_WIDTH               = 20
+local ICON_HEIGHT              = 20
+local animItems                = mq.FindTextureAnimation("A_DragItem")
+local animBox                  = mq.FindTextureAnimation("A_RecessedBox")
+local server                   = mq.TLO.MacroQuest.Server()
+local CBB_ICON_WIDTH           = 40
+local CBB_ICON_HEIGHT          = 40
+local CBB_COUNT_X_OFFSET       = 39
+local CBB_COUNT_Y_OFFSET       = 23
+local CBB_BAG_ITEM_SIZE        = 40
+local CBB_MAX_SLOTS_PER_BAG    = 10
 local show_item_background_cbb = true
 
 local function broadcastLuaRun(connectionMethod)
     local command = "/lua run ezinventory"
-    
+
     if connectionMethod == "MQ2Mono" then
         mq.cmd("/e3bcaa " .. command)
         mq.cmd("/echo Broadcasting via MQ2Mono: " .. command)
@@ -97,7 +97,7 @@ end
 
 local function sendLuaRunToPeer(peerName, connectionMethod)
     local command = "/lua run ezinventory"
-    
+
     if connectionMethod == "DanNet" then
         mq.cmdf("/dgt %s %s", peerName, command)
         mq.cmdf("/echo Sent to %s via DanNet: %s", peerName, command)
@@ -135,7 +135,7 @@ local function extractCharacterName(dannetPeerName)
         end
         local charName = parts[#parts]
         if charName and #charName > 0 then
-            return charName:sub(1,1):upper() .. charName:sub(2):lower()
+            return charName:sub(1, 1):upper() .. charName:sub(2):lower()
         end
     end
     return dannetPeerName
@@ -153,7 +153,7 @@ local function getPeerConnectionStatus()
         connectionMethod = "MQ2Mono"
         local e3Query = "e3,E3Bots.ConnectedClients"
         local peersStr = mq.TLO.MQ2Mono.Query(e3Query)()
-        
+
         if peersStr and type(peersStr) == "string" and peersStr:lower() ~= "null" and peersStr ~= "" then
             for peer in string.gmatch(peersStr, "([^,]+)") do
                 peer = string_trim(peer)
@@ -162,7 +162,7 @@ local function getPeerConnectionStatus()
                         name = peer,
                         displayName = peer,
                         method = "MQ2Mono",
-                        online = true
+                        online = true,
                     })
                 end
             end
@@ -170,7 +170,7 @@ local function getPeerConnectionStatus()
     elseif mq.TLO.Plugin("MQ2DanNet") and mq.TLO.Plugin("MQ2DanNet").IsLoaded() then
         connectionMethod = "DanNet"
         local peersStr = mq.TLO.DanNet.Peers() or ""
-        
+
         if peersStr and peersStr ~= "" then
             for peer in string.gmatch(peersStr, "([^|]+)") do
                 peer = string_trim(peer)
@@ -181,7 +181,7 @@ local function getPeerConnectionStatus()
                             name = charName,
                             displayName = peer,
                             method = "DanNet",
-                            online = true
+                            online = true,
                         })
                     end
                 end
@@ -196,8 +196,8 @@ local function getPeerConnectionStatus()
                     table.insert(connectedPeers, {
                         name = name,
                         displayName = name,
-                        method = "EQBC", 
-                        online = true
+                        method = "EQBC",
+                        online = true,
                     })
                 end
             end
@@ -211,7 +211,7 @@ local function toggleItemSelection(item, uniqueKey, sourcePeer)
         inventoryUI.selectedItems[uniqueKey] = {
             item = item,
             key = uniqueKey,
-            source = sourcePeer or mq.TLO.Me.Name()
+            source = sourcePeer or mq.TLO.Me.Name(),
         }
     else
         inventoryUI.selectedItems[uniqueKey] = nil
@@ -249,8 +249,8 @@ local function draw_empty_slot_cbb(cell_id)
         ImGui.DrawTextureAnimation(animBox, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
     end
     ImGui.SetCursorPos(cursor_x, cursor_y)
-    ImGui.PushStyleColor(ImGuiCol.Button,       0, 0, 0, 0)
-    ImGui.PushStyleColor(ImGuiCol.ButtonHovered,0, 0.3, 0, 0.2)
+    ImGui.PushStyleColor(ImGuiCol.Button, 0, 0, 0, 0)
+    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0, 0.3, 0, 0.2)
     ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0, 0.3, 0, 0.3)
     ImGui.Button("##empty_" .. cell_id, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
     ImGui.PopStyleColor(3)
@@ -294,7 +294,6 @@ local function draw_empty_slot_cbb(cell_id)
                         --mq.cmdf("/echo [DEBUG] Optimistically adding new item to UI data: Bag %d, Slot %d", pack_number, slotIndex)
                         table.insert(inventoryUI.inventoryData.bags[pack_number], newItem)
                     end
-
                 else
                     mq.cmd("/echo Cannot directly place items in another character's bag.")
                 end
@@ -325,7 +324,7 @@ local function draw_live_item_icon_cbb(item_tlo, cell_id)
         ImGui.SetWindowFontScale(0.68)
         local stackStr = tostring(stackCount)
         local textSize = ImGui.CalcTextSize(stackStr)
-        local text_x = cursor_x + CBB_COUNT_X_OFFSET - textSize 
+        local text_x = cursor_x + CBB_COUNT_X_OFFSET - textSize
         local text_y = cursor_y + CBB_COUNT_Y_OFFSET
         ImGui.SetCursorPos(text_x, text_y)
         ImGui.TextUnformatted(stackStr)
@@ -333,8 +332,8 @@ local function draw_live_item_icon_cbb(item_tlo, cell_id)
     end
 
     ImGui.SetCursorPos(cursor_x, cursor_y)
-    ImGui.PushStyleColor(ImGuiCol.Button,       0, 0, 0, 0)
-    ImGui.PushStyleColor(ImGuiCol.ButtonHovered,0, 0.3, 0, 0.2)
+    ImGui.PushStyleColor(ImGuiCol.Button, 0, 0, 0, 0)
+    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0, 0.3, 0, 0.2)
     ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0, 0.3, 0, 0.3)
     ImGui.Button("##live_item_" .. cell_id, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
     ImGui.PopStyleColor(3)
@@ -353,7 +352,7 @@ local function draw_live_item_icon_cbb(item_tlo, cell_id)
         --mq.cmdf("/echo [DEBUG] Live Pickup Click: mainSlot=%s, subSlot=%s", tostring(mainSlot), tostring(subSlot))
 
         if mainSlot >= 23 and mainSlot <= 34 then -- It's in a bag slot
-            local pack_number = mainSlot - 22 
+            local pack_number = mainSlot - 22
             if subSlot == -1 then
                 mq.cmdf('/shift /itemnotify "%s" leftmouseup', item_tlo.Name())
                 mq.cmd('/echo [WARN] Pickup fallback: Used item name for item not in subslot.')
@@ -401,8 +400,8 @@ local function draw_item_icon_cbb(item, cell_id)
 
     -- Transparent button for interaction
     ImGui.SetCursorPos(cursor_x, cursor_y)
-    ImGui.PushStyleColor(ImGuiCol.Button,       0, 0, 0, 0)
-    ImGui.PushStyleColor(ImGuiCol.ButtonHovered,0, 0.3, 0, 0.2)
+    ImGui.PushStyleColor(ImGuiCol.Button, 0, 0, 0, 0)
+    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0, 0.3, 0, 0.2)
     ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0, 0.3, 0, 0.3)
     ImGui.Button("##item_" .. cell_id, CBB_ICON_WIDTH, CBB_ICON_HEIGHT)
     ImGui.PopStyleColor(3)
@@ -439,7 +438,7 @@ local function draw_item_icon_cbb(item, cell_id)
 
                     if inventoryUI.inventoryData.bags[pack_number] then
                         local bagItems = inventoryUI.inventoryData.bags[pack_number]
-                        for i = #bagItems, 1, -1 do 
+                        for i = #bagItems, 1, -1 do
                             if tonumber(bagItems[i].slotid) == command_slotid then
                                 --mq.cmdf("/echo [DEBUG] Optimistically removing item from UI data: Bag %d, Slot %d", pack_number, command_slotid)
                                 table.remove(bagItems, i)
@@ -451,7 +450,8 @@ local function draw_item_icon_cbb(item, cell_id)
                     mq.cmd("/echo Cannot directly pick up items from another character's bag.")
                 end
             else
-                mq.cmdf("/echo [ERROR] Invalid pack/slot ID check failed for item: %s (pack_number=%s, command_slotid=%s)", item.name, tostring(pack_number), tostring(command_slotid))
+                mq.cmdf("/echo [ERROR] Invalid pack/slot ID check failed for item: %s (pack_number=%s, command_slotid=%s)", item.name, tostring(pack_number),
+                    tostring(command_slotid))
             end
         end
     end
@@ -463,14 +463,14 @@ local function renderLoadingScreen(message, subMessage, tipMessage)
     tipMessage = tipMessage or "This may take a moment for large inventories"
     local windowWidth = ImGui.GetWindowWidth()
     local availableHeight = ImGui.GetContentRegionAvail()
-    local totalContentHeight = 120 
+    local totalContentHeight = 120
     local startY = math.max(0, (availableHeight - totalContentHeight) * 0.3)
-    
+
     ImGui.SetCursorPosY(ImGui.GetCursorPosY() + startY)
     local spinnerRadius = 12
     local spinnerSize = spinnerRadius * 2
     ImGui.SetCursorPosX((windowWidth - spinnerSize) * 0.5)
-    
+
     local time = mq.gettime() / 1000
     local spinnerThickness = 3
     local drawList = ImGui.GetWindowDrawList()
@@ -517,21 +517,21 @@ end
 local function requestDetailedStatsForComparison(availableItem, currentlyEquipped, callback)
     inventoryUI.isLoadingComparison = true
     inventoryUI.comparisonError = nil
-    
+
     local statsCollected = {}
     local requestsCompleted = 0
     local totalRequests = 0
-    
+
     -- Count total requests needed
     if availableItem then totalRequests = totalRequests + 1 end
     if currentlyEquipped then totalRequests = totalRequests + 1 end
-    
+
     if totalRequests == 0 then
         inventoryUI.isLoadingComparison = false
         callback(nil, nil)
         return
     end
-    
+
     local function checkCompletion()
         requestsCompleted = requestsCompleted + 1
         if requestsCompleted >= totalRequests then
@@ -539,12 +539,12 @@ local function requestDetailedStatsForComparison(availableItem, currentlyEquippe
             callback(statsCollected.available, statsCollected.equipped)
         end
     end
-    
+
     -- Request stats for available item
     if availableItem then
         Suggestions.requestDetailedStats(
-            availableItem.source, 
-            availableItem.name, 
+            availableItem.source,
+            availableItem.name,
             availableItem.location,
             function(detailedStats)
                 if detailedStats then
@@ -564,12 +564,12 @@ local function requestDetailedStatsForComparison(availableItem, currentlyEquippe
             end
         )
     end
-    
+
     -- Request stats for currently equipped item
     if currentlyEquipped then
         -- Determine location for equipped item
         local equipLocation = "Equipped"
-        
+
         Suggestions.requestDetailedStats(
             inventoryUI.itemSuggestionsTarget,
             currentlyEquipped.name,
@@ -589,27 +589,33 @@ local function requestDetailedStatsForComparison(availableItem, currentlyEquippe
     end
 end
 
-local function InventoryToggleButton()
-    ImGui.SetNextWindowSize(60, 60, ImGuiCond.Always)
-    ImGui.Begin("EZInvToggle", nil, bit.bor(ImGuiWindowFlags.NoDecoration, ImGuiWindowFlags.AlwaysAutoResize, ImGuiWindowFlags.NoBackground))
+local buttonWinFlags = bit32.bor(
+    ImGuiWindowFlags.NoTitleBar,
+    ImGuiWindowFlags.NoResize,
+    ImGuiWindowFlags.NoScrollbar,
+    ImGuiWindowFlags.NoFocusOnAppearing,
+    ImGuiWindowFlags.AlwaysAutoResize
+)
 
+local function InventoryToggleButton()
+    ImGui.Begin("EZInvToggle", nil, buttonWinFlags)
     local time = mq.gettime() / 1000
     local pulse = (math.sin(time * 3) + 1) * 0.5
-    local base_color = inventoryUI.visible and {0.2, 0.8, 0.2, 1.0} or {0.7, 0.2, 0.2, 1.0}
+    local base_color = inventoryUI.visible and { 0.2, 0.8, 0.2, 1.0, } or { 0.7, 0.2, 0.2, 1.0, }
     local hover_color = {
         base_color[1] + 0.2 * pulse,
         base_color[2] + 0.2 * pulse,
         base_color[3] + 0.2 * pulse,
-        1.0
+        1.0,
     }
 
     ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 10)
-    ImGui.PushStyleColor(ImGuiCol.Button,        ImVec4(base_color[1], base_color[2], base_color[3], 0.85))
+    ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(base_color[1], base_color[2], base_color[3], 0.85))
     ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(hover_color[1], hover_color[2], hover_color[3], 1.0))
-    ImGui.PushStyleColor(ImGuiCol.ButtonActive,  ImVec4(base_color[1] * 0.8, base_color[2] * 0.8, base_color[3] * 0.8, 1.0))
+    ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(base_color[1] * 0.8, base_color[2] * 0.8, base_color[3] * 0.8, 1.0))
 
     local icon = icons.FA_ITALIC or "Inv"
-    if ImGui.Button(icon, 48, 48) then
+    if ImGui.Button(icon, 34, 34) then
         inventoryUI.visible = not inventoryUI.visible
     end
 
@@ -635,7 +641,7 @@ function updatePeerList()
         server = server,
         isMailbox = true,
         isBotCharacter = false,
-        data = inventory_actor.gather_inventory()
+        data = inventory_actor.gather_inventory(),
     }
     table.insert(inventoryUI.peers, selfEntry)
 
@@ -647,7 +653,7 @@ function updatePeerList()
                 server = invData.server,
                 isMailbox = true,
                 isBotCharacter = false,
-                data = invData
+                data = invData,
             }
             table.insert(inventoryUI.peers, peerEntry)
 
@@ -667,7 +673,7 @@ end
 --- Function: Check Database Lock Status
 --------------------------------------------------
 function refreshInventoryData()
-    inventoryUI.inventoryData = { equipped = {}, bags = {}, bank = {} }
+    inventoryUI.inventoryData = { equipped = {}, bags = {}, bank = {}, }
 
     for _, peer in ipairs(inventoryUI.peers) do
         if peer.name == inventoryUI.selectedPeer then
@@ -685,7 +691,7 @@ end
 -- Helper: Load inventory data from the mailbox.
 --------------------------------------------------
 function loadInventoryData(peer)
-    inventoryUI.inventoryData = { equipped = {}, bags = {}, bank = {} }
+    inventoryUI.inventoryData = { equipped = {}, bags = {}, bank = {}, }
 
     if peer and peer.data then
         inventoryUI.inventoryData.equipped = peer.data.equipped or {}
@@ -726,7 +732,7 @@ local function getSlotNameFromID(slotID)
         [19] = "Feet",
         [20] = "Waist",
         [21] = "Power Source",
-        [22] = "Ammo"
+        [22] = "Ammo",
     }
     return slotNames[slotID] or "Unknown Slot"
 end
@@ -746,7 +752,7 @@ function compareSlotAcrossPeers(slotID)
                 table.insert(results, {
                     peerName = peerName,
                     peerServer = peerServer,
-                    item = item
+                    item = item,
                 })
                 break
             end
@@ -780,7 +786,7 @@ end
 function searchAcrossPeers()
     local results = {}
     local searchTerm = (searchText or ""):lower()
-    
+
     local function itemMatches(item)
         if searchTerm == "" then return true end
         if (item.name or ""):lower():find(searchTerm) then return true end
@@ -913,9 +919,9 @@ function renderContextMenu()
         hideContextMenu()
         return
     end
-    
+
     ImGui.SetNextWindowPos(inventoryUI.contextMenu.x, inventoryUI.contextMenu.y)
-    
+
     if ImGui.Begin("##ItemContextMenu", nil, ImGuiWindowFlags.NoTitleBar + ImGuiWindowFlags.NoResize + ImGuiWindowFlags.AlwaysAutoResize + ImGuiWindowFlags.NoSavedSettings) then
         local itemName = "Unknown Item"
         if inventoryUI.contextMenu.item and inventoryUI.contextMenu.item.name then
@@ -932,27 +938,27 @@ function renderContextMenu()
         end
         if inventoryUI.multiSelectMode then
             ImGui.Separator()
-            local uniqueKey = string.format("%s_%s_%s", 
+            local uniqueKey = string.format("%s_%s_%s",
                 inventoryUI.contextMenu.source or "unknown",
                 (inventoryUI.contextMenu.item and inventoryUI.contextMenu.item.name) or "unnamed",
                 (inventoryUI.contextMenu.item and inventoryUI.contextMenu.item.slotid) or "noslot")
-            
+
             local isSelected = inventoryUI.selectedItems[uniqueKey] ~= nil
-            
+
             if ImGui.MenuItem(isSelected and "Deselect Item" or "Select Item") then
                 if inventoryUI.contextMenu.item then
                     toggleItemSelection(inventoryUI.contextMenu.item, uniqueKey)
                 end
                 hideContextMenu()
             end
-            
+
             local selectedCount = getSelectedItemCount()
             if selectedCount > 0 then
                 if ImGui.MenuItem(string.format("Trade Selected (%d items)", selectedCount)) then
                     inventoryUI.showMultiTradePanel = true
                     hideContextMenu()
                 end
-                
+
                 if ImGui.MenuItem("Clear All Selections") then
                     clearItemSelection()
                     hideContextMenu()
@@ -978,7 +984,7 @@ function renderContextMenu()
             if inventoryUI.contextMenu.item and inventoryUI.contextMenu.item.nodrop and inventoryUI.contextMenu.item.nodrop == 1 then
                 isNoDrop = true
             end
-            
+
             if not isNoDrop then
                 if ImGui.BeginMenu("Trade To") then
                     for _, peerName in ipairs(inventoryUI.contextMenu.peers or {}) do
@@ -1000,13 +1006,13 @@ function renderContextMenu()
                 ImGui.PopStyleColor()
             end
         end
-        
+
         ImGui.Separator()
-        
+
         if ImGui.MenuItem("Cancel") then
             hideContextMenu()
         end
-        
+
         ImGui.End()
     end
 
@@ -1043,31 +1049,34 @@ function renderItemSuggestions()
         return nil
     end
 
-    local currentlyEquipped = getEquippedItemForPeerSlot(inventoryUI.itemSuggestionsTarget, inventoryUI.itemSuggestionsSlot)    
+    local currentlyEquipped = getEquippedItemForPeerSlot(inventoryUI.itemSuggestionsTarget, inventoryUI.itemSuggestionsSlot)
     local numItems = #inventoryUI.availableItems
-    local baseHeight = 200 
+    local baseHeight = 200
     local comparisonHeight = (inventoryUI.selectedComparisonItem and inventoryUI.selectedComparisonItemId ~= "") and 250 or 0
-    local rowHeight = 25  
-    local maxTableHeight = 300 
-    local minWindowHeight = 350 
+    local rowHeight = 25
+    local maxTableHeight = 300
+    local minWindowHeight = 350
 
     local tableHeight = math.min(maxTableHeight, math.max(100, (numItems + 1) * rowHeight + 30))
     local windowHeight = math.max(minWindowHeight, baseHeight + tableHeight + comparisonHeight)
 
-    ImGui.SetNextWindowSize(900, windowHeight, ImGuiCond.Once) 
-    local isOpen = ImGui.Begin("Available Items for " .. inventoryUI.itemSuggestionsTarget)
-    
-    if isOpen then
-        ImGui.Text(string.format("Finding %s items for %s:", 
-            inventoryUI.itemSuggestionsSlotName, 
+    ImGui.SetNextWindowSize(900, windowHeight, ImGuiCond.Once)
+    local isOpen, isShown = ImGui.Begin("Available Items for " .. inventoryUI.itemSuggestionsTarget)
+    if not isOpen then
+        inventoryUI.showItemSuggestions = false
+        isShown = false
+    end
+    if isShown then
+        ImGui.Text(string.format("Finding %s items for %s:",
+            inventoryUI.itemSuggestionsSlotName,
             inventoryUI.itemSuggestionsTarget))
 
         ImGui.PushStyleColor(ImGuiCol.Text, 0.8, 0.8, 0.8, 1.0)
         if inventoryUI.selectedPeer and inventoryUI.selectedPeer ~= inventoryUI.itemSuggestionsTarget then
-            ImGui.Text(string.format("(Right-clicked %s slot while viewing %s's inventory)", 
+            ImGui.Text(string.format("(Right-clicked %s slot while viewing %s's inventory)",
                 inventoryUI.itemSuggestionsSlotName, inventoryUI.selectedPeer))
         else
-            ImGui.Text(string.format("(Right-clicked %s slot on visual equipment display)", 
+            ImGui.Text(string.format("(Right-clicked %s slot on visual equipment display)",
                 inventoryUI.itemSuggestionsSlotName))
         end
         ImGui.PopStyleColor()
@@ -1085,9 +1094,9 @@ function renderItemSuggestions()
             ImGui.Text("Currently Equipped: (empty slot)")
             ImGui.PopStyleColor()
         end
-        
+
         ImGui.Separator()
-        
+
         if #inventoryUI.availableItems == 0 then
             ImGui.Text("No suitable tradeable items found for this slot.")
             ImGui.Spacing()
@@ -1099,12 +1108,12 @@ function renderItemSuggestions()
             ImGui.PopStyleColor()
         else
             ImGui.Text(string.format("Found %d available items:", #inventoryUI.availableItems))
-            
+
             -- Filter controls
             ImGui.Spacing()
             ImGui.Text("Filters:")
             ImGui.SameLine()
-            
+
             -- Source character filter
             local sources = {}
             local sourceMap = {}
@@ -1115,7 +1124,7 @@ function renderItemSuggestions()
                 end
             end
             table.sort(sources)
-            
+
             inventoryUI.itemSuggestionsSourceFilter = inventoryUI.itemSuggestionsSourceFilter or "All"
             ImGui.SetNextItemWidth(120)
             if ImGui.BeginCombo("##SourceFilter", inventoryUI.itemSuggestionsSourceFilter) then
@@ -1129,13 +1138,13 @@ function renderItemSuggestions()
                 end
                 ImGui.EndCombo()
             end
-            
+
             ImGui.SameLine()
             -- Location filter
             inventoryUI.itemSuggestionsLocationFilter = inventoryUI.itemSuggestionsLocationFilter or "All"
             ImGui.SetNextItemWidth(100)
             if ImGui.BeginCombo("##LocationFilter", inventoryUI.itemSuggestionsLocationFilter) then
-                local locations = {"All", "Equipped", "Inventory", "Bank"}
+                local locations = { "All", "Equipped", "Inventory", "Bank", }
                 for _, location in ipairs(locations) do
                     if ImGui.Selectable(location, inventoryUI.itemSuggestionsLocationFilter == location) then
                         inventoryUI.itemSuggestionsLocationFilter = location
@@ -1146,22 +1155,22 @@ function renderItemSuggestions()
             local filteredItems = {}
             for _, availableItem in ipairs(inventoryUI.availableItems) do
                 local includeItem = true
-                
-                if inventoryUI.itemSuggestionsSourceFilter ~= "All" and 
+
+                if inventoryUI.itemSuggestionsSourceFilter ~= "All" and
                     availableItem.source ~= inventoryUI.itemSuggestionsSourceFilter then
                     includeItem = false
                 end
-                
-                if inventoryUI.itemSuggestionsLocationFilter ~= "All" and 
+
+                if inventoryUI.itemSuggestionsLocationFilter ~= "All" and
                     availableItem.location ~= inventoryUI.itemSuggestionsLocationFilter then
                     includeItem = false
                 end
-                
+
                 if includeItem then
                     table.insert(filteredItems, availableItem)
                 end
             end
-            
+
             ImGui.Spacing()
             if #filteredItems ~= #inventoryUI.availableItems then
                 ImGui.Text(string.format("Showing %d of %d items (filtered)", #filteredItems, #inventoryUI.availableItems))
@@ -1183,15 +1192,15 @@ function renderItemSuggestions()
                 if inventoryUI.selectedComparisonItem == nil then
                     inventoryUI.selectedComparisonItem = nil
                 end
-                
+
                 for idx, availableItem in ipairs(filteredItems) do
                     ImGui.TableNextRow()
                     ImGui.PushID("available_item_" .. idx)
-                    
+
                     -- Create unique identifier for this item
-                    local itemId = string.format("%s_%s_%s_%d", 
-                        availableItem.source or "unknown", 
-                        availableItem.name or "unnamed", 
+                    local itemId = string.format("%s_%s_%s_%d",
+                        availableItem.source or "unknown",
+                        availableItem.name or "unnamed",
                         availableItem.location or "nowhere",
                         idx)
                     local isSelected = (inventoryUI.selectedComparisonItemId == itemId)
@@ -1200,11 +1209,11 @@ function renderItemSuggestions()
                     if ImGui.RadioButton("##radio_" .. idx, isSelected) then
                         inventoryUI.selectedComparisonItemId = itemId
                         inventoryUI.selectedComparisonItem = availableItem
-                        
+
                         -- NEW: Clear previous detailed stats and trigger loading
                         inventoryUI.detailedAvailableStats = nil
                         inventoryUI.detailedEquippedStats = nil
-                        
+
                         -- Request detailed stats for comparison
                         requestDetailedStatsForComparison(
                             availableItem,
@@ -1261,22 +1270,22 @@ function renderItemSuggestions()
                             slotid = availableItem.item.slotid,
                             bankslotid = availableItem.item.bankslotid,
                         }
-                        
-                        inventory_actor.send_inventory_command(availableItem.source, "proxy_give", {json.encode(peerRequest)})
-                        mq.cmdf("/echo Requesting %s to give %s to %s", 
-                            availableItem.source, 
-                            availableItem.name, 
+
+                        inventory_actor.send_inventory_command(availableItem.source, "proxy_give", { json.encode(peerRequest), })
+                        mq.cmdf("/echo Requesting %s to give %s to %s",
+                            availableItem.source,
+                            availableItem.name,
                             inventoryUI.itemSuggestionsTarget)
                         inventoryUI.showItemSuggestions = false
                     end
-                    
+
                     ImGui.PopID()
                 end
-                
+
                 ImGui.EndTable()
             end
         end
-        
+
         if inventoryUI.selectedComparisonItem and inventoryUI.selectedComparisonItemId ~= "" then
             ImGui.Separator()
             ImGui.Text("Stat Comparison:")
@@ -1310,7 +1319,6 @@ function renderItemSuggestions()
                 end
                 ImGui.SameLine()
                 ImGui.Text(dots)
-                
             elseif inventoryUI.comparisonError then
                 ImGui.Spacing()
                 ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
@@ -1331,7 +1339,6 @@ function renderItemSuggestions()
                         )
                     end
                 end
-                
             elseif inventoryUI.detailedAvailableStats and inventoryUI.detailedEquippedStats then
                 local selectedItem = inventoryUI.detailedAvailableStats
                 local equippedItem = inventoryUI.detailedEquippedStats or {}
@@ -1377,19 +1384,19 @@ function renderItemSuggestions()
 
                     ImGui.TableSetColumnIndex(0)
                     showStatComparisonColumn({
-                        {label="AC"}, {label="HP"}, {label="Mana"}, {label="Endurance"},
+                        { label = "AC", }, { label = "HP", }, { label = "Mana", }, { label = "Endurance", },
                     }, selectedItem, equippedItem)
 
                     ImGui.TableSetColumnIndex(1)
                     showStatComparisonColumn({
-                        {label="STR"}, {label="STA"}, {label="AGI"}, {label="DEX"},
-                        {label="WIS"}, {label="INT"}, {label="CHA"},
+                        { label = "STR", }, { label = "STA", }, { label = "AGI", }, { label = "DEX", },
+                        { label = "WIS", }, { label = "INT", }, { label = "CHA", },
                     }, selectedItem, equippedItem)
 
                     ImGui.TableSetColumnIndex(2)
                     showStatComparisonColumn({
-                        {label="SvMagic"}, {label="SvFire"}, {label="SvCold"}, {label="SvDisease"}, {label="SvPoison"},
-                        {label="Attack"}, {label="Haste", suffix="%"},
+                        { label = "SvMagic", }, { label = "SvFire", }, { label = "SvCold", }, { label = "SvDisease", }, { label = "SvPoison", },
+                        { label = "Attack", }, { label = "Haste", suffix = "%", },
                     }, selectedItem, equippedItem)
 
                     ImGui.EndTable()
@@ -1419,13 +1426,13 @@ function renderItemSuggestions()
             inventoryUI.selectedComparisonItemId = ""
         end
     end
-    
-    if isOpen then ImGui.End() end
+
+    ImGui.End()
 end
 
 function initiateProxyTrade(item, sourceChar, targetChar)
     mq.cmdf("/echo Initiating trade: %s from %s to %s", item.name, sourceChar, targetChar)
-    
+
     local peerRequest = {
         name = item.name,
         to = targetChar,
@@ -1434,8 +1441,8 @@ function initiateProxyTrade(item, sourceChar, targetChar)
         slotid = item.slotid,
         bankslotid = item.bankslotid,
     }
-    
-    inventory_actor.send_inventory_command(sourceChar, "proxy_give", {json.encode(peerRequest)})
+
+    inventory_actor.send_inventory_command(sourceChar, "proxy_give", { json.encode(peerRequest), })
     mq.cmdf("/echo Trade request sent: %s will give %s to %s", sourceChar, item.name, targetChar)
 end
 
@@ -1445,16 +1452,16 @@ function initiateMultiItemTrade(targetChar)
     local noDropItems = {}
     local sourceChar = nil
     local sourceCounts = {}
-    
+
     for _, selectedData in pairs(inventoryUI.selectedItems) do
         local item = selectedData.item
         local itemSource = selectedData.source or inventoryUI.selectedPeer or mq.TLO.Me.Name()
         sourceCounts[itemSource] = (sourceCounts[itemSource] or 0) + 1
-        
+
         if item.nodrop == 0 then
             table.insert(tradableItems, {
                 item = item,
-                source = itemSource
+                source = itemSource,
             })
         else
             table.insert(noDropItems, item)
@@ -1471,11 +1478,11 @@ function initiateMultiItemTrade(targetChar)
     if not sourceChar then
         sourceChar = inventoryUI.contextMenu.source or inventoryUI.selectedPeer or mq.TLO.Me.Name()
     end
-    
+
     if #noDropItems > 0 then
         mq.cmdf("/echo Warning: %d selected items are No Drop and cannot be traded", #noDropItems)
     end
-    
+
     if #tradableItems > 0 and sourceChar and targetChar then
         mq.cmdf("/echo Initiating multi-item trade: %d items from %s to %s", #tradableItems, sourceChar, targetChar)
         local itemsBySource = {}
@@ -1491,9 +1498,9 @@ function initiateMultiItemTrade(targetChar)
             if #items > 0 then
                 local batchRequest = {
                     target = targetChar,
-                    items = {}
+                    items = {},
                 }
-                
+
                 for _, item in ipairs(items) do
                     table.insert(batchRequest.items, {
                         name = item.name,
@@ -1503,8 +1510,8 @@ function initiateMultiItemTrade(targetChar)
                         bankslotid = item.bankslotid,
                     })
                 end
-                
-                inventory_actor.send_inventory_command(source, "proxy_give_batch", {json.encode(batchRequest)})
+
+                inventory_actor.send_inventory_command(source, "proxy_give_batch", { json.encode(batchRequest), })
                 mq.cmdf("/echo Multi-trade request sent: %d items from %s to %s", #items, source, targetChar)
             end
         end
@@ -1517,17 +1524,17 @@ function initiateMultiItemTrade(targetChar)
             mq.cmd("/echo No target character specified")
         end
     end
-    
+
     clearItemSelection()
 end
 
 function renderMultiTradePanel()
     if not inventoryUI.showMultiTradePanel then return end
-    
+
     ImGui.SetNextWindowSize(500, 400, ImGuiCond.Once)
-    local isOpen = ImGui.Begin("Multi-Item Trade Panel", nil, ImGuiWindowFlags.None)
-    
-    if isOpen then
+    local isOpen, isShown = ImGui.Begin("Multi-Item Trade Panel", true, ImGuiWindowFlags.None)
+    if not isOpen then inventoryUI.showMultiTradePanel = false end
+    if isShown then
         local selectedCount = getSelectedItemCount()
         ImGui.Text(string.format("Selected Items: %d", selectedCount))
         ImGui.Separator()
@@ -1541,50 +1548,50 @@ function renderMultiTradePanel()
                     ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 100)
                     ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 60)
                     ImGui.TableHeadersRow()
-                    
+
                     local itemsToRemove = {}
                     for key, selectedData in pairs(inventoryUI.selectedItems) do
                         local item = selectedData.item
                         local itemSource = selectedData.source or "Unknown"
-                        
+
                         ImGui.TableNextRow()
-                        
+
                         ImGui.TableNextColumn()
                         if item.icon and item.icon > 0 then
                             drawItemIcon(item.icon)
                         else
                             ImGui.Text("N/A")
                         end
-                        
+
                         ImGui.TableNextColumn()
                         ImGui.Text(item.name or "Unknown")
                         if item.nodrop == 1 then
                             ImGui.SameLine()
                             ImGui.TextColored(1, 0, 0, 1, "(No Drop)")
                         end
-                        
+
                         ImGui.TableNextColumn()
                         ImGui.Text(itemSource)
-                        
+
                         ImGui.TableNextColumn()
                         if ImGui.Button("Remove##" .. key) then
                             table.insert(itemsToRemove, key)
                         end
                     end
-                    
+
                     -- Remove items marked for removal
                     for _, key in ipairs(itemsToRemove) do
                         inventoryUI.selectedItems[key] = nil
                     end
-                    
+
                     ImGui.EndTable()
                 end
             end
         end
         ImGui.EndChild()
-        
+
         ImGui.Separator()
-        
+
         -- Target selection
         ImGui.Text("Trade To:")
         ImGui.SameLine()
@@ -1602,7 +1609,7 @@ function renderMultiTradePanel()
                         break
                     end
                 end
-                
+
                 if not isSourceChar then
                     if ImGui.Selectable(peer.name, inventoryUI.multiTradeTarget == peer.name) then
                         inventoryUI.multiTradeTarget = peer.name
@@ -1611,9 +1618,9 @@ function renderMultiTradePanel()
             end
             ImGui.EndCombo()
         end
-        
+
         ImGui.Separator()
-        
+
         -- Action buttons
         if selectedCount > 0 and inventoryUI.multiTradeTarget ~= "" then
             if ImGui.Button("Execute Multi-Trade") then
@@ -1626,7 +1633,7 @@ function renderMultiTradePanel()
             end
             ImGui.SameLine()
         end
-        
+
         if ImGui.Button("Clear All") then
             clearItemSelection()
         end
@@ -1639,8 +1646,7 @@ function renderMultiTradePanel()
             clearItemSelection()
         end
     end
-    
-    if isOpen then ImGui.End() end
+    ImGui.End()
 end
 
 function renderMultiSelectIndicator()
@@ -1650,36 +1656,36 @@ function renderMultiSelectIndicator()
     end
 end
 
-if mq.TLO.MacroQuest.Build() == 4 then
+if isEMU then
     function inventoryUI.drawBotInventoryWindow()
         if not inventoryUI.showBotInventory or not inventoryUI.selectedBotInventory then return end
 
         ImGui.SetNextWindowSize(ImVec2(500, 400), ImGuiCond.FirstUseEver)
-        
+
         local isOpen, shouldShow = ImGui.Begin("Bot Inventory Viewer", true, ImGuiWindowFlags.None)
-        
-        if not shouldShow then
+
+        if not isOpen then
             inventoryUI.showBotInventory = false
             inventoryUI.selectedBotInventory = nil
             ImGui.End()
             return
         end
-        
-        if isOpen then
+
+        if shouldShow then
             ImGui.Text("Viewing bot: " .. (inventoryUI.selectedBotInventory.name or "Unknown"))
-            
+
             ImGui.SameLine()
             local windowWidth = ImGui.GetWindowWidth()
             local buttonWidth = 60
             ImGui.SetCursorPosX(windowWidth - buttonWidth - 10)
-            
+
             if ImGui.Button("Close") then
                 inventoryUI.showBotInventory = false
                 inventoryUI.selectedBotInventory = nil
                 ImGui.End()
                 return
             end
-            
+
             ImGui.Separator()
 
             local equippedItems = {}
@@ -1694,12 +1700,12 @@ if mq.TLO.MacroQuest.Build() == 4 then
 
                 for _, item in ipairs(equippedItems) do
                     ImGui.TableNextRow()
-                    
-                    local uniqueId = string.format("bot_item_%s_%s", 
-                        inventoryUI.selectedBotInventory.name or "unknown", 
+
+                    local uniqueId = string.format("bot_item_%s_%s",
+                        inventoryUI.selectedBotInventory.name or "unknown",
                         item.slotid or "unknown")
                     ImGui.PushID(uniqueId)
-                    
+
                     local ok, err = pcall(function()
                         ImGui.TableNextColumn()
                         local slotName = getSlotNameFromID(item.slotid) or "Unknown"
@@ -1743,16 +1749,16 @@ if mq.TLO.MacroQuest.Build() == 4 then
                             ImGui.PopStyleColor()
                         end
                     end)
-                    
+
                     ImGui.PopID()
-                    
+
                     if not ok then
                         ImGui.TextColored(1, 0, 0, 1, "Error rendering item: " .. tostring(err))
                     end
                 end
                 ImGui.EndTable()
             end
-            
+
             ImGui.Separator()
             if ImGui.Button("Refresh Inventory") then
                 if inventoryUI.selectedBotInventory and inventoryUI.selectedBotInventory.name then
@@ -1760,14 +1766,14 @@ if mq.TLO.MacroQuest.Build() == 4 then
                     mq.cmdf("/echo Refreshing inventory for bot: %s", inventoryUI.selectedBotInventory.name)
                 end
             end
-            
+
             ImGui.SameLine()
-            
+
             if ImGui.Button("Close Window") then
                 inventoryUI.showBotInventory = false
                 inventoryUI.selectedBotInventory = nil
             end
-            
+
             -- Show stats
             ImGui.Spacing()
             ImGui.Text(string.format("Items: %d", #equippedItems))
@@ -1780,7 +1786,7 @@ if mq.TLO.MacroQuest.Build() == 4 then
                     withoutLinks = withoutLinks + 1
                 end
             end
-            
+
             ImGui.SameLine()
             ImGui.Text(string.format("Links: %d/%d", withLinks, withLinks + withoutLinks))
         end
@@ -1799,7 +1805,12 @@ function inventoryUI.render()
         windowFlags = windowFlags + ImGuiWindowFlags.NoMove + ImGuiWindowFlags.NoResize
     end
 
-    if ImGui.Begin("Inventory Window", nil, windowFlags) then
+    local open, show = ImGui.Begin("Inventory Window##EzInventory", true, windowFlags)
+    if not open then
+        inventoryUI.visible = false
+        show = false
+    end
+    if show then
         -- Server selection dropdown
         inventoryUI.selectedServer = inventoryUI.selectedServer or server
         ImGui.Text("Select Server:")
@@ -1840,11 +1851,11 @@ function inventoryUI.render()
         ImGui.SetNextItemWidth(350)
         refreshPeerCache()
         local displayPeer = inventoryUI.selectedPeer or "Select Peer"
-        
+
         if inventoryUI.selectedServer and ImGui.BeginCombo("##PeerCombo", displayPeer) then
             local peers = peerCache[inventoryUI.selectedServer] or {}
             local botPeers = {}
-            
+
             -- Separate regular peers and bots
             local regularPeers = {}
             for _, invData in pairs(inventory_actor.peer_inventories) do
@@ -1858,17 +1869,17 @@ function inventoryUI.render()
                     })
                 end
             end
-            
-            for botName, botData in pairs(bot_inventory.bot_inventories) do
-                table.insert(botPeers, {
-                    name = botName,
-                    server = server,
-                    isMailbox = false,
-                    isBotCharacter = true,
-                    data = botData
-                })
+            if bot_inventory ~= nil then
+                for botName, botData in pairs(bot_inventory.bot_inventories or {}) do
+                    table.insert(botPeers, {
+                        name = botName,
+                        server = server,
+                        isMailbox = false,
+                        isBotCharacter = true,
+                        data = botData,
+                    })
+                end
             end
-            
             -- Sort both lists
             table.sort(regularPeers, function(a, b)
                 return (a.name or ""):lower() < (b.name or ""):lower()
@@ -1876,7 +1887,7 @@ function inventoryUI.render()
             table.sort(botPeers, function(a, b)
                 return (a.name or ""):lower() < (b.name or ""):lower()
             end)
-            
+
             -- Display regular peers first
             if #regularPeers > 0 then
                 ImGui.TextColored(0.7, 0.7, 1.0, 1.0, "Players:")
@@ -1893,7 +1904,7 @@ function inventoryUI.render()
                     ImGui.PopID()
                 end
             end
-            
+
             -- Display bots
             if #botPeers > 0 then
                 if #regularPeers > 0 then
@@ -1914,7 +1925,7 @@ function inventoryUI.render()
                     ImGui.PopID()
                 end
             end
-            
+
             ImGui.EndCombo()
         end
 
@@ -1950,8 +1961,8 @@ function inventoryUI.render()
         end
 
         ImGui.SameLine()
-        if ImGui.Button("Close") then
-            inventoryUI.visible = false
+        if ImGui.Button("Exit") then
+            mq.exit()
         end
 
 
@@ -1994,145 +2005,145 @@ function inventoryUI.render()
 
         renderMultiSelectIndicator()
 
-    ------------------------------
-    -- Equipped Items Section
-    ------------------------------
-    local avail = ImGui.GetContentRegionAvail()
-    ImGui.BeginChild("TabbedContentRegion", x, y, true, ImGuiChildFlags.Border)
-    if ImGui.BeginTabBar("InventoryTabs") then
-        if ImGui.BeginTabItem("Equipped") then
-            if ImGui.BeginTabBar("EquippedViewTabs") then
-                if ImGui.BeginTabItem("Table View") then
-                inventoryUI.equipView = "table"
-                if ImGui.BeginChild("EquippedScrollRegion", 0, 0, true, ImGuiChildFlags.HorizontalScrollbar) then
-                    ImGui.Text("Show Columns:")
-                    ImGui.SameLine()
-                    inventoryUI.showAug1 = ImGui.Checkbox("Aug 1", inventoryUI.showAug1)
-                    ImGui.SameLine()
-                    inventoryUI.showAug2 = ImGui.Checkbox("Aug 2", inventoryUI.showAug2)
-                    ImGui.SameLine()
-                    inventoryUI.showAug3 = ImGui.Checkbox("Aug 3", inventoryUI.showAug3)
-                    ImGui.SameLine()
-                    inventoryUI.showAug4 = ImGui.Checkbox("Aug 4", inventoryUI.showAug4)
-                    ImGui.SameLine()
-                    inventoryUI.showAug5 = ImGui.Checkbox("Aug 5", inventoryUI.showAug5)
-                    ImGui.SameLine()
-                    inventoryUI.showAug6 = ImGui.Checkbox("Aug 6", inventoryUI.showAug6)
-                    local numColumns = 3
-                    local visibleAugs = 0
-                    local augVisibility = {
-                        inventoryUI.showAug1,
-                        inventoryUI.showAug2,
-                        inventoryUI.showAug3,
-                        inventoryUI.showAug4,
-                        inventoryUI.showAug5,
-                        inventoryUI.showAug6
-                    }
-                    for _, isVisible in ipairs(augVisibility) do
-                        if isVisible then
-                            visibleAugs = visibleAugs + 1
-                            numColumns = numColumns + 1
-                        end
-                    end
-                    local availableWidth = ImGui.GetWindowContentRegionWidth()
-                    local slotNameWidth = 100
-                    local iconWidth = 30
-                    local itemWidth = 150
-                    local augWidth = 0
-                    if visibleAugs > 0 then
-                        augWidth = math.max(80, (availableWidth - slotNameWidth - iconWidth - itemWidth) / visibleAugs)
-                    end
-                    if inventoryUI.isLoadingData then
-                        renderLoadingScreen("Loading Inventory Data", "Scanning items", "This may take a moment for large inventories")
-                    else
-                        if ImGui.BeginTable("EquippedTable", numColumns, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingStretchProp) then
-                            ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthFixed, slotNameWidth)
-                            ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, iconWidth)
-                            ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthFixed, itemWidth)
-                            for i = 1, 6 do
-                                if augVisibility[i] then
-                                    ImGui.TableSetupColumn("Aug " .. i, ImGuiTableColumnFlags.WidthStretch, 1.0)
+        ------------------------------
+        -- Equipped Items Section
+        ------------------------------
+        local avail = ImGui.GetContentRegionAvail()
+        ImGui.BeginChild("TabbedContentRegion", x, y, true, ImGuiChildFlags.Border)
+        if ImGui.BeginTabBar("InventoryTabs") then
+            if ImGui.BeginTabItem("Equipped") then
+                if ImGui.BeginTabBar("EquippedViewTabs") then
+                    if ImGui.BeginTabItem("Table View") then
+                        inventoryUI.equipView = "table"
+                        if ImGui.BeginChild("EquippedScrollRegion", 0, 0, true, ImGuiChildFlags.HorizontalScrollbar) then
+                            ImGui.Text("Show Columns:")
+                            ImGui.SameLine()
+                            inventoryUI.showAug1 = ImGui.Checkbox("Aug 1", inventoryUI.showAug1)
+                            ImGui.SameLine()
+                            inventoryUI.showAug2 = ImGui.Checkbox("Aug 2", inventoryUI.showAug2)
+                            ImGui.SameLine()
+                            inventoryUI.showAug3 = ImGui.Checkbox("Aug 3", inventoryUI.showAug3)
+                            ImGui.SameLine()
+                            inventoryUI.showAug4 = ImGui.Checkbox("Aug 4", inventoryUI.showAug4)
+                            ImGui.SameLine()
+                            inventoryUI.showAug5 = ImGui.Checkbox("Aug 5", inventoryUI.showAug5)
+                            ImGui.SameLine()
+                            inventoryUI.showAug6 = ImGui.Checkbox("Aug 6", inventoryUI.showAug6)
+                            local numColumns = 3
+                            local visibleAugs = 0
+                            local augVisibility = {
+                                inventoryUI.showAug1,
+                                inventoryUI.showAug2,
+                                inventoryUI.showAug3,
+                                inventoryUI.showAug4,
+                                inventoryUI.showAug5,
+                                inventoryUI.showAug6,
+                            }
+                            for _, isVisible in ipairs(augVisibility) do
+                                if isVisible then
+                                    visibleAugs = visibleAugs + 1
+                                    numColumns = numColumns + 1
                                 end
                             end
-                            ImGui.TableHeadersRow()
-                            local function renderEquippedTableRow(item, augVisibility)
-                                ImGui.TableNextColumn()
-                                local slotName = getSlotNameFromID(item.slotid) or "Unknown"
-                                ImGui.Text(slotName)
-                                ImGui.TableNextColumn()
-                                if item.icon and item.icon ~= 0 then
-                                    drawItemIcon(item.icon)
-                                else
-                                    ImGui.Text("N/A")
-                                end
-                                ImGui.TableNextColumn()
-                                if ImGui.Selectable(item.name) then
-                                    local links = mq.ExtractLinks(item.itemlink)
-                                    if links and #links > 0 then
-                                        mq.ExecuteTextLink(links[1])
-                                    else
-                                        mq.cmd('/echo No item link found in the database.')
+                            local availableWidth = ImGui.GetWindowContentRegionWidth()
+                            local slotNameWidth = 100
+                            local iconWidth = 30
+                            local itemWidth = 150
+                            local augWidth = 0
+                            if visibleAugs > 0 then
+                                augWidth = math.max(80, (availableWidth - slotNameWidth - iconWidth - itemWidth) / visibleAugs)
+                            end
+                            if inventoryUI.isLoadingData then
+                                renderLoadingScreen("Loading Inventory Data", "Scanning items", "This may take a moment for large inventories")
+                            else
+                                if ImGui.BeginTable("EquippedTable", numColumns, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingStretchProp) then
+                                    ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthFixed, slotNameWidth)
+                                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, iconWidth)
+                                    ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthFixed, itemWidth)
+                                    for i = 1, 6 do
+                                        if augVisibility[i] then
+                                            ImGui.TableSetupColumn("Aug " .. i, ImGuiTableColumnFlags.WidthStretch, 1.0)
+                                        end
                                     end
-                                end
-                                -- Aug columns
-                                for i = 1, 6 do
-                                    if augVisibility[i] then
+                                    ImGui.TableHeadersRow()
+                                    local function renderEquippedTableRow(item, augVisibility)
                                         ImGui.TableNextColumn()
-                                        local augField = "aug" .. i .. "Name"
-                                        local augLinkField = "aug" .. i .. "link"
-                                        if item[augField] and item[augField] ~= "" then
-                                            if ImGui.Selectable(string.format("%s", item[augField])) then
-                                                local links = mq.ExtractLinks(item[augLinkField])
-                                                if links and #links > 0 then
-                                                    mq.ExecuteTextLink(links[1])
-                                                else
-                                                    mq.cmd('/echo No aug link found in the database.')
+                                        local slotName = getSlotNameFromID(item.slotid) or "Unknown"
+                                        ImGui.Text(slotName)
+                                        ImGui.TableNextColumn()
+                                        if item.icon and item.icon ~= 0 then
+                                            drawItemIcon(item.icon)
+                                        else
+                                            ImGui.Text("N/A")
+                                        end
+                                        ImGui.TableNextColumn()
+                                        if ImGui.Selectable(item.name) then
+                                            local links = mq.ExtractLinks(item.itemlink)
+                                            if links and #links > 0 then
+                                                mq.ExecuteTextLink(links[1])
+                                            else
+                                                mq.cmd('/echo No item link found in the database.')
+                                            end
+                                        end
+                                        -- Aug columns
+                                        for i = 1, 6 do
+                                            if augVisibility[i] then
+                                                ImGui.TableNextColumn()
+                                                local augField = "aug" .. i .. "Name"
+                                                local augLinkField = "aug" .. i .. "link"
+                                                if item[augField] and item[augField] ~= "" then
+                                                    if ImGui.Selectable(string.format("%s", item[augField])) then
+                                                        local links = mq.ExtractLinks(item[augLinkField])
+                                                        if links and #links > 0 then
+                                                            mq.ExecuteTextLink(links[1])
+                                                        else
+                                                            mq.cmd('/echo No aug link found in the database.')
+                                                        end
+                                                    end
                                                 end
                                             end
                                         end
                                     end
+                                    local sortedEquippedItems = {}
+                                    for _, item in ipairs(inventoryUI.inventoryData.equipped) do
+                                        if matchesSearch(item) then
+                                            table.insert(sortedEquippedItems, item)
+                                        end
+                                    end
+                                    table.sort(sortedEquippedItems, function(a, b)
+                                        local slotNameA = getSlotNameFromID(a.slotid) or "Unknown"
+                                        local slotNameB = getSlotNameFromID(b.slotid) or "Unknown"
+                                        return slotNameA < slotNameB
+                                    end)
+                                    for _, item in ipairs(sortedEquippedItems) do
+                                        ImGui.TableNextRow()
+                                        ImGui.PushID(item.name or "unknown_item")
+                                        local ok, err = pcall(renderEquippedTableRow, item, augVisibility)
+                                        ImGui.PopID()
+                                        if not ok then
+                                            mq.cmdf("/echo Error rendering item row: %s", err)
+                                        end
+                                    end
                                 end
-                            end
-                            local sortedEquippedItems = {}
-                            for _, item in ipairs(inventoryUI.inventoryData.equipped) do
-                                if matchesSearch(item) then
-                                    table.insert(sortedEquippedItems, item)
-                                end
-                            end
-                            table.sort(sortedEquippedItems, function(a, b)
-                                local slotNameA = getSlotNameFromID(a.slotid) or "Unknown"
-                                local slotNameB = getSlotNameFromID(b.slotid) or "Unknown"
-                                return slotNameA < slotNameB
-                            end)
-                            for _, item in ipairs(sortedEquippedItems) do
-                                ImGui.TableNextRow()
-                                ImGui.PushID(item.name or "unknown_item")
-                                local ok, err = pcall(renderEquippedTableRow, item, augVisibility)
-                                ImGui.PopID()
-                                if not ok then
-                                    mq.cmdf("/echo Error rendering item row: %s", err)
-                                end
+                                ImGui.EndTable()
                             end
                         end
-                        ImGui.EndTable()
+                        ImGui.EndChild()
+                        ImGui.EndTabItem()
                     end
-                end
-                ImGui.EndChild()
-                ImGui.EndTabItem()
-            end
                     if inventoryUI.isLoadingData then
-                            renderLoadingScreen("Loading Inventory Data", "Scanning items", "This may take a moment for large inventories")
-                    else      
+                        renderLoadingScreen("Loading Inventory Data", "Scanning items", "This may take a moment for large inventories")
+                    else
                         -- Visual Layout Tab
                         if ImGui.BeginTabItem("Visual") then
-                            ImGui.Dummy(235, 0) 
-                            local armorTypes = { "All", "Plate", "Chain", "Cloth", "Leather" }
+                            ImGui.Dummy(235, 0)
+                            local armorTypes = { "All", "Plate", "Chain", "Cloth", "Leather", }
                             inventoryUI.armorTypeFilter = inventoryUI.armorTypeFilter or "All"
-                            
-                            ImGui.SameLine()  
+
+                            ImGui.SameLine()
                             ImGui.Text("Armor Type:")
                             ImGui.SameLine()
-                            ImGui.SetNextItemWidth(100)  
+                            ImGui.SetNextItemWidth(100)
                             if ImGui.BeginCombo("##ArmorTypeFilter", inventoryUI.armorTypeFilter) then
                                 for _, armorType in ipairs(armorTypes) do
                                     if ImGui.Selectable(armorType, inventoryUI.armorTypeFilter == armorType) then
@@ -2143,14 +2154,14 @@ function inventoryUI.render()
                             end
                             ImGui.Separator()
                             local slotLayout = {
-                                {1, 2, 3, 4},       -- Row 1: Left Ear, Face, Neck, Shoulders
-                                {17, "", "", 5},    -- Row 2: Primary, Empty, Empty, Ear 1
-                                {7, "", "", 8},     -- Row 3: Arms, Empty, Empty, Wrist 1
-                                {20, "", "", 6},    -- Row 4: Range, Empty, Empty, Ear 2
-                                {9, "", "", 10},    -- Row 5: Back, Empty, Empty, Wrist 2
-                                {18, 12, 0, 19},    -- Row 6: Secondary, Chest, Ammo, Waist
-                                {"", 15, 16, 21},   -- Row 7: Empty, Legs, Feet, Charm
-                                {13, 14, 11, 22}    -- Row 8: Finger 1, Finger 2, Hands, Power Source
+                                { 1,  2,  3,  4, },  -- Row 1: Left Ear, Face, Neck, Shoulders
+                                { 17, "", "", 5, },  -- Row 2: Primary, Empty, Empty, Ear 1
+                                { 7,  "", "", 8, },  -- Row 3: Arms, Empty, Empty, Wrist 1
+                                { 20, "", "", 6, },  -- Row 4: Range, Empty, Empty, Ear 2
+                                { 9,  "", "", 10, }, -- Row 5: Back, Empty, Empty, Wrist 2
+                                { 18, 12, 0,  19, }, -- Row 6: Secondary, Chest, Ammo, Waist
+                                { "", 15, 16, 21, }, -- Row 7: Empty, Legs, Feet, Charm
+                                { 13, 14, 11, 22, }, -- Row 8: Finger 1, Finger 2, Hands, Power Source
                             }
                             local equippedItems = {}
                             for _, item in ipairs(inventoryUI.inventoryData.equipped) do
@@ -2161,13 +2172,13 @@ function inventoryUI.render()
                             inventoryUI.openItemWindow = inventoryUI.openItemWindow or nil
                             local hoveringAnyItem = false
                             local function calculateEquippedTableWidth()
-                                local contentWidth = 4 * 50  
-                                local borderWidth = 1        
+                                local contentWidth = 4 * 50
+                                local borderWidth = 1
                                 local borders = borderWidth * (4 + 1)
-                                local padding = 30           
-                                local extraMargin = 8        
-                                
-                                return contentWidth + borders + padding + extraMargin 
+                                local padding = 30
+                                local extraMargin = 8
+
+                                return contentWidth + borders + padding + extraMargin
                             end
                             ImGui.Columns(2, "EquippedColumns", true)
                             local equippedTableWidth = calculateEquippedTableWidth()
@@ -2220,7 +2231,7 @@ function inventoryUI.render()
                                             local buttonMaxX, buttonMaxY = ImGui.GetItemRectMax()
                                             local buttonWidth = buttonMaxX - buttonMinX
                                             local buttonHeight = buttonMaxY - buttonMinY
-                                            
+
                                             local textSize = ImGui.CalcTextSize(slotName)
                                             local textX = buttonMinX + (buttonWidth - textSize) * 0.5
                                             local textY = buttonMinY + (buttonHeight - ImGui.GetTextLineHeight()) * 0.5
@@ -2237,7 +2248,7 @@ function inventoryUI.render()
                                                 inventoryUI.selectedSlotName = slotName
                                                 inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
                                             end
-                                            
+
                                             if rightClicked then
                                                 local targetChar = inventoryUI.selectedPeer or mq.TLO.Me.Name()
                                                 inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
@@ -2248,11 +2259,11 @@ function inventoryUI.render()
                                                 inventoryUI.selectedComparisonItemId = ""
                                                 inventoryUI.selectedComparisonItem = nil
                                             end
-                                            
+
                                             if ImGui.IsItemHovered() then
                                                 local drawList = ImGui.GetWindowDrawList()
-                                                drawList:AddRect(ImVec2(buttonMinX, buttonMinY), ImVec2(buttonMaxX, buttonMaxY), 
-                                                            ImGui.GetColorU32(0.5, 0.5, 0.5, 0.3), 2.0)
+                                                drawList:AddRect(ImVec2(buttonMinX, buttonMinY), ImVec2(buttonMaxX, buttonMaxY),
+                                                    ImGui.GetColorU32(0.5, 0.5, 0.5, 0.3), 2.0)
                                                 ImGui.BeginTooltip()
                                                 ImGui.Text(slotName .. " (Empty)")
                                                 ImGui.Text("Left-click: Compare across characters")
@@ -2261,7 +2272,7 @@ function inventoryUI.render()
                                             end
                                         end
                                     end
-                                    
+
                                     for rowIndex, row in ipairs(slotLayout) do
                                         ImGui.TableNextRow(ImGuiTableRowFlags.None, 40)
                                         for colIndex, slotID in ipairs(row) do
@@ -2280,10 +2291,10 @@ function inventoryUI.render()
                                                 ImGui.Text("")
                                             end
                                         end
-                                    end                                    
+                                    end
                                     ImGui.EndTable()
                                 end
-                            end)                            
+                            end)
                             ImGui.NextColumn()
                             if inventoryUI.selectedSlotID then
                                 ImGui.Text("Comparing " .. inventoryUI.selectedSlotName .. " slot across all characters:")
@@ -2316,17 +2327,17 @@ function inventoryUI.render()
                                             table.insert(processedResults, {
                                                 peerName = peerName,
                                                 item = nil,
-                                                slotid = currentSlotID
+                                                slotid = currentSlotID,
                                             })
                                         end
                                     end
-                                    
-                                    table.sort(processedResults, function(a, b) 
-                                        return (a.peerName or "zzz") < (b.peerName or "zzz") 
+
+                                    table.sort(processedResults, function(a, b)
+                                        return (a.peerName or "zzz") < (b.peerName or "zzz")
                                     end)
                                     local equippedResults = {}
                                     local emptyResults = {}
-                                    
+
                                     for _, result in ipairs(processedResults) do
                                         local showRow = true
                                         if result.peerName then
@@ -2337,7 +2348,7 @@ function inventoryUI.render()
                                                 showRow = (inventoryUI.armorTypeFilter == "All" or armorType == inventoryUI.armorTypeFilter)
                                             end
                                         end
-                                        
+
                                         if showRow then
                                             if result.item then
                                                 table.insert(equippedResults, result)
@@ -2384,7 +2395,7 @@ function inventoryUI.render()
                                                         end
                                                     end
                                                 end
-                                                
+
                                                 ImGui.PopID()
                                             end
                                             ImGui.EndTable()
@@ -2396,7 +2407,7 @@ function inventoryUI.render()
                                             ImGui.Separator()
                                             ImGui.Spacing()
                                         end
-                                        
+
                                         ImGui.Text("Characters with empty " .. inventoryUI.selectedSlotName .. " slot:")
                                         if ImGui.BeginTable("EmptyComparisonTable", 2, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
                                             ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 100)
@@ -2424,7 +2435,7 @@ function inventoryUI.render()
                                                     inventoryUI.itemSuggestionsSlotName = getSlotNameFromID(slotID) or tostring(slotID)
                                                 end
                                                 ImGui.PopStyleColor()
-                                                
+
                                                 ImGui.PopID()
                                             end
                                             ImGui.EndTable()
@@ -2446,9 +2457,9 @@ function inventoryUI.render()
                     end
                     ImGui.EndTabBar()
                 end
-            ImGui.EndTabItem()
+                ImGui.EndTabItem()
+            end
         end
-    end
 
         ------------------------------
         -- Bags Section
@@ -2472,7 +2483,7 @@ function inventoryUI.render()
                     inventoryUI.bagOpen = inventoryUI.bagOpen or {}
                     local searchChanged = searchText ~= (inventoryUI.previousSearchText or "")
                     inventoryUI.previousSearchText = searchText
-                    
+
                     if inventoryUI.multiSelectMode then
                         local selectedCount = getSelectedItemCount()
                         ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
@@ -2495,7 +2506,7 @@ function inventoryUI.render()
                         end
                         ImGui.Separator()
                     end
-                    
+
                     local checkboxLabel = inventoryUI.globalExpandAll and "Collapse All Bags" or "Expand All Bags"
                     if ImGui.Checkbox(checkboxLabel, inventoryUI.globalExpandAll) ~= inventoryUI.globalExpandAll then
                         inventoryUI.globalExpandAll = not inventoryUI.globalExpandAll
@@ -2503,13 +2514,13 @@ function inventoryUI.render()
                             inventoryUI.bagOpen[bagid] = inventoryUI.globalExpandAll
                         end
                     end
-                    
+
                     local bagColumns = {}
                     for bagid, bagItems in pairs(inventoryUI.inventoryData.bags) do
-                        table.insert(bagColumns, { bagid = bagid, items = bagItems })
+                        table.insert(bagColumns, { bagid = bagid, items = bagItems, })
                     end
                     table.sort(bagColumns, function(a, b) return a.bagid < b.bagid end)
-                    
+
                     for _, bag in ipairs(bagColumns) do
                         local bagid = bag.bagid
                         local bagName = bag.items[1] and bag.items[1].bagname or ("Bag " .. tostring(bagid))
@@ -2531,40 +2542,40 @@ function inventoryUI.render()
                                 ImGui.TableSetupColumn("Slot #", ImGuiTableColumnFlags.WidthFixed, 60)
                                 ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 80)
                                 ImGui.TableHeadersRow()
-                                
+
                                 for i, item in ipairs(bag.items) do
                                     if matchesSearch(item) then
                                         ImGui.TableNextRow()
-                                        
-                                        local uniqueKey = string.format("%s_%s_%s_%s", 
+
+                                        local uniqueKey = string.format("%s_%s_%s_%s",
                                             inventoryUI.selectedPeer or "unknown",
                                             item.name or "unnamed",
                                             bagid,
                                             item.slotid or "noslot")
-                                        
+
                                         ImGui.TableNextColumn()
                                         if item.icon and item.icon > 0 then
                                             drawItemIcon(item.icon)
                                         else
                                             ImGui.Text("N/A")
                                         end
-                                        
+
                                         ImGui.TableNextColumn()
                                         local itemClicked = false
-                                        
+
                                         if inventoryUI.multiSelectMode then
                                             if inventoryUI.selectedItems[uniqueKey] then
-                                                ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1) 
+                                                ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
                                                 itemClicked = ImGui.Selectable(item.name .. "##" .. bagid .. "_" .. i)
                                                 ImGui.PopStyleColor()
                                             else
                                                 itemClicked = ImGui.Selectable(item.name .. "##" .. bagid .. "_" .. i)
                                             end
-                                            
+
                                             if itemClicked then
                                                 toggleItemSelection(item, uniqueKey, inventoryUI.selectedPeer)
                                             end
-                                            
+
                                             -- Draw selection indicator
                                             drawSelectionIndicator(uniqueKey, ImGui.IsItemHovered())
                                         else
@@ -2578,12 +2589,12 @@ function inventoryUI.render()
                                                 end
                                             end
                                         end
-                                        
+
                                         if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
                                             local mouseX, mouseY = ImGui.GetMousePos()
                                             showContextMenu(item, inventoryUI.selectedPeer, mouseX, mouseY)
                                         end
-                                        
+
                                         if ImGui.IsItemHovered() then
                                             ImGui.BeginTooltip()
                                             ImGui.Text(item.name)
@@ -2594,15 +2605,15 @@ function inventoryUI.render()
                                             end
                                             ImGui.EndTooltip()
                                         end
-                                        
+
                                         -- Quantity column
                                         ImGui.TableNextColumn()
                                         ImGui.Text(tostring(item.qty or ""))
-                                        
+
                                         -- Slot column
                                         ImGui.TableNextColumn()
                                         ImGui.Text(tostring(item.slotid or ""))
-                                        
+
                                         -- Action column
                                         ImGui.TableNextColumn()
                                         if inventoryUI.multiSelectMode then
@@ -2642,7 +2653,7 @@ function inventoryUI.render()
                     end
                     ImGui.EndTabItem()
                 end
-        
+
                 if ImGui.BeginTabItem("Visual Layout") then
                     inventoryUI.bagsView = "visual"
 
@@ -2651,7 +2662,7 @@ function inventoryUI.render()
 
                     local content_width = ImGui.GetWindowContentRegionWidth()
 
-                    local horizontal_padding = 3 
+                    local horizontal_padding = 3
                     local item_width_plus_padding = CBB_BAG_ITEM_SIZE + horizontal_padding
                     local bag_cols = math.max(1, math.floor((content_width + horizontal_padding) / item_width_plus_padding))
 
@@ -2660,21 +2671,22 @@ function inventoryUI.render()
                         local current_col = 1
                         for mainSlotIndex = 23, 34 do
                             local slot_tlo = mq.TLO.Me.Inventory(mainSlotIndex)
-                            local pack_number = mainSlotIndex - 22 
+                            local pack_number = mainSlotIndex - 22
                             if slot_tlo.Container() and slot_tlo.Container() > 0 then
                                 ImGui.TextUnformatted(string.format("%s (Pack %d)", slot_tlo.Name(), pack_number))
                                 ImGui.Separator()
                                 for insideIndex = 1, slot_tlo.Container() do
                                     local item_tlo = slot_tlo.Item(insideIndex)
                                     local cell_id = string.format("bag_%d_slot_%d", pack_number, insideIndex)
-                                    local show_this_item = item_tlo.ID() and (not searchText or searchText == "" or string.match(string.lower(item_tlo.Name()), string.lower(searchText)))
-                                    ImGui.PushID(cell_id) 
+                                    local show_this_item = item_tlo.ID() and
+                                        (not searchText or searchText == "" or string.match(string.lower(item_tlo.Name()), string.lower(searchText)))
+                                    ImGui.PushID(cell_id)
                                     if show_this_item then
-                                        draw_live_item_icon_cbb(item_tlo, cell_id) 
+                                        draw_live_item_icon_cbb(item_tlo, cell_id)
                                     else
-                                        draw_empty_slot_cbb(cell_id) 
+                                        draw_empty_slot_cbb(cell_id)
                                     end
-                                    ImGui.PopID() 
+                                    ImGui.PopID()
                                     if current_col < bag_cols then
                                         current_col = current_col + 1
                                         ImGui.SameLine()
@@ -2683,8 +2695,8 @@ function inventoryUI.render()
                                     end
                                 end
                                 ImGui.NewLine()
-                                ImGui.Separator() 
-                                current_col = 1 
+                                ImGui.Separator()
+                                current_col = 1
                             end
                         end
                     else
@@ -2707,7 +2719,7 @@ function inventoryUI.render()
                             end
                             bagNames[bagid] = string.format("%s (%d)", currentBagName, bagid)
                         end
-                        table.sort(bagOrder) 
+                        table.sort(bagOrder)
                         for _, bagid in ipairs(bagOrder) do
                             local bagMap = bagsMap[bagid]
                             local bagName = bagNames[bagid]
@@ -2715,9 +2727,9 @@ function inventoryUI.render()
                             ImGui.Separator()
                             local current_col = 1
                             for slotIndex = 1, CBB_MAX_SLOTS_PER_BAG do
-                                local item_db = bagMap[slotIndex] 
+                                local item_db = bagMap[slotIndex]
                                 local cell_id = string.format("bag_%d_slot_%d", bagid, slotIndex)
-                                local show_this_item = item_db and matchesSearch(item_db) 
+                                local show_this_item = item_db and matchesSearch(item_db)
                                 ImGui.PushID(cell_id)
                                 if show_this_item then
                                     draw_item_icon_cbb(item_db, cell_id)
@@ -2735,113 +2747,113 @@ function inventoryUI.render()
                             ImGui.NewLine()
                             ImGui.Separator()
                         end
-                    end 
-                    ImGui.PopStyleVar() 
+                    end
+                    ImGui.PopStyleVar()
 
-                ImGui.EndTabItem()
-            end
+                    ImGui.EndTabItem()
+                end
                 ImGui.EndTabBar()
             end
             ImGui.EndTabItem()
         end
 
-    ------------------------------
-    -- Bank Items Section
-    ------------------------------
-    if ImGui.BeginTabItem("Bank") then
-        if not inventoryUI.inventoryData.bank or #inventoryUI.inventoryData.bank == 0 then
-            ImGui.Text("There's no loot here! Go visit a bank and re-sync!")
-        else
-            if ImGui.BeginTable("BankTable", 5, bit.bor(ImGuiTableFlags.BordersInnerV, ImGuiTableFlags.RowBg)) then
-                ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
-                ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
-                ImGui.TableSetupColumn("Bank Slot", ImGuiTableColumnFlags.WidthFixed, 70)
-                ImGui.TableSetupColumn("Item Slot", ImGuiTableColumnFlags.WidthFixed, 70)
-                ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 70)  
-                ImGui.TableHeadersRow()
+        ------------------------------
+        -- Bank Items Section
+        ------------------------------
+        if ImGui.BeginTabItem("Bank") then
+            if not inventoryUI.inventoryData.bank or #inventoryUI.inventoryData.bank == 0 then
+                ImGui.Text("There's no loot here! Go visit a bank and re-sync!")
+            else
+                if ImGui.BeginTable("BankTable", 5, bit.bor(ImGuiTableFlags.BordersInnerV, ImGuiTableFlags.RowBg)) then
+                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
+                    ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
+                    ImGui.TableSetupColumn("Bank Slot", ImGuiTableColumnFlags.WidthFixed, 70)
+                    ImGui.TableSetupColumn("Item Slot", ImGuiTableColumnFlags.WidthFixed, 70)
+                    ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 70)
+                    ImGui.TableHeadersRow()
 
-                for i, item in ipairs(inventoryUI.inventoryData.bank) do
-                    if matchesSearch(item) then
-                        ImGui.TableNextRow()
-                        local bankSlotId = item.bankslotid or "nobankslot"
-                        local slotId = item.slotid or "noslot"
-                        local itemName = item.name or "noname"
-                        local uniqueID = string.format("%s_bank%s_slot%s_%d", itemName, bankSlotId, slotId, i)
-                        
-                        ImGui.PushID(uniqueID)
-                        
-                        ImGui.TableSetColumnIndex(0)
-                        if item.icon and item.icon ~= 0 then
-                            drawItemIcon(item.icon)
-                        else
-                            ImGui.Text("N/A")
-                        end
-                        ImGui.TableSetColumnIndex(1)
-                        if ImGui.Selectable(item.name .. "##" .. uniqueID) then
-                            local links = mq.ExtractLinks(item.itemlink)
-                            if links and #links > 0 then
-                                mq.ExecuteTextLink(links[1])
+                    for i, item in ipairs(inventoryUI.inventoryData.bank) do
+                        if matchesSearch(item) then
+                            ImGui.TableNextRow()
+                            local bankSlotId = item.bankslotid or "nobankslot"
+                            local slotId = item.slotid or "noslot"
+                            local itemName = item.name or "noname"
+                            local uniqueID = string.format("%s_bank%s_slot%s_%d", itemName, bankSlotId, slotId, i)
+
+                            ImGui.PushID(uniqueID)
+
+                            ImGui.TableSetColumnIndex(0)
+                            if item.icon and item.icon ~= 0 then
+                                drawItemIcon(item.icon)
                             else
-                                mq.cmd('/echo No item link found in the database.')
+                                ImGui.Text("N/A")
                             end
-                        end
-                        ImGui.TableSetColumnIndex(2)
-                        ImGui.Text(tostring(item.bankslotid or "N/A"))
-                        ImGui.TableSetColumnIndex(3)
-                        ImGui.Text(tostring(item.slotid or "N/A")) 
-                        
-                        ImGui.TableSetColumnIndex(4)
-                        if ImGui.Button("Pickup##" .. uniqueID) then
-                            local BankSlotId = tonumber(item.bankslotid) or 0
-                            local SlotId = tonumber(item.slotid) or -1
-                            
-                            if BankSlotId >= 1 and BankSlotId <= 24 then
-                                if SlotId == -1 then
-                                    mq.cmdf("/shift /itemnotify bank%d leftmouseup", BankSlotId)
+                            ImGui.TableSetColumnIndex(1)
+                            if ImGui.Selectable(item.name .. "##" .. uniqueID) then
+                                local links = mq.ExtractLinks(item.itemlink)
+                                if links and #links > 0 then
+                                    mq.ExecuteTextLink(links[1])
                                 else
-                                    mq.cmdf("/shift /itemnotify in bank%d %d leftmouseup", BankSlotId, SlotId)
+                                    mq.cmd('/echo No item link found in the database.')
                                 end
-                            elseif BankSlotId >= 25 and BankSlotId <= 26 then
-                                local sharedSlot = BankSlotId - 24  -- Convert to 1-2
-                                if SlotId == -1 then
-                                    -- Direct shared bank slot
-                                    mq.cmdf("/shift /itemnotify sharedbank%d leftmouseup", sharedSlot)
-                                else
-                                    -- Item in a shared bank bag
-                                    mq.cmdf("/shift /itemnotify in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
-                                end
-                            else
-                                mq.cmdf("/echo Unknown bank slot ID: %d", BankSlotId)
                             end
+                            ImGui.TableSetColumnIndex(2)
+                            ImGui.Text(tostring(item.bankslotid or "N/A"))
+                            ImGui.TableSetColumnIndex(3)
+                            ImGui.Text(tostring(item.slotid or "N/A"))
+
+                            ImGui.TableSetColumnIndex(4)
+                            if ImGui.Button("Pickup##" .. uniqueID) then
+                                local BankSlotId = tonumber(item.bankslotid) or 0
+                                local SlotId = tonumber(item.slotid) or -1
+
+                                if BankSlotId >= 1 and BankSlotId <= 24 then
+                                    if SlotId == -1 then
+                                        mq.cmdf("/shift /itemnotify bank%d leftmouseup", BankSlotId)
+                                    else
+                                        mq.cmdf("/shift /itemnotify in bank%d %d leftmouseup", BankSlotId, SlotId)
+                                    end
+                                elseif BankSlotId >= 25 and BankSlotId <= 26 then
+                                    local sharedSlot = BankSlotId - 24 -- Convert to 1-2
+                                    if SlotId == -1 then
+                                        -- Direct shared bank slot
+                                        mq.cmdf("/shift /itemnotify sharedbank%d leftmouseup", sharedSlot)
+                                    else
+                                        -- Item in a shared bank bag
+                                        mq.cmdf("/shift /itemnotify in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
+                                    end
+                                else
+                                    mq.cmdf("/echo Unknown bank slot ID: %d", BankSlotId)
+                                end
+                            end
+
+                            if ImGui.IsItemHovered() then
+                                ImGui.SetTooltip("You need to be near a banker to pick up this item")
+                            end
+
+                            ImGui.PopID()
                         end
-                        
-                        if ImGui.IsItemHovered() then
-                            ImGui.SetTooltip("You need to be near a banker to pick up this item")
-                        end
-                        
-                        ImGui.PopID()
                     end
+
+                    ImGui.EndTable()
                 end
-
-                ImGui.EndTable()
             end
+            ImGui.EndTabItem()
         end
-        ImGui.EndTabItem()
-    end
 
-    ------------------------------
-    -- All Bots Search Results Tab
-    ------------------------------
+        ------------------------------
+        -- All Bots Search Results Tab
+        ------------------------------
         if ImGui.BeginTabItem("All Bots") then
-            local filterOptions = { "All", "Equipped", "Inventory", "Bank" }
-            inventoryUI.sourceFilter = inventoryUI.sourceFilter or "All"  -- Default filter
+            local filterOptions = { "All", "Equipped", "Inventory", "Bank", }
+            inventoryUI.sourceFilter = inventoryUI.sourceFilter or "All" -- Default filter
 
             ImGui.Text("Filter by Source:")
             ImGui.SameLine()
             if ImGui.BeginCombo("##SourceFilter", inventoryUI.sourceFilter) then
                 for _, option in ipairs(filterOptions) do
                     if ImGui.Selectable(option, inventoryUI.sourceFilter == option) then
-                        inventoryUI.sourceFilter = option  -- Update the filter
+                        inventoryUI.sourceFilter = option -- Update the filter
                     end
                 end
                 ImGui.EndCombo()
@@ -2854,7 +2866,6 @@ function inventoryUI.render()
             if #results == 0 then
                 ImGui.Text("No matching items found across all peers.")
             else
-                
                 local availableWidth = ImGui.GetContentRegionMax()
                 local totalWidth = availableWidth
 
@@ -2863,7 +2874,7 @@ function inventoryUI.render()
                 local actionWidth = 80
 
                 local remainingWidth = totalWidth - iconWidth - qtyWidth - actionWidth
-                local stretchTotalWeight = 60 + 50 + 60 + 200 
+                local stretchTotalWeight = 60 + 50 + 60 + 200
                 local peerWidth = (remainingWidth * 60) / stretchTotalWeight
                 local sourceWidth = (remainingWidth * 50) / stretchTotalWeight
                 local slotWidth = (remainingWidth * 60) / stretchTotalWeight
@@ -2909,9 +2920,9 @@ function inventoryUI.render()
                                 goto continue
                             end
                             ImGui.TableNextRow()
-                            local uniqueID = string.format("%s_%s_%d", 
-                                item.peerName or "unknown", 
-                                item.name or "unnamed", 
+                            local uniqueID = string.format("%s_%s_%d",
+                                item.peerName or "unknown",
+                                item.name or "unnamed",
                                 idx)
                             ImGui.PushID(uniqueID)
                             ImGui.TableNextColumn()
@@ -2931,14 +2942,14 @@ function inventoryUI.render()
                             end
                             ImGui.TableNextColumn()
                             local itemClicked = false
-                            local uniqueKey = string.format("%s_%s_%s_%s", 
+                            local uniqueKey = string.format("%s_%s_%s_%s",
                                 item.peerName or "unknown",
                                 item.name or "unnamed",
                                 item.bagid or item.bankslotid or "noloc",
                                 item.slotid or "noslot")
                             if inventoryUI.multiSelectMode then
                                 if inventoryUI.selectedItems[uniqueKey] then
-                                    ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1) 
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
                                     itemClicked = ImGui.Selectable(tostring(item.name or "Unknown"))
                                     ImGui.PopStyleColor()
                                 else
@@ -2967,23 +2978,23 @@ function inventoryUI.render()
                             local qtyDisplay = tostring(item.qty or "?")
                             ImGui.Text(qtyDisplay)
                             if ImGui.IsItemHovered() then
-                                ImGui.SetTooltip(string.format("qty: %s\nstack: %s\nraw: %s", 
-                                    tostring(item.qty), 
-                                    tostring(item.stack), 
+                                ImGui.SetTooltip(string.format("qty: %s\nstack: %s\nraw: %s",
+                                    tostring(item.qty),
+                                    tostring(item.stack),
                                     tostring(item.qty or item.stack or "nil")))
                             end
                             ImGui.TableNextColumn()
                             local peerName = item.peerName or "Unknown"
                             local itemName = item.name or "Unnamed"
-                            
+
                             if peerName == mq.TLO.Me.Name() then
                                 if ImGui.Button("Pickup##" .. uniqueID) then
                                     if item.source == "Bank" then
                                         local BankSlotId = tonumber(item.bankslotid) or 0
                                         local SlotId = tonumber(item.slotid) or -1
-                                        
+
                                         --mq.cmdf("/echo [DEBUG] Bank pickup: Item=%s, BankSlot=%d, Slot=%d", itemName, BankSlotId, SlotId)
-                                        
+
                                         if BankSlotId >= 1 and BankSlotId <= 24 then
                                             local adjustedBankSlot = BankSlotId
                                             if SlotId == -1 then
@@ -3017,9 +3028,9 @@ function inventoryUI.render()
                                     ImGui.Text("--")
                                     ImGui.SameLine()
                                     local buttonLabel = string.format("Give to %s##%s", inventoryUI.selectedPeer or "Unknown", uniqueID)
-                                    ImGui.PushStyleColor(ImGuiCol.Button, 0, 0.6, 0, 1)        
-                                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0, 0.8, 0, 1) 
-                                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0, 1.0, 0, 1) 
+                                    ImGui.PushStyleColor(ImGuiCol.Button, 0, 0.6, 0, 1)
+                                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0, 0.8, 0, 1)
+                                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0, 1.0, 0, 1)
                                     if ImGui.Button(buttonLabel) then
                                         local giveRequest = {
                                             name = itemName,
@@ -3029,14 +3040,14 @@ function inventoryUI.render()
                                             slotid = item.slotid,
                                             bankslotid = item.bankslotid,
                                         }
-                                        inventory_actor.send_inventory_command(item.peerName, "proxy_give", {json.encode(giveRequest)})
+                                        inventory_actor.send_inventory_command(item.peerName, "proxy_give", { json.encode(giveRequest), })
                                         mq.cmdf("/echo Requested %s to give %s to %s", item.peerName, itemName, inventoryUI.selectedPeer)
                                     end
                                     ImGui.PopStyleColor(3)
                                 else
                                     ImGui.Text("No Drop")
                                 end
-                            end                        
+                            end
                             ImGui.PopID()
                             ::continue::
                         end
@@ -3047,7 +3058,7 @@ function inventoryUI.render()
             ImGui.EndTabItem()
         end
 
-        if mq.TLO.MacroQuest.Build() == 4 and bot_inventory then
+        if isEMU and bot_inventory then
             if ImGui.BeginTabItem("Bot Management") then
                 ImGui.Text("Bot Inventory Management")
                 ImGui.Separator()
@@ -3071,7 +3082,7 @@ function inventoryUI.render()
                         ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 100)
                         ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 150)
                         ImGui.TableHeadersRow()
-                        
+
                         for _, botName in ipairs(availableBots) do
                             ImGui.TableNextRow()
                             ImGui.TableNextColumn()
@@ -3101,7 +3112,7 @@ function inventoryUI.render()
                                 if ImGui.Button("View##" .. botName) then
                                     inventoryUI.selectedBotInventory = {
                                         name = botName,
-                                        data = bot_inventory.getBotInventory(botName)
+                                        data = bot_inventory.getBotInventory(botName),
                                     }
                                     inventoryUI.showBotInventory = true
                                 end
@@ -3134,7 +3145,7 @@ function inventoryUI.render()
                 ImGui.Text("None Available")
                 ImGui.PopStyleColor()
             end
-            
+
             ImGui.Spacing()
             if connectionMethod ~= "None" then
                 ImGui.Text("Broadcast Commands:")
@@ -3152,13 +3163,13 @@ function inventoryUI.render()
                 ImGui.Text("No connection method available - Load MQ2Mono, MQ2DanNet, or MQ2EQBC")
                 ImGui.PopStyleColor()
             end
-            
+
             ImGui.Separator()
-            
+
             -- Build peer status with stable ordering and proper name matching
             local peerStatus = {}
             local peerNames = {} -- For stable ordering
-            
+
             -- First pass: Add all connected peers
             for _, peer in ipairs(connectedPeers) do
                 if not peerStatus[peer.name] then
@@ -3168,12 +3179,12 @@ function inventoryUI.render()
                         connected = true,
                         hasInventory = false,
                         method = peer.method,
-                        lastSeen = "Connected"
+                        lastSeen = "Connected",
                     }
                     table.insert(peerNames, peer.name)
                 end
             end
-            
+
             -- Second pass: Add peers with inventory data (but may not be connected)
             for peerID, invData in pairs(inventory_actor.peer_inventories) do
                 local peerName = invData.name or "Unknown"
@@ -3190,20 +3201,20 @@ function inventoryUI.render()
                             connected = false,
                             hasInventory = true,
                             method = "Unknown",
-                            lastSeen = "Has Inventory Data"
+                            lastSeen = "Has Inventory Data",
                         }
                         table.insert(peerNames, peerName)
                     end
                 end
             end
-            
+
             -- Sort peer names alphabetically for consistent display order
-            table.sort(peerNames, function(a, b) 
-                return a:lower() < b:lower() 
+            table.sort(peerNames, function(a, b)
+                return a:lower() < b:lower()
             end)
-            
+
             ImGui.Text(string.format("Peer Status (%d total):", #peerNames))
-            
+
             if ImGui.BeginTable("PeerStatusTable", 5, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
                 ImGui.TableSetupColumn("Peer Name", ImGuiTableColumnFlags.WidthStretch)
                 ImGui.TableSetupColumn("Connected", ImGuiTableColumnFlags.WidthFixed, 80)
@@ -3211,17 +3222,17 @@ function inventoryUI.render()
                 ImGui.TableSetupColumn("Method", ImGuiTableColumnFlags.WidthFixed, 80)
                 ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 120)
                 ImGui.TableHeadersRow()
-                
+
                 -- Use the sorted peer names list for consistent ordering
                 for _, peerName in ipairs(peerNames) do
                     local status = peerStatus[peerName]
                     if status then -- Safety check
                         ImGui.TableNextRow()
                         ImGui.TableNextColumn()
-                        
+
                         -- Show display name if available, otherwise use character name
                         local nameToShow = status.displayName or status.name
-                        
+
                         if status.connected then
                             ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.8, 1.0, 1.0)
                             if ImGui.Selectable(nameToShow .. "##peer_" .. peerName) then
@@ -3237,7 +3248,7 @@ function inventoryUI.render()
                             ImGui.Text(nameToShow)
                             ImGui.PopStyleColor()
                         end
-                        
+
                         ImGui.TableNextColumn()
                         if status.connected then
                             ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
@@ -3248,7 +3259,7 @@ function inventoryUI.render()
                             ImGui.Text("No")
                             ImGui.PopStyleColor()
                         end
-                        
+
                         ImGui.TableNextColumn()
                         if status.hasInventory then
                             ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
@@ -3259,10 +3270,10 @@ function inventoryUI.render()
                             ImGui.Text("No")
                             ImGui.PopStyleColor()
                         end
-                        
+
                         ImGui.TableNextColumn()
                         ImGui.Text(status.method)
-                        
+
                         ImGui.TableNextColumn()
                         if status.connected and not status.hasInventory then
                             if ImGui.Button("Start Script##" .. peerName) then
@@ -3270,7 +3281,7 @@ function inventoryUI.render()
                             end
                         elseif status.connected and status.hasInventory then
                             if ImGui.Button("Refresh##" .. peerName) then
-                                inventory_actor.send_inventory_command(peerName, "echo", {"Requesting inventory refresh"})
+                                inventory_actor.send_inventory_command(peerName, "echo", { "Requesting inventory refresh", })
                                 mq.cmdf("/echo Sent refresh request to %s", peerName)
                             end
                         elseif not status.connected and status.hasInventory then
@@ -3282,16 +3293,16 @@ function inventoryUI.render()
                         end
                     end
                 end
-                
+
                 ImGui.EndTable()
             end
-            
+
             -- Debug section remains the same...
             ImGui.Separator()
             if ImGui.CollapsingHeader("Debug Information") then
                 ImGui.Text("Connection Method Details:")
                 ImGui.Indent()
-                
+
                 if connectionMethod == "MQ2Mono" then
                     ImGui.Text("MQ2Mono Status: Loaded")
                     local e3Query = "e3,E3Bots.ConnectedClients"
@@ -3312,120 +3323,130 @@ function inventoryUI.render()
                     local names = mq.TLO.EQBC.Names() or ""
                     ImGui.Text(string.format("EQBC Names: %s", names))
                 end
-                
+
                 ImGui.Unindent()
-                
+
                 ImGui.Spacing()
                 ImGui.Text("Inventory Actor Status:")
                 ImGui.Indent()
-                
+
                 local inventoryPeerCount = 0
                 for _ in pairs(inventory_actor.peer_inventories) do
                     inventoryPeerCount = inventoryPeerCount + 1
                 end
-                
+
                 ImGui.Text(string.format("Known Inventory Peers: %d", inventoryPeerCount))
                 ImGui.Text(string.format("Actor Initialized: %s", inventory_actor.is_initialized() and "Yes" or "No"))
-                
+
                 ImGui.Unindent()
             end
-            
+
             ImGui.EndTabItem()
         end
         ImGui.EndTabBar()
         ImGui.EndChild()
     end
 
-        --------------------------------------------------------
-        --- Item Exchange Popup
-        --------------------------------------------------------
-        
-        inventoryUI.showGiveItemPanel = inventoryUI.showGiveItemPanel or false
 
-    if inventoryUI.showGiveItemPanel then
-        ImGui.SetNextWindowSize(400, 0, ImGuiCond.Once)
-        local isOpen = ImGui.Begin("Give Item Panel", nil, ImGuiWindowFlags.AlwaysAutoResize)
-        if isOpen then
-        ImGui.Text("Select an item and peer to give it to.")
-        ImGui.Separator()
-
-        inventoryUI.selectedGiveItem = inventoryUI.selectedGiveItem or ""
-        local localItems = {}
-        for _, bagItems in pairs(inventoryUI.inventoryData.bags or {}) do
-            for _, item in ipairs(bagItems) do
-                table.insert(localItems, item.name)
-            end
-        end
-        table.sort(localItems)
-
-        ImGui.Text("Item:")
-        ImGui.SameLine()
-        if ImGui.BeginCombo("##GiveItemCombo", inventoryUI.selectedGiveItem ~= "" and inventoryUI.selectedGiveItem or "Select Item") then
-            for _, itemName in ipairs(localItems) do
-                if ImGui.Selectable(itemName, inventoryUI.selectedGiveItem == itemName) then
-                    inventoryUI.selectedGiveItem = itemName
-                end
-            end
-            ImGui.EndCombo()
-        end
-
-        inventoryUI.selectedGiveTarget = inventoryUI.selectedGiveTarget or ""
-        ImGui.Text("To Peer:")
-        ImGui.SameLine()
-        if ImGui.BeginCombo("##GivePeerCombo", inventoryUI.selectedGiveTarget ~= "" and inventoryUI.selectedGiveTarget or "Select Peer") then
-            local peers = peerCache[inventoryUI.selectedServer] or {}
-            table.sort(peers, function(a, b)
-                return (a.name or ""):lower() < (b.name or ""):lower()
-            end)
-            for i, peer in ipairs(peers) do
-                local isSelected = inventoryUI.selectedGiveTarget == peer.name
-                ImGui.PushID("give_peer_" .. peer.name)
-                if ImGui.Selectable(peer.name, isSelected) then
-                    inventoryUI.selectedGiveTarget = peer.name
-                end
-                if isSelected then
-                    ImGui.SetItemDefaultFocus()
-                end
-                ImGui.PopID()
-            end
-            ImGui.EndCombo()
-        end
-
-        ImGui.Separator()
-        if inventoryUI.showGiveItemPanel and ImGui.Button("Give") then
-            if inventoryUI.selectedGiveItem ~= "" and inventoryUI.selectedGiveTarget ~= "" then
-                local peerRequest = {
-                    name = inventoryUI.selectedGiveItem,
-                    to = inventoryUI.selectedGiveTarget,
-                    fromBank = false,
-                }
-                
-                inventory_actor.send_inventory_command(inventoryUI.selectedGiveSource, "proxy_give", {json.encode(peerRequest)})
-                
-                mq.cmdf("/echo Requesting %s to give %s to %s", 
-                        inventoryUI.selectedGiveSource,
-                        inventoryUI.selectedGiveItem, 
-                        inventoryUI.selectedGiveTarget)
-                
-                inventoryUI.showGiveItemPanel = false
-            else
-                mq.cmd("/popcustom 5 Please select an item and a peer first.")
-            end
-        end
-        ImGui.SameLine()
-        if ImGui.Button("Close Panel") then
-            inventoryUI.showGiveItemPanel = false
-        end
-            end
-        if isOpen then ImGui.End() end
-    end
     ImGui.End()
     renderContextMenu()
     renderMultiSelectIndicator()
     renderMultiTradePanel()
     renderItemSuggestions()
-    if mq.TLO.MacroQuest.Build() == 4 and inventoryUI.drawBotInventoryWindow then
+
+    renderItemExchange()
+    if isEMU and inventoryUI.drawBotInventoryWindow then
         inventoryUI.drawBotInventoryWindow()
+    end
+end
+
+function renderItemExchange()
+    --------------------------------------------------------
+    --- Item Exchange Popup
+    --------------------------------------------------------
+
+    inventoryUI.showGiveItemPanel = inventoryUI.showGiveItemPanel or false
+
+    if inventoryUI.showGiveItemPanel then
+        ImGui.SetNextWindowSize(400, 0, ImGuiCond.Once)
+        local isOpen, isDrawn = ImGui.Begin("Give Item Panel", nil, ImGuiWindowFlags.AlwaysAutoResize)
+        if isDrawn then
+            ImGui.Text("Select an item and peer to give it to.")
+            ImGui.Separator()
+
+            inventoryUI.selectedGiveItem = inventoryUI.selectedGiveItem or ""
+            local localItems = {}
+            for _, bagItems in pairs(inventoryUI.inventoryData.bags or {}) do
+                for _, item in ipairs(bagItems) do
+                    table.insert(localItems, item.name)
+                end
+            end
+            table.sort(localItems)
+
+            ImGui.Text("Item:")
+            ImGui.SameLine()
+            if ImGui.BeginCombo("##GiveItemCombo", inventoryUI.selectedGiveItem ~= "" and inventoryUI.selectedGiveItem or "Select Item") then
+                for _, itemName in ipairs(localItems) do
+                    if ImGui.Selectable(itemName, inventoryUI.selectedGiveItem == itemName) then
+                        inventoryUI.selectedGiveItem = itemName
+                    end
+                end
+                ImGui.EndCombo()
+            end
+
+            inventoryUI.selectedGiveTarget = inventoryUI.selectedGiveTarget or ""
+            ImGui.Text("To Peer:")
+            ImGui.SameLine()
+            if ImGui.BeginCombo("##GivePeerCombo", inventoryUI.selectedGiveTarget ~= "" and inventoryUI.selectedGiveTarget or "Select Peer") then
+                local peers = peerCache[inventoryUI.selectedServer] or {}
+                table.sort(peers, function(a, b)
+                    return (a.name or ""):lower() < (b.name or ""):lower()
+                end)
+                for i, peer in ipairs(peers) do
+                    local isSelected = inventoryUI.selectedGiveTarget == peer.name
+                    ImGui.PushID("give_peer_" .. peer.name)
+                    if ImGui.Selectable(peer.name, isSelected) then
+                        inventoryUI.selectedGiveTarget = peer.name
+                    end
+                    if isSelected then
+                        ImGui.SetItemDefaultFocus()
+                    end
+                    ImGui.PopID()
+                end
+                ImGui.EndCombo()
+            end
+
+            ImGui.Separator()
+            if inventoryUI.showGiveItemPanel and ImGui.Button("Give") then
+                if inventoryUI.selectedGiveItem ~= "" and inventoryUI.selectedGiveTarget ~= "" then
+                    local peerRequest = {
+                        name = inventoryUI.selectedGiveItem,
+                        to = inventoryUI.selectedGiveTarget,
+                        fromBank = false,
+                    }
+
+                    inventory_actor.send_inventory_command(inventoryUI.selectedGiveSource, "proxy_give", { json.encode(peerRequest), })
+
+                    mq.cmdf("/echo Requesting %s to give %s to %s",
+                        inventoryUI.selectedGiveSource,
+                        inventoryUI.selectedGiveItem,
+                        inventoryUI.selectedGiveTarget)
+
+                    inventoryUI.showGiveItemPanel = false
+                else
+                    mq.cmd("/popcustom 5 Please select an item and a peer first.")
+                end
+            end
+            ImGui.SameLine()
+            if ImGui.Button("Close Panel") then
+                inventoryUI.showGiveItemPanel = false
+            end
+        end
+        if not isOpen then
+            inventoryUI.showGiveItemPanel = false
+            isDrawn = false
+        end
+        ImGui.End()
     end
 end
 
@@ -3439,8 +3460,8 @@ mq.imgui.init("InventoryWindow", function()
 end)
 
 local helpInfo = {
-    { binding = "/ezinventory_ui", description = "Toggles the visibility of the inventory window." },
-    { binding = "/ezinventory_help", description = "Displays this help information." },
+    { binding = "/ezinventory_ui",   description = "Toggles the visibility of the inventory window.", },
+    { binding = "/ezinventory_help", description = "Displays this help information.", },
 }
 
 local function displayHelp()
@@ -3464,11 +3485,11 @@ mq.bind("/ezinventory_cmd", function(peer, command, ...)
         print("Usage: /ezinventory_cmd <peer> <command> [args...]")
         return
     end
-    local args = {...}
+    local args = { ..., }
     inventory_actor.send_inventory_command(peer, command, args)
 end)
 
-if mq.TLO.MacroQuest.Build() == 4 then
+if isEMU then
     function inventoryUI.toggleBotInventoryWindow()
         inventoryUI.showBotInventory = not inventoryUI.showBotInventory
         if not inventoryUI.showBotInventory then
@@ -3488,8 +3509,8 @@ local function main()
         print("\ar[EZInventory] Failed to initialize inventory actor\ax")
         return
     end
-    
-    if mq.TLO.MacroQuest.Build() == 4 and bot_inventory then
+
+    if isEMU and bot_inventory then
         if not bot_inventory.init() then
             print("\ar[EZInventory] Failed to initialize bot inventory system\ax")
         else
@@ -3499,7 +3520,6 @@ local function main()
 
     mq.delay(200)
     if isForeground then
-
         if mq.TLO.Plugin("MQ2Mono").IsLoaded() then
             mq.cmd("/e3bcaa /lua run ezinventory")
             print("Broadcasting inventory startup via MQ2Mono to all connected clients...")
@@ -3516,7 +3536,7 @@ local function main()
 
     mq.delay(500)
     inventory_actor.request_all_inventories()
-    
+
     local myName = mq.TLO.Me.Name()
     inventoryUI.selectedPeer = myName
     mq.delay(200)
@@ -3524,14 +3544,14 @@ local function main()
         name = myName,
         server = server,
         isMailbox = true,
-        data = inventory_actor.gather_inventory()
+        data = inventory_actor.gather_inventory(),
     }
     loadInventoryData(selfPeer)
     inventoryUI.isLoadingData = false
 
     while true do
         mq.doevents()
-        if mq.TLO.MacroQuest.Build() == 4 and bot_inventory then
+        if isEMU and bot_inventory then
             bot_inventory.process()
         end
 
