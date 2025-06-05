@@ -2853,7 +2853,7 @@ function inventoryUI.render()
         ------------------------------
         -- All Bots Search Results Tab
         ------------------------------
-        if ImGui.BeginTabItem("All Bots") then
+        if ImGui.BeginTabItem("All Characters - PC") then
             local filterOptions = { "All", "Equipped", "Inventory", "Bank", }
             inventoryUI.sourceFilter = inventoryUI.sourceFilter or "All" -- Default filter
 
@@ -3068,7 +3068,7 @@ function inventoryUI.render()
         end
 
         if isEMU and bot_inventory then
-            if ImGui.BeginTabItem("Bot Management") then
+            if ImGui.BeginTabItem("^Bot Viewer - Emu") then
                 ImGui.Text("Bot Inventory Management")
                 ImGui.Separator()
                 if ImGui.Button("Refresh Bot List") then
