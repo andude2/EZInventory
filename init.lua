@@ -2832,7 +2832,7 @@ function inventoryUI.render()
     ------------------------------
     -- All Bots Search Results Tab
     ------------------------------
-        if ImGui.BeginTabItem("All Bots") then
+        if ImGui.BeginTabItem("All Peers - PC") then
             local filterOptions = { "All", "Equipped", "Inventory", "Bank" }
             inventoryUI.sourceFilter = inventoryUI.sourceFilter or "All"  -- Default filter
 
@@ -3048,8 +3048,8 @@ function inventoryUI.render()
         end
 
         if mq.TLO.MacroQuest.Build() == 4 and bot_inventory then
-            if ImGui.BeginTabItem("Bot Management") then
-                ImGui.Text("Bot Inventory Management")
+            if ImGui.BeginTabItem("^Bot Viewer") then
+                ImGui.Text("Bot Inventory Management - This tab is to help with Emu related ^bot management and viewing")
                 ImGui.Separator()
                 if ImGui.Button("Refresh Bot List") then
                     bot_inventory.refreshBotList()
