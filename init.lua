@@ -594,14 +594,17 @@ local buttonWinFlags = bit32.bor(
     ImGuiWindowFlags.NoResize,
     ImGuiWindowFlags.NoScrollbar,
     ImGuiWindowFlags.NoFocusOnAppearing,
-    ImGuiWindowFlags.AlwaysAutoResize
+    ImGuiWindowFlags.AlwaysAutoResize,
+    ImGuiWindowFlags.NoBackground
 )
 
 local function InventoryToggleButton()
+    ImGui.PushStyleColor(ImGuiCol.WindowBg, ImVec4(0, 0, 0, 0))
     ImGui.Begin("EZInvToggle", nil, buttonWinFlags)
+
     local time = mq.gettime() / 1000
     local pulse = (math.sin(time * 3) + 1) * 0.5
-    local base_color = inventoryUI.visible and { 0.2, 0.8, 0.2, 1.0, } or { 0.7, 0.2, 0.2, 1.0, }
+    local base_color = inventoryUI.visible and { 0.2, 0.8, 0.2, 1.0 } or { 0.7, 0.2, 0.2, 1.0 }
     local hover_color = {
         base_color[1] + 0.2 * pulse,
         base_color[2] + 0.2 * pulse,
@@ -610,12 +613,12 @@ local function InventoryToggleButton()
     }
 
     ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 10)
-    ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(base_color[1], base_color[2], base_color[3], 0.85))
+    ImGui.PushStyleColor(ImGuiCol.Button,        ImVec4(base_color[1], base_color[2], base_color[3], 0.85))
     ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(hover_color[1], hover_color[2], hover_color[3], 1.0))
-    ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(base_color[1] * 0.8, base_color[2] * 0.8, base_color[3] * 0.8, 1.0))
+    ImGui.PushStyleColor(ImGuiCol.ButtonActive,  ImVec4(base_color[1] * 0.8, base_color[2] * 0.8, base_color[3] * 0.8, 1.0))
 
     local icon = icons.FA_ITALIC or "Inv"
-    if ImGui.Button(icon, 34, 34) then
+    if ImGui.Button(icon, 50, 50) then
         inventoryUI.visible = not inventoryUI.visible
     end
 
@@ -626,6 +629,7 @@ local function InventoryToggleButton()
     ImGui.PopStyleColor(3)
     ImGui.PopStyleVar()
     ImGui.End()
+    ImGui.PopStyleColor()
 end
 
 --------------------------------------------------
@@ -1937,7 +1941,7 @@ function inventoryUI.render()
         local cursorPosX = ImGui.GetCursorPosX()
         local iconSpacing = 10
         local iconSize = 24
-        local totalIconWidth = (iconSize + iconSpacing) * 3 + 10
+        local totalIconWidth = (iconSize + iconSpacing) * 4 + 10
 
         local rightAlignX = ImGui.GetWindowWidth() - totalIconWidth - 10
         ImGui.SameLine(rightAlignX)
@@ -1958,6 +1962,11 @@ function inventoryUI.render()
         end
         if ImGui.IsItemHovered() then
             ImGui.SetTooltip(inventoryUI.windowLocked and "Unlock window" or "Lock window")
+        end
+
+        ImGui.SameLine()
+        if ImGui.Button("Close") then
+            inventoryUI.visible = false
         end
 
         ImGui.SameLine()
