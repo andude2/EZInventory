@@ -31,6 +31,10 @@ local inventoryUI              = {
     showAug4 = false,
     showAug5 = false,
     showAug6 = false,
+    showAC   = false,
+    showHP   = false,
+    showMana = false,
+    showClicky = false,
     windowLocked = false,
     equipView = "table",
     selectedSlotID = nil,
@@ -2108,7 +2112,18 @@ function inventoryUI.render()
                             inventoryUI.showAug5 = ImGui.Checkbox("Aug 5", inventoryUI.showAug5)
                             ImGui.SameLine()
                             inventoryUI.showAug6 = ImGui.Checkbox("Aug 6", inventoryUI.showAug6)
-                            local numColumns = 3
+                            ImGui.SameLine()
+                            inventoryUI.showAC = ImGui.Checkbox("AC", inventoryUI.showAC)
+                            ImGui.SameLine()
+                            inventoryUI.showHP = ImGui.Checkbox("HP", inventoryUI.showHP)
+                            ImGui.SameLine()
+                            inventoryUI.showMana = ImGui.Checkbox("Mana", inventoryUI.showMana)
+                            ImGui.SameLine()
+                            inventoryUI.showClicky = ImGui.Checkbox("Clicky", inventoryUI.showClicky)
+                            -- Base visible columns
+                            local numColumns = 3 -- Slot Name, Icon, Item Name
+
+                            -- Count visible augs
                             local visibleAugs = 0
                             local augVisibility = {
                                 inventoryUI.showAug1,
@@ -2121,17 +2136,38 @@ function inventoryUI.render()
                             for _, isVisible in ipairs(augVisibility) do
                                 if isVisible then
                                     visibleAugs = visibleAugs + 1
-                                    numColumns = numColumns + 1
                                 end
                             end
+                            numColumns = numColumns + visibleAugs
+
+                            -- Count extra stat columns
+                            local extraStats = {
+                                inventoryUI.showAC,
+                                inventoryUI.showHP,
+                                inventoryUI.showMana,
+                                inventoryUI.showClicky,
+                            }
+                            local visibleStats = 0
+                            for _, isVisible in ipairs(extraStats) do
+                                if isVisible then
+                                    visibleStats = visibleStats + 1
+                                end
+                            end
+                            numColumns = numColumns + visibleStats
+
+                            -- Width calculation
                             local availableWidth = ImGui.GetWindowContentRegionWidth()
                             local slotNameWidth = 100
                             local iconWidth = 30
                             local itemWidth = 150
+                            local statsWidth = visibleStats * 50 -- 50px per stat column
+                            local remainingForAugs = availableWidth - slotNameWidth - iconWidth - itemWidth - statsWidth
+
                             local augWidth = 0
                             if visibleAugs > 0 then
-                                augWidth = math.max(80, (availableWidth - slotNameWidth - iconWidth - itemWidth) / visibleAugs)
+                                augWidth = math.max(80, remainingForAugs / visibleAugs)
                             end
+
                             if inventoryUI.isLoadingData then
                                 renderLoadingScreen("Loading Inventory Data", "Scanning items", "This may take a moment for large inventories")
                             else
@@ -2143,6 +2179,18 @@ function inventoryUI.render()
                                         if augVisibility[i] then
                                             ImGui.TableSetupColumn("Aug " .. i, ImGuiTableColumnFlags.WidthStretch, 1.0)
                                         end
+                                    end
+                                    if inventoryUI.showAC then
+                                        ImGui.TableSetupColumn("AC", ImGuiTableColumnFlags.WidthFixed, 50)
+                                    end
+                                    if inventoryUI.showHP then
+                                        ImGui.TableSetupColumn("HP", ImGuiTableColumnFlags.WidthFixed, 60)
+                                    end
+                                    if inventoryUI.showMana then
+                                        ImGui.TableSetupColumn("Mana", ImGuiTableColumnFlags.WidthFixed, 60)
+                                    end
+                                    if inventoryUI.showClicky then
+                                        ImGui.TableSetupColumn("Clicky", ImGuiTableColumnFlags.WidthStretch, 1.0)
                                     end
                                     ImGui.TableHeadersRow()
                                     local function renderEquippedTableRow(item, augVisibility)
@@ -2181,6 +2229,30 @@ function inventoryUI.render()
                                                     end
                                                 end
                                             end
+                                        end
+                                        if inventoryUI.showAC then
+                                            ImGui.TableNextColumn()
+                                            ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.85, 0.2, 0.7)
+                                            ImGui.Text(tostring(item.ac or "--"))
+                                            ImGui.PopStyleColor()
+                                        end
+                                        if inventoryUI.showHP then
+                                            ImGui.TableNextColumn()
+                                            ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.2, 0.2, 0.7)
+                                            ImGui.Text(tostring(item.hp or "--"))
+                                            ImGui.PopStyleColor()
+                                        end
+                                        if inventoryUI.showMana then
+                                            ImGui.TableNextColumn()
+                                            ImGui.PushStyleColor(ImGuiCol.Text, 0.4, 0.6, 1.0, 0.7)
+                                            ImGui.Text(tostring(item.mana or "--"))
+                                            ImGui.PopStyleColor()
+                                        end
+                                        if inventoryUI.showClicky then
+                                            ImGui.TableNextColumn()
+                                            ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 0.7)
+                                            ImGui.Text(item.clickySpell or "None")
+                                            ImGui.PopStyleColor()
                                         end
                                     end
                                     local sortedEquippedItems = {}
@@ -2471,6 +2543,11 @@ function inventoryUI.render()
                                                                 mq.ExecuteTextLink(links[1])
                                                             end
                                                         end
+                                                    end
+                                                    if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
+                                                        inventoryUI.itemSuggestionsTarget = result.peerName
+                                                        inventoryUI.itemSuggestionsSlotID = result.item.slotid
+                                                        inventoryUI.showItemSuggestions = true
                                                     end
                                                 end
 

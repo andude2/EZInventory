@@ -109,6 +109,9 @@ local function get_basic_item_info(item)
     basic.itemlink = item.ItemLink("CLICKABLE")() or ""
     basic.nodrop = item.NoDrop() and 1 or 0
     basic.qty = item.Stack() or 1
+    basic.ac = item.AC() or ""
+    basic.hp = item.HP() or ""
+    basic.mana = item.Mana() or ""
     -- Stats for All Character - PC Tab
     basic.itemtype = safe_get(function() return item.Type() end, "")
     basic.itemClass = safe_get(function() return item.ItemClass() end, "")
