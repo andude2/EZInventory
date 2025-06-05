@@ -109,6 +109,16 @@ local function get_basic_item_info(item)
     basic.itemlink = item.ItemLink("CLICKABLE")() or ""
     basic.nodrop = item.NoDrop() and 1 or 0
     basic.qty = item.Stack() or 1
+    -- Stats for All Character - PC Tab
+    basic.itemtype = safe_get(function() return item.Type() end, "")
+    basic.itemClass = safe_get(function() return item.ItemClass() end, "")
+    basic.value = safe_get(function() return item.Value() end, 0)
+    basic.tribute = safe_get(function() return item.Tribute() end, 0)
+    basic.clickySpell = safe_get(function() return item.Clicky.Spell() end, "")
+    basic.clickyType = safe_get(function() return item.Clicky.Type() end, "")
+    basic.clickyCastTime = safe_get(function() return item.Clicky.CastTime() end, 0)
+    basic.clickyRecastTime = safe_get(function() return item.Clicky.RecastTime() end, 0)
+    basic.clickyEffectType = safe_get(function() return item.Clicky.EffectType() end, "")
     
     -- Class and slot info (needed for filtering)
     local classInfo = get_item_class_info(item)

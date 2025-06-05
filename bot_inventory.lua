@@ -178,7 +178,14 @@ function BotInventory.processBotInventoryResponse()
     if BotInventory.bot_request_phase == 1 and BotInventory.current_bot_request and BotInventory.spawn_issued_time then
         if os.clock() - BotInventory.spawn_issued_time >= 2.0 then
             --print(string.format("[BotInventory DEBUG] Issuing target command for %s", BotInventory.current_bot_request))
-            mq.cmdf("/target %s", BotInventory.current_bot_request)
+            local botSpawn = mq.TLO.Spawn(string.format("= %s", BotInventory.current_bot_request))
+            if botSpawn.ID() and botSpawn.ID() > 0 then
+                mq.cmdf("/target id %d", botSpawn.ID())
+                --print(string.format("[BotInventory DEBUG] Targeting %s by ID: %d", BotInventory.current_bot_request, botSpawn.ID()))
+            else
+                mq.cmdf('/target "%s"', BotInventory.current_bot_request)
+                --print(string.format("[BotInventory DEBUG] Fallback to name targeting for %s", BotInventory.current_bot_request))
+            end
             BotInventory.target_issued_time = os.clock()
             BotInventory.bot_request_phase = 2
         end
@@ -197,6 +204,58 @@ function BotInventory.processBotInventoryResponse()
             BotInventory.target_issued_time = nil
         end
     end
+end
+
+local function displayBotUnequipResponse(line, slotNum, itemName)
+    if not BotInventory.current_bot_request then return end
+    
+    local botName = BotInventory.current_bot_request
+    print(string.format("[BotInventory] %s unequipped %s from slot %s", botName, itemName or "item", slotNum or "unknown"))
+    
+    -- Remove the item from our cached inventory if we have it
+    if BotInventory.bot_inventories[botName] and BotInventory.bot_inventories[botName].equipped then
+        for i = #BotInventory.bot_inventories[botName].equipped, 1, -1 do
+            local item = BotInventory.bot_inventories[botName].equipped[i]
+            if tonumber(item.slotid) == tonumber(slotNum) then
+                table.remove(BotInventory.bot_inventories[botName].equipped, i)
+                print(string.format("[BotInventory] Removed %s from cached inventory", item.name or "item"))
+                break
+            end
+        end
+    end
+end
+
+function BotInventory.requestBotUnequip(botName, slotID)
+    if not botName or not slotID then
+        print("[BotInventory] Error: botName and slotID required for unequip")
+        return false
+    end
+
+    local botSpawn = mq.TLO.Spawn(string.format("= %s", botName))
+    if botSpawn() then
+        print(string.format("[BotInventory] Targeting and issuing unequip to %s at ID %d", botName, botSpawn.ID()))
+        mq.cmdf("/target id %d", botSpawn.ID())
+        mq.delay(500)
+        mq.cmdf("/say ^invremove %s", slotID)
+        return true
+    else
+        print(string.format("[BotInventory] Could not find bot spawn for unequip command: %s", botName))
+        return false
+    end
+end
+
+
+function BotInventory.getBotEquippedItem(botName, slotID)
+    if not BotInventory.bot_inventories[botName] or not BotInventory.bot_inventories[botName].equipped then
+        return nil
+    end
+    
+    for _, item in ipairs(BotInventory.bot_inventories[botName].equipped) do
+        if tonumber(item.slotid) == tonumber(slotID) then
+            return item
+        end
+    end
+    return nil
 end
 
 function BotInventory.process()
@@ -248,6 +307,7 @@ function BotInventory.init()
 
     mq.event("GetBotList", "Bot #1# #*# #2# is a Level #3# #4# #5# #6# owned by You.#*", BotInventory.getBotListEvent)
     mq.event("BotInventory", "Slot #1# (#2#) #*#", displayBotInventory, { keepLinks = true })
+    mq.event("BotUnequip", "#1# unequips #2# from slot #3#", displayBotUnequipResponse)
 
     print("[BotInventory] Bot inventory system initialized")
     
