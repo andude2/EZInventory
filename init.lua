@@ -10,7 +10,7 @@ local lastCacheTime = 0
 local json = require("dkjson")
 local Suggestions = require("suggestions")
 local bot_inventory = nil
-local isEMU = mq.TLO.MacroQuest.BuildName() == "EMU"
+local isEMU = mq.TLO.MacroQuest.BuildName() == "Emu"
 
 if isEMU then
     bot_inventory = require("bot_inventory")
