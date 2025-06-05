@@ -152,7 +152,12 @@ function Suggestions.getAvailableItemsForSlot(targetCharacter, slotID)
         for _, item in ipairs(iterable_container or {}) do
             containerItems = containerItems + 1
             debugStats.totalItems = debugStats.totalItems + 1
-            if item.nodrop == 1 then
+            
+            -- NEW LOGIC: Only filter no drop items if they're from OTHER players
+            local isFromOtherPlayer = sourceName ~= mq.TLO.Me.CleanName()
+            local shouldSkipNoDrop = item.nodrop == 1 and isFromOtherPlayer
+            
+            if shouldSkipNoDrop then
                 debugStats.noDropItems = debugStats.noDropItems + 1
             elseif not isItemUsableInSlot(item, slotID, class) then
                 debugStats.slotFilteredItems = debugStats.slotFilteredItems + 1

@@ -1065,12 +1065,17 @@ function renderItemSuggestions()
     local windowHeight = math.max(minWindowHeight, baseHeight + tableHeight + comparisonHeight)
 
     ImGui.SetNextWindowSize(900, windowHeight, ImGuiCond.Once)
-    local isOpen, isShown = ImGui.Begin("Available Items for " .. inventoryUI.itemSuggestionsTarget)
+    
+    -- FIXED: Properly handle the window open/close state
+    local isOpen, shouldShow = ImGui.Begin("Available Items for " .. inventoryUI.itemSuggestionsTarget, true)
+    
+    -- Check if user clicked the X button to close
     if not isOpen then
         inventoryUI.showItemSuggestions = false
-        isShown = false
     end
-    if isShown then
+    
+    -- Only render content if the window should be shown (not minimized)
+    if shouldShow then
         ImGui.Text(string.format("Finding %s items for %s:",
             inventoryUI.itemSuggestionsSlotName,
             inventoryUI.itemSuggestionsTarget))
@@ -1156,6 +1161,7 @@ function renderItemSuggestions()
                 end
                 ImGui.EndCombo()
             end
+            
             local filteredItems = {}
             for _, availableItem in ipairs(inventoryUI.availableItems) do
                 local includeItem = true
@@ -1180,7 +1186,10 @@ function renderItemSuggestions()
                 ImGui.Text(string.format("Showing %d of %d items (filtered)", #filteredItems, #inventoryUI.availableItems))
             end
 
-            if ImGui.BeginTable("AvailableItemsTable", 6, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.ScrollY + ImGuiTableFlags.Sortable, 0, tableHeight) then
+            -- FIXED: Better table height calculation and error handling
+            local calculatedTableHeight = math.min(maxTableHeight, math.max(100, (#filteredItems + 1) * rowHeight + 30))
+            
+            if ImGui.BeginTable("AvailableItemsTable", 6, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.ScrollY + ImGuiTableFlags.Sortable, 0, calculatedTableHeight) then
                 ImGui.TableSetupColumn("Select", ImGuiTableColumnFlags.WidthFixed, 50)
                 ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
                 ImGui.TableSetupColumn("Item Name", ImGuiTableColumnFlags.WidthStretch)
@@ -1214,7 +1223,7 @@ function renderItemSuggestions()
                         inventoryUI.selectedComparisonItemId = itemId
                         inventoryUI.selectedComparisonItem = availableItem
 
-                        -- NEW: Clear previous detailed stats and trigger loading
+                        -- Clear previous detailed stats and trigger loading
                         inventoryUI.detailedAvailableStats = nil
                         inventoryUI.detailedEquippedStats = nil
 
@@ -1287,9 +1296,13 @@ function renderItemSuggestions()
                 end
 
                 ImGui.EndTable()
+            else
+                -- Table failed to begin - show fallback
+                ImGui.Text("Table display error. Available items: " .. tostring(#filteredItems))
             end
         end
 
+        -- Rest of the comparison code would go here...
         if inventoryUI.selectedComparisonItem and inventoryUI.selectedComparisonItemId ~= "" then
             ImGui.Separator()
             ImGui.Text("Stat Comparison:")
@@ -1431,6 +1444,7 @@ function renderItemSuggestions()
         end
     end
 
+    -- CRITICAL: Always call ImGui.End() if ImGui.Begin() was called, regardless of return values
     ImGui.End()
 end
 
