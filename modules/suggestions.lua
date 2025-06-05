@@ -1,6 +1,6 @@
 -- suggestions.lua
 local mq = require("mq")
-local inventory_actor = require("inventory_actor")
+local inventory_actor = require("EZInventory.modules.inventory_actor")
 
 local Suggestions = {}
 Suggestions.detailed_stats_cache = {}

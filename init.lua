@@ -1,20 +1,59 @@
 -- ezinventory.lua
 -- developed by psatty82
--- updated 06/04/2025
+-- updated 06/05/2025
 local mq = require("mq")
 local ImGui = require("ImGui")
 local icons = require("mq.icons")
-local inventory_actor = require("inventory_actor")
+local Files = require("mq.Utils")
+local inventory_actor = require("EZInventory.modules.inventory_actor")
 local peerCache = {}
 local lastCacheTime = 0
 local json = require("dkjson")
-local Suggestions = require("suggestions")
+local Suggestions = require("EZInventory.modules.suggestions")
 local bot_inventory = nil
 local isEMU = mq.TLO.MacroQuest.BuildName() == "Emu"
 
 if isEMU then
-    bot_inventory = require("bot_inventory")
+    bot_inventory = require("EZInventory.modules.bot_inventory")
 end
+
+local server = string.gsub(mq.TLO.MacroQuest.Server(), ' ', '_')
+local SettingsFile = string.format('%s/EZInventory/%s/%s.lua', mq.configDir, server, mq.TLO.Me.CleanName())
+local Settings = {}
+
+local Defaults = {
+    showAug1 = true,
+    showAug2 = true,
+    showAug3 = true,
+    showAug4 = false,
+    showAug5 = false,
+    showAug6 = false,
+    showAC = false,
+    showHP = false,
+    showMana = false,
+    showClicky = false,
+}
+
+local function LoadSettings()
+    local needSave = false
+    if not Files.File.Exists(SettingsFile) then
+        mq.pickle(SettingsFile, Defaults)
+        Settings = Defaults
+    else
+        Settings = dofile(SettingsFile)
+    end
+    for setting, value in pairs(Defaults) do
+        if Settings[setting] == nil then
+            Settings[setting] = value
+            needSave = true
+        end
+    end
+    if needSave then
+        mq.pickle(SettingsFile, Settings)
+    end
+end
+
+LoadSettings()
 
 ---@tag InventoryUI
 local inventoryUI              = {
@@ -67,6 +106,10 @@ local inventoryUI              = {
     showBotInventory = false,
     selectedBotInventory = nil,
 }
+
+for k, v in pairs(Settings) do
+    inventoryUI[k] = v
+end
 
 local EQ_ICON_OFFSET           = 500
 local ICON_WIDTH               = 20
@@ -2015,7 +2058,7 @@ function inventoryUI.render()
         local cursorPosX = ImGui.GetCursorPosX()
         local iconSpacing = 10
         local iconSize = 24
-        local totalIconWidth = (iconSize + iconSpacing) * 4 + 10
+        local totalIconWidth = (iconSize + iconSpacing) * 5 + 65
 
         local rightAlignX = ImGui.GetWindowWidth() - totalIconWidth - 10
         ImGui.SameLine(rightAlignX)
@@ -2029,7 +2072,21 @@ function inventoryUI.render()
         end
 
         ImGui.SameLine()
-
+        if ImGui.Button("Save Config") then
+            for key, value in pairs(inventoryUI) do
+                if Defaults[key] ~= nil then
+                    Settings[key] = value
+                end
+            end
+            mq.pickle(SettingsFile, Settings)
+            printf("\ag[EZInventory]\ax Config saved to \ay%s", SettingsFile)
+        end
+        if ImGui.IsItemHovered() then
+            ImGui.BeginTooltip()
+            ImGui.Text("Save visible column settings for this character.")
+            ImGui.EndTooltip()
+        end
+        ImGui.SameLine()
         local lockIcon = inventoryUI.windowLocked and icons.FA_LOCK or icons.FA_UNLOCK
         if ImGui.Button(lockIcon, iconSize, iconSize) then
             inventoryUI.windowLocked = not inventoryUI.windowLocked
