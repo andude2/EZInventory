@@ -1,15 +1,15 @@
 -- ezinventory.lua
 -- developed by psatty82
 -- updated 06/05/2025
-local mq = require("mq")
+local mq    = require("mq")
 local ImGui = require("ImGui")
 local icons = require("mq.icons")
 local Files = require("mq.Utils")
 local inventory_actor = require("EZInventory.modules.inventory_actor")
-local peerCache = {}
+local peerCache     = {}
 local lastCacheTime = 0
-local json = require("dkjson")
-local Suggestions = require("EZInventory.modules.suggestions")
+local json          = require("dkjson")
+local Suggestions   = require("EZInventory.modules.suggestions")
 local bot_inventory = nil
 local isEMU = mq.TLO.MacroQuest.BuildName() == "Emu"
 
@@ -22,16 +22,16 @@ local SettingsFile = string.format('%s/EZInventory/%s/%s.lua', mq.configDir, ser
 local Settings = {}
 
 local Defaults = {
-    showAug1 = true,
-    showAug2 = true,
-    showAug3 = true,
-    showAug4 = false,
-    showAug5 = false,
-    showAug6 = false,
-    showAC = false,
-    showHP = false,
-    showMana = false,
-    showClicky = false,
+    showAug1    = true,
+    showAug2    = true,
+    showAug3    = true,
+    showAug4    = false,
+    showAug5    = false,
+    showAug6    = false,
+    showAC      = false,
+    showHP      = false,
+    showMana    = false,
+    showClicky  = false,
 }
 
 local function LoadSettings()
@@ -829,6 +829,24 @@ local function getArmorTypeByClass(class)
     else
         return "Unknown"
     end
+end
+
+local itemGroups = {
+    Weapon = { "1H Blunt", "1H Slashing", "2H Blunt", "2H Slashing", "Bow", "Throwing", "Wind Instrument" },
+    Armor = { "Armor", "Shield" },
+    Jewelry = { "Jewelry" },
+    Consumable = { "Drink", "Food", "Potion" },
+    Scrolls = { "Scroll", "Spell" }
+}
+
+local function itemMatchesGroup(itemType, selectedGroup)
+    if selectedGroup == "All" then return true end
+    local groupList = itemGroups[selectedGroup]
+    if not groupList then return false end
+    for _, groupType in ipairs(groupList) do
+        if itemType == groupType then return true end
+    end
+    return false
 end
 
 --------------------------------------------------
@@ -2057,8 +2075,8 @@ function inventoryUI.render()
 
         local cursorPosX = ImGui.GetCursorPosX()
         local iconSpacing = 10
-        local iconSize = 24
-        local totalIconWidth = (iconSize + iconSpacing) * 5 + 65
+        local iconSize = 22
+        local totalIconWidth = (iconSize + iconSpacing) * 5 + 75
 
         local rightAlignX = ImGui.GetWindowWidth() - totalIconWidth - 10
         ImGui.SameLine(rightAlignX)
@@ -2096,14 +2114,38 @@ function inventoryUI.render()
         end
 
         ImGui.SameLine()
+        ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.2, 0.8, 0.2, 1.0))        -- Green
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.4, 1.0, 0.4, 1.0)) -- Lighter green on hover
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.1, 0.6, 0.1, 1.0))  -- Darker green when pressed
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
+
         if ImGui.Button("Close") then
             inventoryUI.visible = false
         end
 
+        if ImGui.IsItemHovered() then
+            ImGui.SetTooltip("Minimizes the UI")
+        end
+
+        ImGui.PopStyleVar()
+        ImGui.PopStyleColor(3)
+
         ImGui.SameLine()
+        ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.8, 0.2, 0.2, 1.0))        -- Red background
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(1.0, 0.4, 0.4, 1.0)) -- Lighter red on hover
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.6, 0.1, 0.1, 1.0))  -- Darker red when pressed
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)                     -- Rounded corners
+
         if ImGui.Button("Exit") then
             mq.exit()
         end
+
+        if ImGui.IsItemHovered() then
+            ImGui.SetTooltip("Exits the Script On This Screen")
+        end
+
+        ImGui.PopStyleVar()
+        ImGui.PopStyleColor(3)
 
 
         ImGui.Separator()
@@ -3073,169 +3115,6 @@ function inventoryUI.render()
             inventoryUI.sortColumn = inventoryUI.sortColumn or "none"
             inventoryUI.sortDirection = inventoryUI.sortDirection or "asc"
 
-            -- Filter Panel
-            if ImGui.BeginChild("FilterPanel", 0, 120, true, ImGuiChildFlags.Border) then
-                ImGui.Text("FILTERS")
-                
-                -- Align "Hide No Drop" to the right
-                local windowWidth = ImGui.GetWindowContentRegionWidth()
-                local checkboxWidth = ImGui.CalcTextSize("Hide No Drop") + 20 -- Text width + checkbox size
-                ImGui.SameLine(windowWidth - checkboxWidth)
-                inventoryUI.filterNoDrop = ImGui.Checkbox("Hide No Drop", inventoryUI.filterNoDrop)
-                
-                ImGui.Separator()
-                
-                -- Row 1: Source, Item Type
-                ImGui.Text("Source:")
-                ImGui.SameLine()
-                ImGui.SetNextItemWidth(120)
-                if ImGui.BeginCombo("##SourceFilter", inventoryUI.sourceFilter) then
-                    for _, option in ipairs(filterOptions) do
-                        local selected = (inventoryUI.sourceFilter == option)
-                        if ImGui.Selectable(option, selected) then
-                            inventoryUI.sourceFilter = option
-                        end
-                    end
-                    ImGui.EndCombo()
-                end
-                
-                ImGui.SameLine()
-                ImGui.Dummy(20, 0) -- Spacer
-                ImGui.SameLine()
-                ImGui.Text("Item Type:")
-                ImGui.SameLine()
-                ImGui.SetNextItemWidth(140)
-                if ImGui.BeginCombo("##ItemTypeFilter", inventoryUI.itemTypeFilter) then
-                    local itemTypes = {
-                        "All", "1H Blunt", "1H Slashing", "2H Blunt", "2H Slashing", "Armor", 
-                        "Arrow", "Book", "Bow", "Container", "Drink", "Food", "Jewelry", 
-                        "Key", "Light", "Misc", "Note", "Potion", "Scroll", "Shield", 
-                        "Spell", "Throwing", "Wind Instrument"
-                    }
-                    for _, itemType in ipairs(itemTypes) do
-                        local selected = (inventoryUI.itemTypeFilter == itemType)
-                        if ImGui.Selectable(itemType, selected) then
-                            inventoryUI.itemTypeFilter = itemType
-                        end
-                    end
-                    ImGui.EndCombo()
-                end
-
-                -- Row 2: Class, Race, Sort
-                ImGui.Text("Class:")
-                ImGui.SameLine()
-                ImGui.SetNextItemWidth(120)
-                if ImGui.BeginCombo("##ClassFilter", inventoryUI.classFilter) then
-                    local classes = {
-                        "All", "WAR", "CLR", "PAL", "RNG", "SHD", "DRU", "MNK", "BRD", 
-                        "ROG", "SHM", "NEC", "WIZ", "MAG", "ENC", "BST", "BER"
-                    }
-                    for _, class in ipairs(classes) do
-                        local selected = (inventoryUI.classFilter == class)
-                        if ImGui.Selectable(class, selected) then
-                            inventoryUI.classFilter = class
-                        end
-                    end
-                    ImGui.EndCombo()
-                end
-
-                ImGui.SameLine()
-                ImGui.Dummy(20, 0) -- Spacer
-                ImGui.SameLine()
-                ImGui.Text("Race:")
-                ImGui.SameLine()
-                ImGui.SetNextItemWidth(120)
-                if ImGui.BeginCombo("##RaceFilter", inventoryUI.raceFilter) then
-                    local races = {
-                        "All", "HUM", "BAR", "ERU", "ELF", "HIE", "DEF", "HEL", "DWF", 
-                        "TRL", "OGR", "HFL", "GNM", "IKS", "VAH", "FRG", "DRK"
-                    }
-                    for _, race in ipairs(races) do
-                        local selected = (inventoryUI.raceFilter == race)
-                        if ImGui.Selectable(race, selected) then
-                            inventoryUI.raceFilter = race
-                        end
-                    end
-                    ImGui.EndCombo()
-                end
-
-                ImGui.SameLine()
-                ImGui.Dummy(20, 0) -- Spacer
-                ImGui.SameLine()
-                ImGui.Text("Sort by:")
-                ImGui.SameLine()
-                ImGui.SetNextItemWidth(120)
-                if ImGui.BeginCombo("##SortColumn", inventoryUI.sortColumn) then
-                    local sortOptions = {
-                        { "none", "None" },
-                        { "name", "Item Name" },
-                        { "value", "Value" },
-                        { "tribute", "Tribute" },
-                        { "peer", "Character" },
-                        { "type", "Item Type" },
-                        { "qty", "Quantity" }
-                    }
-                    for _, option in ipairs(sortOptions) do
-                        local selected = (inventoryUI.sortColumn == option[1])
-                        if ImGui.Selectable(option[2], selected) then
-                            inventoryUI.sortColumn = option[1]
-                        end
-                    end
-                    ImGui.EndCombo()
-                end
-                
-                if inventoryUI.sortColumn ~= "none" then
-                    ImGui.SameLine()
-                    if ImGui.Button(inventoryUI.sortDirection == "asc" and "Asc" or "Desc") then
-                        inventoryUI.sortDirection = inventoryUI.sortDirection == "asc" and "desc" or "asc"
-                    end
-                end
-
-                -- Row 3: Value Filters and Clear Button
-                inventoryUI.showValueFilters = ImGui.Checkbox("Value Filters", inventoryUI.showValueFilters)
-                
-                if inventoryUI.showValueFilters then
-                    ImGui.SameLine()
-                    ImGui.Dummy(10, 0)
-                    ImGui.SameLine()
-                    ImGui.Text("Min Value:")
-                    ImGui.SameLine()
-                    ImGui.SetNextItemWidth(100)
-                    inventoryUI.minValueFilter = ImGui.InputInt("##MinValue", inventoryUI.minValueFilter)
-
-                    ImGui.SameLine()
-                    ImGui.Text("Max Value:")
-                    ImGui.SameLine()
-                    ImGui.SetNextItemWidth(100)
-                    inventoryUI.maxValueFilter = ImGui.InputInt("##MaxValue", inventoryUI.maxValueFilter)
-
-                    ImGui.SameLine()
-                    ImGui.Text("Min Tribute:")
-                    ImGui.SameLine()
-                    ImGui.SetNextItemWidth(100)
-                    inventoryUI.minTributeFilter = ImGui.InputInt("##MinTribute", inventoryUI.minTributeFilter)
-                end
-
-                
-                ImGui.SameLine()
-                local windowWidth = ImGui.GetWindowContentRegionWidth()
-                local buttonWidth = 100
-                ImGui.SetCursorPosX(windowWidth - buttonWidth)
-                if ImGui.Button("Clear All Filters", buttonWidth, 0) then
-                    inventoryUI.sourceFilter = "All"
-                    inventoryUI.filterNoDrop = false
-                    inventoryUI.itemTypeFilter = "All"
-                    inventoryUI.classFilter = "All"
-                    inventoryUI.raceFilter = "All"
-                    inventoryUI.minValueFilter = 0
-                    inventoryUI.maxValueFilter = 999999999
-                    inventoryUI.minTributeFilter = 0
-                    inventoryUI.sortColumn = "none"
-                    inventoryUI.showValueFilters = false
-                end
-            end
-            ImGui.EndChild()
-
             -- Enhanced search function with new filters
             local function enhancedSearchAcrossPeers()
                 local results = {}
@@ -3289,11 +3168,9 @@ function inventoryUI.render()
                     end
 
                     -- Item Type filter
-                    if inventoryUI.itemTypeFilter ~= "All" then
-                        local itemType = item.itemtype or item.type or ""
-                        if itemType ~= inventoryUI.itemTypeFilter then
-                            return false
-                        end
+                    local itemType = item.itemtype or item.type or ""
+                    if not itemMatchesGroup(itemType, inventoryUI.itemTypeFilter) then
+                        return false
                     end
 
                     -- Class filter
@@ -3412,11 +3289,189 @@ function inventoryUI.render()
             end
 
             local results = enhancedSearchAcrossPeers()
+            local resultCount = #results
+
+            -- Filter Panel
+            if ImGui.BeginChild("FilterPanel", 0, 120, true, ImGuiChildFlags.Border) then
+                ImGui.Text("Filters")
+                ImGui.SameLine()
+                ImGui.Text(string.format("Found %d items matching filters:", resultCount))
+                
+                -- Align "Hide No Drop" to the right
+                local windowWidth = ImGui.GetWindowContentRegionWidth()
+                local checkboxWidth = ImGui.CalcTextSize("Hide No Drop") + 20 -- Text width + checkbox size
+                ImGui.SameLine(windowWidth - checkboxWidth)
+                inventoryUI.filterNoDrop = ImGui.Checkbox("Hide No Drop", inventoryUI.filterNoDrop)
+                
+                ImGui.Separator()
+                
+                -- Row 1: Source, Item Type
+                ImGui.PushItemWidth(120)
+                ImGui.Text("Source:")
+                ImGui.SameLine(100)
+                ImGui.SetNextItemWidth(120)
+                if ImGui.BeginCombo("##SourceFilter", inventoryUI.sourceFilter) then
+                    for _, option in ipairs(filterOptions) do
+                        local selected = (inventoryUI.sourceFilter == option)
+                        if ImGui.Selectable(option, selected) then
+                            inventoryUI.sourceFilter = option
+                        end
+                    end
+                    ImGui.EndCombo()
+                end
+                
+                ImGui.SameLine(250)
+                ImGui.Text("Item Type:")
+                ImGui.SameLine(340)
+                ImGui.SetNextItemWidth(120)
+                if ImGui.BeginCombo("##ItemTypeFilter", inventoryUI.itemTypeFilter) then
+                    local itemGroupOptions = { "All", "Weapon", "Armor", "Jewelry", "Consumable", "Scrolls" }
+                    for _, group in ipairs(itemGroupOptions) do
+                        local selected = (inventoryUI.itemTypeFilter == group)
+                        if ImGui.Selectable(group, selected) then
+                            inventoryUI.itemTypeFilter = group
+                        end
+                    end
+                    ImGui.EndCombo()
+                end
+                if inventoryUI.itemTypeFilter and inventoryUI.itemTypeFilter ~= "All" then
+                    local groupList = itemGroups[inventoryUI.itemTypeFilter]
+                    if groupList then
+                        ImGui.SameLine()
+                        ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.84, 0.0, 1.0) -- Gold RGBA
+                        ImGui.Text("Item Types: " .. table.concat(groupList, ", "))
+                        ImGui.PopStyleColor()
+                    end
+                end
+
+                -- Row 2: Class, Race, Sort
+                ImGui.Text("Class:")
+                ImGui.SameLine(100)
+                ImGui.SetNextItemWidth(120)
+                if ImGui.BeginCombo("##ClassFilter", inventoryUI.classFilter) then
+                    local classes = {
+                        "All", "WAR", "CLR", "PAL", "RNG", "SHD", "DRU", "MNK", "BRD", 
+                        "ROG", "SHM", "NEC", "WIZ", "MAG", "ENC", "BST", "BER"
+                    }
+                    for _, class in ipairs(classes) do
+                        local selected = (inventoryUI.classFilter == class)
+                        if ImGui.Selectable(class, selected) then
+                            inventoryUI.classFilter = class
+                        end
+                    end
+                    ImGui.EndCombo()
+                end
+
+                ImGui.SameLine(250)
+                ImGui.Text("Race:")
+                ImGui.SameLine(340)
+                ImGui.SetNextItemWidth(120)
+                if ImGui.BeginCombo("##RaceFilter", inventoryUI.raceFilter) then
+                    local races = {
+                        "All", "HUM", "BAR", "ERU", "ELF", "HIE", "DEF", "HEL", "DWF", 
+                        "TRL", "OGR", "HFL", "GNM", "IKS", "VAH", "FRG", "DRK"
+                    }
+                    for _, race in ipairs(races) do
+                        local selected = (inventoryUI.raceFilter == race)
+                        if ImGui.Selectable(race, selected) then
+                            inventoryUI.raceFilter = race
+                        end
+                    end
+                    ImGui.EndCombo()
+                end
+
+                ImGui.SameLine(500)
+                ImGui.Text("Sort by:")
+                ImGui.SameLine(575)
+                ImGui.SetNextItemWidth(120)
+                if ImGui.BeginCombo("##SortColumn", inventoryUI.sortColumn) then
+                    local sortOptions = {
+                        { "none", "None" },
+                        { "name", "Item Name" },
+                        { "value", "Value" },
+                        { "tribute", "Tribute" },
+                        { "peer", "Character" },
+                        { "type", "Item Type" },
+                        { "qty", "Quantity" }
+                    }
+                    for _, option in ipairs(sortOptions) do
+                        local selected = (inventoryUI.sortColumn == option[1])
+                        if ImGui.Selectable(option[2], selected) then
+                            inventoryUI.sortColumn = option[1]
+                        end
+                    end
+                    ImGui.EndCombo()
+                end
+                
+                if inventoryUI.sortColumn ~= "none" then
+                    ImGui.SameLine()
+                    if ImGui.Button(inventoryUI.sortDirection == "asc" and "Asc" or "Desc") then
+                        inventoryUI.sortDirection = inventoryUI.sortDirection == "asc" and "desc" or "asc"
+                    end
+                end
+
+                -- Row 3: Value Filters and Clear Button
+                inventoryUI.showValueFilters = ImGui.Checkbox("Value Filters", inventoryUI.showValueFilters)
+                
+                if inventoryUI.showValueFilters then
+                    ImGui.SameLine()
+                    ImGui.Dummy(10, 0)
+                    ImGui.SameLine()
+                    ImGui.Text("Min Value:")
+                    ImGui.SameLine()
+                    ImGui.SetNextItemWidth(100)
+                    inventoryUI.minValueFilter = ImGui.InputInt("##MinValue", inventoryUI.minValueFilter)
+
+                    ImGui.SameLine()
+                    ImGui.Text("Max Value:")
+                    ImGui.SameLine()
+                    ImGui.SetNextItemWidth(100)
+                    inventoryUI.maxValueFilter = ImGui.InputInt("##MaxValue", inventoryUI.maxValueFilter)
+
+                    ImGui.SameLine()
+                    ImGui.Text("Min Tribute:")
+                    ImGui.SameLine()
+                    ImGui.SetNextItemWidth(100)
+                    inventoryUI.minTributeFilter = ImGui.InputInt("##MinTribute", inventoryUI.minTributeFilter)
+                end
+                
+                ImGui.SameLine()
+                local windowWidth = ImGui.GetWindowContentRegionWidth()
+                local buttonWidth = 100
+                ImGui.SetCursorPosX(windowWidth - buttonWidth)
+                if ImGui.Button("Clear All Filters", buttonWidth, 0) then
+                    inventoryUI.sourceFilter = "All"
+                    inventoryUI.filterNoDrop = false
+                    inventoryUI.itemTypeFilter = "All"
+                    inventoryUI.classFilter = "All"
+                    inventoryUI.raceFilter = "All"
+                    inventoryUI.minValueFilter = 0
+                    inventoryUI.maxValueFilter = 999999999
+                    inventoryUI.minTributeFilter = 0
+                    inventoryUI.sortColumn = "none"
+                    inventoryUI.showValueFilters = false
+                end
+            end
+            ImGui.EndChild()
             
             if #results == 0 then
                 ImGui.Text("No matching items found with current filters.")
             else
-                ImGui.Text(string.format("Found %d items matching filters:", #results))
+                ImGui.Text("Names Are Colored Based on Item Source -")
+                ImGui.SameLine()
+                ImGui.PushStyleColor(ImGuiCol.Text, 0.75, 0.0, 0.0, 1.0)
+                ImGui.Text("Red = Equipped")
+                ImGui.SameLine()
+                ImGui.PopStyleColor()
+
+                ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.8, 0.3, 1.0)
+                ImGui.Text("Green = Inventory")
+                ImGui.SameLine()
+                ImGui.PopStyleColor()
+
+                ImGui.PushStyleColor(ImGuiCol.Text, 0.6, 0.6, 1.0, 1.0)
+                ImGui.Text("Purple = Bank")
+                ImGui.PopStyleColor()
 
                 local colors = {
                     -- Item type colors
@@ -3432,8 +3487,8 @@ function inventoryUI.render()
                     
                     -- Source colors
                     sources = {
-                        ["Equipped"] = {0.3, 0.8, 0.3, 1.0},  -- Green
-                        ["Inventory"] = {0.7, 0.7, 0.7, 1.0}, -- Gray
+                        ["Equipped"] = {0.75, 0.0, 0.0, 1.0},  -- Red
+                        ["Inventory"] = {0.3, 0.8, 0.3, 1.0}, -- Green
                         ["Bank"] = {0.4, 0.4, 0.8, 1.0},      -- Blue
                     },
                     
@@ -3463,41 +3518,52 @@ function inventoryUI.render()
                         return colors.valueTiers.low
                     end
                 end
-
-                -- Function to alternate row background colors
-                local function setRowBackgroundColor(idx)
-                    if idx % 2 == 0 then
-                        ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, 
-                            ImGui.GetColorU32(0.1, 0.1, 0.1, 0.3))
-                    else
-                        ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, 
-                            ImGui.GetColorU32(0.15, 0.15, 0.15, 0.3))
-                    end
-                end
                 
                 -- Enhanced table with new columns
                 if ImGui.BeginTable("AllPeersEnhancedTable", 8, bit32.bor(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.ScrollX, ImGuiTableFlags.ScrollY), 0, 500) then
                     ImGui.TableSetupColumn("Peer", ImGuiTableColumnFlags.WidthFixed, 80)
-                    --ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 70)
-                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 30)
+                    ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ImGuiTableColumnFlags.NoSort, 30) -- not sortable
                     ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
                     ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 30)
                     ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthFixed, 70)
                     ImGui.TableSetupColumn("Tribute", ImGuiTableColumnFlags.WidthFixed, 70)
                     ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 40)
-                    ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthStretch)
+                    ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthStretch, ImGuiTableColumnFlags.NoSort) -- not sortable
+
                     
                     -- Colored headers
                     ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 1.0, 0.8, 1.0) -- Light yellow headers
                     ImGui.TableHeadersRow()
+                    local sortSpecs = ImGui.TableGetSortSpecs()
+                    if sortSpecs and sortSpecs.SpecsDirty and sortSpecs.Specs and sortSpecs.SpecsCount > 0 then
+                        local sortSpec = sortSpecs.Specs[1]
+                        if sortSpec and sortSpec.ColumnIndex ~= nil and sortSpec.SortDirection ~= nil then
+                            local columnIndex = sortSpec.ColumnIndex
+                            local sortDirection = sortSpec.SortDirection == ImGuiSortDirection.Ascending and "asc" or "desc"
+
+                            local columnMap = {
+                                [0] = "peer",
+                                [2] = "name",
+                                [3] = "type",
+                                [4] = "value",
+                                [5] = "tribute",
+                                [6] = "qty"
+                            }
+
+                            local selectedSortColumn = columnMap[columnIndex]
+                            if selectedSortColumn then
+                                inventoryUI.sortColumn = selectedSortColumn
+                                inventoryUI.sortDirection = sortDirection
+                            end
+                        end
+                        sortSpecs.SpecsDirty = false
+                    end
+
                     ImGui.PopStyleColor()
 
                     for idx, item in ipairs(results) do
                         if item then -- Additional safety check
                             ImGui.TableNextRow()
-                            
-                            -- Set alternating row background
-                            setRowBackgroundColor(idx)
                             
                             local uniqueID = string.format("%s_%s_%d",
                                 item.peerName or "unknown",
@@ -3583,6 +3649,10 @@ function inventoryUI.render()
                             if ImGui.IsItemClicked(ImGuiMouseButton.Right) and showContextMenu then
                                 local mouseX, mouseY = ImGui.GetMousePos()
                                 showContextMenu(item, item.peerName, mouseX, mouseY)
+                            end
+                            if ImGui.IsItemHovered() then
+                                local src = item.source or "Unknown"
+                                ImGui.SetTooltip(string.format("Source: %s", src))
                             end
 
                             -- Item Type column - colored by item type

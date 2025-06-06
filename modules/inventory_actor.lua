@@ -1,25 +1,24 @@
 -- inventory_actor.lua
-local mq = require 'mq'
-local actors = require('actors')
-local json = require('dkjson')
-
-local M = {}
+local mq        = require 'mq'
+local actors    = require('actors')
+local json      = require('dkjson')
+local M         = {}
 
 M.pending_requests = {}
 M.deferred_tasks = {}
 
 M.MSG_TYPE = {
-    UPDATE = "inventory_update",
-    REQUEST = "inventory_request",
-    RESPONSE = "inventory_response",
-    STATS_REQUEST = "stats_request",
-    STATS_RESPONSE = "stats_response"
+    UPDATE          = "inventory_update",
+    REQUEST         = "inventory_request",
+    RESPONSE        = "inventory_response",
+    STATS_REQUEST   = "stats_request",
+    STATS_RESPONSE  = "stats_response"
 }
 
 M.peer_inventories = {}
 
-local actor_mailbox = nil
-local command_mailbox = nil
+local actor_mailbox     = nil
+local command_mailbox   = nil
 
 -- Add a function to check if the actor system is initialized
 function M.is_initialized()
