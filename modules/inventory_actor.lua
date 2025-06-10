@@ -1,4 +1,3 @@
--- inventory_actor.lua
 local mq        = require 'mq'
 local actors    = require('actors')
 local json      = require('dkjson')
@@ -7,18 +6,36 @@ local M         = {}
 M.pending_requests = {}
 M.deferred_tasks = {}
 
+-- Add configuration for stats loading
+M.config = {
+    loadBasicStats = true,
+    loadDetailedStats = false,
+    enableStatsFiltering = true,
+}
+
 M.MSG_TYPE = {
     UPDATE          = "inventory_update",
     REQUEST         = "inventory_request",
     RESPONSE        = "inventory_response",
     STATS_REQUEST   = "stats_request",
-    STATS_RESPONSE  = "stats_response"
+    STATS_RESPONSE  = "stats_response",
+    CONFIG_UPDATE   = "config_update", -- New message type for config updates
 }
 
 M.peer_inventories = {}
 
 local actor_mailbox     = nil
 local command_mailbox   = nil
+
+-- Add function to update configuration
+function M.update_config(new_config)
+    for key, value in pairs(new_config) do
+        if M.config[key] ~= nil then
+            M.config[key] = value
+        end
+    end
+    --print(string.format("[Inventory Actor] Config updated - Basic: %s, Detailed: %s", tostring(M.config.loadBasicStats), tostring(M.config.loadDetailedStats)))
+end
 
 -- Add a function to check if the actor system is initialized
 function M.is_initialized()
@@ -85,7 +102,7 @@ local function scan_augment_links(item)
     return data
 end
 
-local function get_basic_item_info(item)
+local function get_basic_item_info(item, include_extended_stats)
     local basic = {}
     
     if not item or not item() then
@@ -101,39 +118,42 @@ local function get_basic_item_info(item)
         return default
     end
 
-    -- Only gather essential data for initial scan
     basic.name = item.Name() or ""
     basic.id = item.ID() or 0
     basic.icon = item.Icon() or 0
     basic.itemlink = item.ItemLink("CLICKABLE")() or ""
     basic.nodrop = item.NoDrop() and 1 or 0
     basic.qty = item.Stack() or 1
-    basic.ac = item.AC() or ""
-    basic.hp = item.HP() or ""
-    basic.mana = item.Mana() or ""
-    -- Stats for All Character - PC Tab
-    basic.itemtype = safe_get(function() return item.Type() end, "")
-    basic.itemClass = safe_get(function() return item.ItemClass() end, "")
-    basic.value = safe_get(function() return item.Value() end, 0)
-    basic.tribute = safe_get(function() return item.Tribute() end, 0)
-    basic.clickySpell = safe_get(function() return item.Clicky.Spell() end, "")
-    basic.clickyType = safe_get(function() return item.Clicky.Type() end, "")
-    basic.clickyCastTime = safe_get(function() return item.Clicky.CastTime() end, 0)
-    basic.clickyRecastTime = safe_get(function() return item.Clicky.RecastTime() end, 0)
-    basic.clickyEffectType = safe_get(function() return item.Clicky.EffectType() end, "")
     
-    -- Class and slot info (needed for filtering)
+    local augments = scan_augment_links(item)
+    for k, v in pairs(augments) do 
+        basic[k] = v 
+    end
+
+    if include_extended_stats == nil then
+        include_extended_stats = M.config.loadBasicStats
+    end
+    
+    if include_extended_stats then
+        basic.ac = item.AC() or ""
+        basic.hp = item.HP() or ""
+        basic.mana = item.Mana() or ""
+        basic.itemtype = safe_get(function() return item.Type() end, "")
+        basic.itemClass = safe_get(function() return item.ItemClass() end, "")
+        basic.value = safe_get(function() return item.Value() end, 0)
+        basic.tribute = safe_get(function() return item.Tribute() end, 0)
+        basic.clickySpell = safe_get(function() return item.Clicky.Spell() end, "")
+        basic.clickyType = safe_get(function() return item.Clicky.Type() end, "")
+        basic.clickyCastTime = safe_get(function() return item.Clicky.CastTime() end, 0)
+        basic.clickyRecastTime = safe_get(function() return item.Clicky.RecastTime() end, 0)
+        basic.clickyEffectType = safe_get(function() return item.Clicky.EffectType() end, "")
+    end
+
     local classInfo = get_item_class_info(item)
     basic.classCount = classInfo.classCount
     basic.allClasses = classInfo.allClasses
     basic.classes = classInfo.classes
     basic.slots = get_valid_slots(item)
-    
-    -- Basic aug names for search functionality
-    local augments = scan_augment_links(item)
-    for k, v in pairs(augments) do 
-        basic[k] = v 
-    end
     
     return basic
 end
@@ -142,6 +162,10 @@ local function get_detailed_item_stats(item)
     local stats = {}
     
     if not item or not item() then
+        return stats
+    end
+
+    if not M.config.loadDetailedStats then
         return stats
     end
 
@@ -154,13 +178,10 @@ local function get_detailed_item_stats(item)
         return default
     end
 
-    -- All the detailed stats from the original get_item_stats function
     stats.ac = safe_get(function() return item.AC() end)
     stats.hp = safe_get(function() return item.HP() end)
     stats.mana = safe_get(function() return item.Mana() end)
     stats.endurance = safe_get(function() return item.Endurance() end)
-    
-    -- Attributes
     stats.str = safe_get(function() return item.STR() end)
     stats.sta = safe_get(function() return item.STA() end)
     stats.agi = safe_get(function() return item.AGI() end)
@@ -168,22 +189,16 @@ local function get_detailed_item_stats(item)
     stats.wis = safe_get(function() return item.WIS() end)
     stats.int = safe_get(function() return item.INT() end)
     stats.cha = safe_get(function() return item.CHA() end)
-    
-    -- Resistances
     stats.svMagic = safe_get(function() return item.svMagic() end)
     stats.svFire = safe_get(function() return item.svFire() end)
     stats.svCold = safe_get(function() return item.svCold() end)
     stats.svDisease = safe_get(function() return item.svDisease() end)
     stats.svPoison = safe_get(function() return item.svPoison() end)
     stats.svCorruption = safe_get(function() return item.svCorruption() end)
-    
-    -- Combat Stats
     stats.attack = safe_get(function() return item.Attack() end)
     stats.damage = safe_get(function() return item.Damage() end)
     stats.delay = safe_get(function() return item.Delay() end)
     stats.range = safe_get(function() return item.Range() end)
-    
-    -- Heroic Stats
     stats.heroicStr = safe_get(function() return item.HeroicSTR() end)
     stats.heroicSta = safe_get(function() return item.HeroicSTA() end)
     stats.heroicAgi = safe_get(function() return item.HeroicAGI() end)
@@ -191,16 +206,12 @@ local function get_detailed_item_stats(item)
     stats.heroicWis = safe_get(function() return item.HeroicWIS() end)
     stats.heroicInt = safe_get(function() return item.HeroicINT() end)
     stats.heroicCha = safe_get(function() return item.HeroicCHA() end)
-    
-    -- Heroic Resistances
     stats.heroicSvMagic = safe_get(function() return item.HeroicSvMagic() end)
     stats.heroicSvFire = safe_get(function() return item.HeroicSvFire() end)
     stats.heroicSvCold = safe_get(function() return item.HeroicSvCold() end)
     stats.heroicSvDisease = safe_get(function() return item.HeroicSvDisease() end)
     stats.heroicSvPoison = safe_get(function() return item.HeroicSvPoison() end)
     stats.heroicSvCorruption = safe_get(function() return item.HeroicSvCorruption() end)
-    
-    -- Additional Combat Stats
     stats.avoidance = safe_get(function() return item.Avoidance() end)
     stats.accuracy = safe_get(function() return item.Accuracy() end)
     stats.stunResist = safe_get(function() return item.StunResist() end)
@@ -211,14 +222,10 @@ local function get_detailed_item_stats(item)
     stats.spellShield = safe_get(function() return item.SpellShield() end)
     stats.shielding = safe_get(function() return item.Shielding() end)
     stats.combatEffects = safe_get(function() return item.CombatEffects() end)
-    
-    -- Mod Stats
     stats.haste = safe_get(function() return item.Haste() end)
     stats.clairvoyance = safe_get(function() return item.Clairvoyance() end)
     stats.healAmount = safe_get(function() return item.HealAmount() end)
     stats.spellDamage = safe_get(function() return item.SpellDamage() end)
-    
-    -- Level Requirements
     stats.requiredLevel = safe_get(function() return item.RequiredLevel() end)
     stats.recommendedLevel = safe_get(function() return item.RecommendedLevel() end)
     
@@ -230,10 +237,8 @@ function M.get_item_detailed_stats(itemName, location, slotInfo)
     
     local function findAndGetStats(item)
         if item() and item.Name() == itemName then
-            local basic = get_basic_item_info(item)
+            local basic = get_basic_item_info(item, true)
             local stats = get_detailed_item_stats(item)
-            
-            -- Merge basic and detailed info
             for k, v in pairs(stats) do
                 basic[k] = v
             end
@@ -242,8 +247,6 @@ function M.get_item_detailed_stats(itemName, location, slotInfo)
         end
         return nil
     end
-    
-    -- Search equipped items
     if location == "Equipped" then
         for slot = 0, 22 do
             local item = mq.TLO.Me.Inventory(slot)
@@ -251,8 +254,6 @@ function M.get_item_detailed_stats(itemName, location, slotInfo)
             if result then return result end
         end
     end
-    
-    -- Search bag items
     if location == "Bags" then
         for invSlot = 23, 34 do
             local pack = mq.TLO.Me.Inventory(invSlot)
@@ -265,15 +266,11 @@ function M.get_item_detailed_stats(itemName, location, slotInfo)
             end
         end
     end
-    
-    -- Search bank items
     if location == "Bank" then
         for bankSlot = 1, 24 do
             local item = mq.TLO.Me.Bank(bankSlot)
             local result = findAndGetStats(item)
             if result then return result end
-            
-            -- Check items inside bank bags
             if item.ID() and item.Container() and item.Container() > 0 then
                 for i = 1, item.Container() do
                     local sub = item.Item(i)
@@ -287,7 +284,6 @@ function M.get_item_detailed_stats(itemName, location, slotInfo)
     return nil
 end
 
-
 function M.gather_inventory()
     local data = {
         name = mq.TLO.Me.Name(),
@@ -296,9 +292,14 @@ function M.gather_inventory()
         equipped = {},
         bags = {},
         bank = {},
+        config = {
+            loadBasicStats = M.config.loadBasicStats,
+            loadDetailedStats = M.config.loadDetailedStats,
+        }
     }
 
-    -- Equipped items (slots 0-22) - basic info only
+    --print(string.format("[Inventory Actor] Gathering inventory - Basic: %s, Detailed: %s", tostring(M.config.loadBasicStats), tostring(M.config.loadDetailedStats)))
+
     for slot = 0, 22 do
         local item = mq.TLO.Me.Inventory(slot)
         if item() then
@@ -308,7 +309,6 @@ function M.gather_inventory()
         end
     end
 
-    -- Bag items (slots 23-34) - basic info only
     for invSlot = 23, 34 do
         local pack = mq.TLO.Me.Inventory(invSlot)
         if pack() and pack.Container() > 0 then
@@ -327,7 +327,7 @@ function M.gather_inventory()
         end
     end
 
-    -- Bank items - basic info only
+    -- Bank items
     for bankSlot = 1, 24 do
         local item = mq.TLO.Me.Bank(bankSlot)
         if item.ID() then
@@ -336,7 +336,6 @@ function M.gather_inventory()
             entry.slotid = -1
             table.insert(data.bank, entry)
 
-            -- Check for items inside bank bags
             if item.Container() and item.Container() > 0 then
                 for i = 1, item.Container() do
                     local sub = item.Item(i)
@@ -383,6 +382,12 @@ local function message_handler(message)
             local peerId = content.data.server .. "_" .. content.data.name
             M.peer_inventories[peerId] = content.data
         end
+        
+    elseif content.type == M.MSG_TYPE.CONFIG_UPDATE then
+        if content.config then
+            M.update_config(content.config)
+        end
+        
     elseif content.type == M.MSG_TYPE.STATS_REQUEST then
         local itemName = content.itemName
         local location = content.location
@@ -409,6 +414,19 @@ local function message_handler(message)
             M.stats_callbacks[content.requestId] = nil
         end
     end
+end
+
+function M.broadcast_config_update()
+    if not actor_mailbox then
+        print("[Inventory Actor] Cannot broadcast config - actor system not initialized")
+        return false
+    end
+    
+    actor_mailbox:send(
+        { mailbox = 'inventory_exchange' },
+        { type = M.MSG_TYPE.CONFIG_UPDATE, config = M.config }
+    )
+    return true
 end
 
 M.stats_callbacks = {}
@@ -463,17 +481,31 @@ end
 
 local function handle_proxy_give_batch(data)
     local success, batchRequest = pcall(json.decode, data)
-    mq.cmdf("/echo [BATCH] Received batch request: %d items for trade to %s", #batchRequest.items, tostring(batchRequest.target))
+    
     if not success then
-        mq.cmd("/echo [ERROR] Failed to decode batch trade request")
+        mq.cmd("/echo [ERROR] Failed to decode batch trade request - JSON parsing error")
         return
     end
+    
+    if not batchRequest then
+        mq.cmd("/echo [ERROR] Failed to decode batch trade request - JSON decode returned nil")
+        return
+    end
+    
+    if not batchRequest.items or not batchRequest.target then
+        mq.cmd("/echo [ERROR] Invalid batch trade request - missing items or target")
+        return
+    end
+    
+    mq.cmdf("/echo [BATCH] Received batch request: %d items for trade to %s", #batchRequest.items, tostring(batchRequest.target))
+    
     local session = {
         target = batchRequest.target,
         items = {},
         source = mq.TLO.Me.CleanName(),
         status = "INITIATING"
     }
+    
     for i, itemRequest in ipairs(batchRequest.items) do
         table.insert(session.items, itemRequest)
         if #session.items >= 8 then
@@ -487,10 +519,12 @@ local function handle_proxy_give_batch(data)
             }
         end
     end
+    
     if #session.items > 0 then
         table.insert(M.pending_requests, { type = "multi_item_trade", target = session.target, items = session.items })
         mq.cmdf("/echo Queued a final trade session with %d items for %s. Total sessions: %d", #session.items, session.target, #M.pending_requests)
     end
+    
     mq.cmdf("/echo All batch trade items categorized into sessions and queued.")
 end
 

@@ -1,6 +1,6 @@
 -- ezinventory.lua
 -- developed by psatty82
--- updated 06/05/2025
+-- updated 06/10/2025
 local mq    = require("mq")
 local ImGui = require("ImGui")
 local icons = require("mq.icons")
@@ -21,39 +21,91 @@ local server = string.gsub(mq.TLO.MacroQuest.Server(), ' ', '_')
 local SettingsFile = string.format('%s/EZInventory/%s/%s.lua', mq.configDir, server, mq.TLO.Me.CleanName())
 local Settings = {}
 
+--- @tag Config
+--- @section Default Settings
 local Defaults = {
-    showAug1    = true,
-    showAug2    = true,
-    showAug3    = true,
-    showAug4    = false,
-    showAug5    = false,
-    showAug6    = false,
-    showAC      = false,
-    showHP      = false,
-    showMana    = false,
-    showClicky  = false,
+    showAug1        = true,
+    showAug2        = true,
+    showAug3        = true,
+    showAug4        = false,
+    showAug5        = false,
+    showAug6        = false,
+    showAC          = false,
+    showHP          = false,
+    showMana        = false,
+    showClicky      = false,
+    loadBasicStats  = true,
+    loadDetailedStats = false,
+    enableStatsFiltering = true,
+    autoRefreshInventory = true,
+    statsLoadingMode = "selective",
 }
 
 local function LoadSettings()
     local needSave = false
+    
+    print("[EZInventory] Loading settings from: " .. SettingsFile)
+    
     if not Files.File.Exists(SettingsFile) then
-        mq.pickle(SettingsFile, Defaults)
-        Settings = Defaults
+        print("[EZInventory] No existing settings file, creating with defaults")
+        Settings = {}
+        for k, v in pairs(Defaults) do
+            Settings[k] = v
+        end
+        mq.pickle(SettingsFile, Settings)
     else
-        Settings = dofile(SettingsFile)
+        local success, loadedSettings = pcall(dofile, SettingsFile)
+        if success and type(loadedSettings) == "table" then
+            Settings = loadedSettings
+            print("[EZInventory] Settings loaded successfully")
+        else
+            print("[EZInventory] Error loading settings, using defaults")
+            Settings = {}
+            for k, v in pairs(Defaults) do
+                Settings[k] = v
+            end
+            needSave = true
+        end
     end
+    
     for setting, value in pairs(Defaults) do
         if Settings[setting] == nil then
+            --print(string.format("[EZInventory] Adding missing setting: %s = %s", setting, tostring(value)))
             Settings[setting] = value
             needSave = true
         end
     end
+    
+    --print(string.format("[EZInventory] Loaded statsLoadingMode: %s", tostring(Settings.statsLoadingMode)))
+    --print(string.format("[EZInventory] Loaded loadBasicStats: %s", tostring(Settings.loadBasicStats)))
+    --print(string.format("[EZInventory] Loaded loadDetailedStats: %s", tostring(Settings.loadDetailedStats)))
+    
     if needSave then
+        print("[EZInventory] Saving updated settings")
         mq.pickle(SettingsFile, Settings)
     end
 end
 
+function UpdateInventoryActorConfig()
+    --print("[EZInventory] Updating inventory actor config")
+    --print(string.format("  - loadBasicStats: %s", tostring(Settings.loadBasicStats)))
+    --print(string.format("  - loadDetailedStats: %s", tostring(Settings.loadDetailedStats)))
+    --print(string.format("  - statsLoadingMode: %s", tostring(Settings.statsLoadingMode)))
+    
+    if inventory_actor and inventory_actor.update_config then
+        inventory_actor.update_config({
+            loadBasicStats = Settings.loadBasicStats,
+            loadDetailedStats = Settings.loadDetailedStats,
+            enableStatsFiltering = Settings.enableStatsFiltering or true,
+        })
+        --print("[EZInventory] Inventory actor config updated successfully")
+    else
+        --print("[EZInventory] Warning: inventory_actor not available for config update")
+    end
+end
+
 LoadSettings()
+UpdateInventoryActorConfig()
 
 ---@tag InventoryUI
 local inventoryUI              = {
@@ -105,11 +157,30 @@ local inventoryUI              = {
     comparisonError = nil,
     showBotInventory = false,
     selectedBotInventory = nil,
+    loadBasicStats  = true,
+    loadDetailedStats = false,
+    enableStatsFiltering = true,
+    autoRefreshInventory = true,
+    statsLoadingMode = "selective",
 }
-
 for k, v in pairs(Settings) do
     inventoryUI[k] = v
 end
+local function SyncSettingsToUI()
+    inventoryUI.statsLoadingMode = Settings.statsLoadingMode
+    inventoryUI.loadBasicStats = Settings.loadBasicStats
+    inventoryUI.loadDetailedStats = Settings.loadDetailedStats
+    inventoryUI.enableStatsFiltering = Settings.enableStatsFiltering
+    inventoryUI.autoRefreshInventory = Settings.autoRefreshInventory
+    inventoryUI.enableNetworkBroadcast = Settings.enableNetworkBroadcast
+    for k, v in pairs(Settings) do
+        if Defaults[k] ~= nil then
+            inventoryUI[k] = v
+        end
+    end
+end
+
+SyncSettingsToUI()
 
 local EQ_ICON_OFFSET           = 500
 local ICON_WIDTH               = 20
@@ -279,7 +350,7 @@ local function drawSelectionIndicator(uniqueKey, isHovered)
     end
 end
 
-function drawItemIcon(iconID, width, height)
+local function drawItemIcon(iconID, width, height)
     width = width or ICON_WIDTH
     height = height or ICON_HEIGHT
     if iconID and iconID > 0 then
@@ -304,10 +375,16 @@ local function draw_empty_slot_cbb(cell_id)
 
     if mq.TLO.Cursor.ID() and ImGui.IsItemClicked(ImGuiMouseButton.Left) then
         local cursorItemTLO = mq.TLO.Cursor
-        local pack_number, slotIndex = cell_id:match("bag_(%d+)_slot_(%d+)")
-        if pack_number and slotIndex then
-            pack_number = tonumber(pack_number)
-            slotIndex = tonumber(slotIndex)
+        local pack_number_str, slotIndex_str = cell_id:match("bag_(%d+)_slot_(%d+)")
+        if pack_number_str and slotIndex_str then
+            -- Convert strings to numbers
+            local pack_number = tonumber(pack_number_str)
+            local slotIndex = tonumber(slotIndex_str)
+            
+            if not pack_number then
+                mq.cmd("/echo [ERROR] Invalid pack number")
+                return
+            end
             --mq.cmdf("/echo [DEBUG] Drop Attempt: pack_number=%s, slotIndex=%s", tostring(pack_number), tostring(slotIndex))
             if pack_number >= 1 and pack_number <= 12 and slotIndex >= 1 then
                 if inventoryUI.selectedPeer == mq.TLO.Me.Name() then
@@ -682,7 +759,7 @@ end
 --------------------------------------------------
 -- Helper: Update List of Connected Peers
 --------------------------------------------------
-function updatePeerList()
+local function updatePeerList()
     inventoryUI.peers = {}
     inventoryUI.servers = {}
 
@@ -723,7 +800,7 @@ end
 --------------------------------------------------
 --- Function: Check Database Lock Status
 --------------------------------------------------
-function refreshInventoryData()
+local function refreshInventoryData()
     inventoryUI.inventoryData = { equipped = {}, bags = {}, bank = {}, }
 
     for _, peer in ipairs(inventoryUI.peers) do
@@ -741,7 +818,7 @@ end
 --------------------------------------------------
 -- Helper: Load inventory data from the mailbox.
 --------------------------------------------------
-function loadInventoryData(peer)
+local function loadInventoryData(peer)
     inventoryUI.inventoryData = { equipped = {}, bags = {}, bank = {}, }
 
     if peer and peer.data then
@@ -754,6 +831,71 @@ function loadInventoryData(peer)
         inventoryUI.inventoryData.bags = gathered.bags or {}
         inventoryUI.inventoryData.bank = gathered.bank or {}
     end
+end
+
+function OnStatsLoadingModeChanged(newMode)
+    --print(string.format("[EZInventory] OnStatsLoadingModeChanged called with mode: %s", tostring(newMode)))
+    local validModes = { minimal = true, selective = true, full = true }
+    if not validModes[newMode] then
+        --print(string.format("[EZInventory] Error: Invalid mode '%s', defaulting to selective", tostring(newMode)))
+        newMode = "selective"
+    end
+    Settings.statsLoadingMode = newMode
+    if newMode == "minimal" then
+        Settings.loadBasicStats = false
+        Settings.loadDetailedStats = false
+        --print("[EZInventory] Minimal mode: Only essential item data will be loaded")
+    elseif newMode == "selective" then
+        Settings.loadBasicStats = true
+        Settings.loadDetailedStats = false
+        --print("[EZInventory] Selective mode: Basic stats (AC, HP, Mana) will be loaded")
+    elseif newMode == "full" then
+        Settings.loadBasicStats = true
+        Settings.loadDetailedStats = true
+        --print("[EZInventory] Full mode: All item statistics will be loaded")
+    end
+    inventoryUI.statsLoadingMode = Settings.statsLoadingMode
+    inventoryUI.loadBasicStats = Settings.loadBasicStats
+    inventoryUI.loadDetailedStats = Settings.loadDetailedStats
+    UpdateInventoryActorConfig()
+    --print("[EZInventory] Saving settings after mode change")
+    mq.pickle(SettingsFile, Settings)
+    --print(string.format("[EZInventory] Mode change complete. Settings now: mode=%s, basic=%s, detailed=%s", Settings.statsLoadingMode, tostring(Settings.loadBasicStats), tostring(Settings.loadDetailedStats)))
+end
+
+function SaveConfigWithStatsUpdate()
+    --print("[EZInventory] SaveConfigWithStatsUpdate called")
+    for key, value in pairs(inventoryUI) do
+        if Defaults[key] ~= nil and key ~= "statsLoadingMode" and key ~= "loadBasicStats" and key ~= "loadDetailedStats" then
+            Settings[key] = value
+        end
+    end
+    if inventoryUI.statsLoadingMode then
+        Settings.statsLoadingMode = inventoryUI.statsLoadingMode
+    end
+    if inventoryUI.loadBasicStats ~= nil then
+        Settings.loadBasicStats = inventoryUI.loadBasicStats
+    end
+    if inventoryUI.loadDetailedStats ~= nil then
+        Settings.loadDetailedStats = inventoryUI.loadDetailedStats
+    end
+    if inventoryUI.enableStatsFiltering ~= nil then
+        Settings.enableStatsFiltering = inventoryUI.enableStatsFiltering
+    end
+    if inventoryUI.autoRefreshInventory ~= nil then
+        Settings.autoRefreshInventory = inventoryUI.autoRefreshInventory
+    end
+    if inventoryUI.enableNetworkBroadcast ~= nil then
+        Settings.enableNetworkBroadcast = inventoryUI.enableNetworkBroadcast
+    end
+    
+    local success, err = pcall(mq.pickle, SettingsFile, Settings)
+    if success then
+        print(string.format("\ag[EZInventory]\ax Config saved to \ay%s", SettingsFile))
+    else
+        print(string.format("\ar[EZInventory]\ax Error saving config: %s", tostring(err)))
+    end
+    UpdateInventoryActorConfig()
 end
 
 --------------------------------------------------
@@ -791,7 +933,7 @@ end
 --------------------------------------------------
 -- Function: Compare slot across all peers
 --------------------------------------------------
-function compareSlotAcrossPeers(slotID)
+local function compareSlotAcrossPeers(slotID)
     local results = {}
 
     for _, invData in pairs(inventory_actor.peer_inventories) do
@@ -852,7 +994,7 @@ end
 --------------------------------------------------
 -- Function: Search Across All Peers
 --------------------------------------------------
-function searchAcrossPeers()
+local function searchAcrossPeers()
     local results = {}
     local searchTerm = (searchText or ""):lower()
 
@@ -1621,7 +1763,7 @@ function renderMultiTradePanel()
         local selectedCount = getSelectedItemCount()
         ImGui.Text(string.format("Selected Items: %d", selectedCount))
         ImGui.Separator()
-        if ImGui.BeginChild("SelectedItemsList", 0, 250, true) then
+        if ImGui.BeginChild("SelectedItemsList", 0, 250) then
             if selectedCount == 0 then
                 ImGui.Text("No items selected")
             else
@@ -1933,6 +2075,8 @@ if isEMU then
     end
 end
 
+--- @tag InventoryUI
+--- @section Main Function
 --------------------------------------------------
 -- Main render function.
 --------------------------------------------------
@@ -1950,7 +2094,6 @@ function inventoryUI.render()
         show = false
     end
     if show then
-        -- Server selection dropdown
         inventoryUI.selectedServer = inventoryUI.selectedServer or server
         ImGui.Text("Select Server:")
         ImGui.SameLine()
@@ -1983,19 +2126,15 @@ function inventoryUI.render()
             end
             ImGui.EndCombo()
         end
-
         ImGui.SameLine()
         ImGui.Text("Select Peer:")
         ImGui.SameLine()
         ImGui.SetNextItemWidth(350)
         refreshPeerCache()
         local displayPeer = inventoryUI.selectedPeer or "Select Peer"
-
         if inventoryUI.selectedServer and ImGui.BeginCombo("##PeerCombo", displayPeer) then
             local peers = peerCache[inventoryUI.selectedServer] or {}
             local botPeers = {}
-
-            -- Separate regular peers and bots
             local regularPeers = {}
             for _, invData in pairs(inventory_actor.peer_inventories) do
                 if invData.server == inventoryUI.selectedServer then
@@ -2019,15 +2158,12 @@ function inventoryUI.render()
                     })
                 end
             end
-            -- Sort both lists
             table.sort(regularPeers, function(a, b)
                 return (a.name or ""):lower() < (b.name or ""):lower()
             end)
             table.sort(botPeers, function(a, b)
                 return (a.name or ""):lower() < (b.name or ""):lower()
             end)
-
-            -- Display regular peers first
             if #regularPeers > 0 then
                 ImGui.TextColored(0.7, 0.7, 1.0, 1.0, "Players:")
                 for i, peer in ipairs(regularPeers) do
@@ -2043,111 +2179,92 @@ function inventoryUI.render()
                     ImGui.PopID()
                 end
             end
-
-            -- Display bots
-            if #botPeers > 0 then
-                if #regularPeers > 0 then
-                    ImGui.Separator()
-                end
-                ImGui.TextColored(0.7, 1.0, 0.7, 1.0, "Bots:")
-                for i, bot in ipairs(botPeers) do
-                    ImGui.PushID(string.format("bot_%s_%d", bot.name, i))
-                    local isSelected = inventoryUI.selectedPeer == bot.name
-                    local displayName = "🤖 " .. bot.name
-                    if ImGui.Selectable("  " .. displayName, isSelected) then
-                        inventoryUI.selectedPeer = bot.name
-                        loadInventoryData(bot)
-                    end
-                    if isSelected then
-                        ImGui.SetItemDefaultFocus()
-                    end
-                    ImGui.PopID()
-                end
-            end
-
             ImGui.EndCombo()
         end
-
         ImGui.SameLine()
         if ImGui.Button("Give Item") then
             inventoryUI.showGiveItemPanel = not inventoryUI.showGiveItemPanel
         end
-
         local cursorPosX = ImGui.GetCursorPosX()
         local iconSpacing = 10
         local iconSize = 22
         local totalIconWidth = (iconSize + iconSpacing) * 5 + 75
-
         local rightAlignX = ImGui.GetWindowWidth() - totalIconWidth - 10
         ImGui.SameLine(rightAlignX)
-
         local floatIcon = inventoryUI.showToggleButton and icons.FA_EYE or icons.FA_EYE_SLASH
+        local eyeColor = inventoryUI.showToggleButton and ImVec4(0.2, 0.6, 0.8, 1.0) or ImVec4(0.6, 0.6, 0.6, 1.0)
+        local eyeHoverColor = inventoryUI.showToggleButton and ImVec4(0.4, 0.8, 1.0, 1.0) or ImVec4(0.8, 0.8, 0.8, 1.0)
+        local eyeActiveColor = inventoryUI.showToggleButton and ImVec4(0.1, 0.4, 0.6, 1.0) or ImVec4(0.4, 0.4, 0.4, 1.0)
+        ImGui.PushStyleColor(ImGuiCol.Button, eyeColor)
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, eyeHoverColor)
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, eyeActiveColor)
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
         if ImGui.Button(floatIcon, iconSize, iconSize) then
             inventoryUI.showToggleButton = not inventoryUI.showToggleButton
         end
         if ImGui.IsItemHovered() then
             ImGui.SetTooltip(inventoryUI.showToggleButton and "Hide Floating Button" or "Show Floating Button")
         end
-
+        ImGui.PopStyleVar()
+        ImGui.PopStyleColor(3)
         ImGui.SameLine()
+        ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.2, 0.5, 0.8, 1.0))        
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.4, 0.7, 1.0, 1.0)) 
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.1, 0.3, 0.6, 1.0))  
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
         if ImGui.Button("Save Config") then
-            for key, value in pairs(inventoryUI) do
-                if Defaults[key] ~= nil then
-                    Settings[key] = value
-                end
-            end
-            mq.pickle(SettingsFile, Settings)
-            printf("\ag[EZInventory]\ax Config saved to \ay%s", SettingsFile)
+            SaveConfigWithStatsUpdate()
         end
         if ImGui.IsItemHovered() then
             ImGui.BeginTooltip()
             ImGui.Text("Save visible column settings for this character.")
             ImGui.EndTooltip()
         end
+        ImGui.PopStyleVar()
+        ImGui.PopStyleColor(3)
         ImGui.SameLine()
         local lockIcon = inventoryUI.windowLocked and icons.FA_LOCK or icons.FA_UNLOCK
+        local lockColor = inventoryUI.windowLocked and ImVec4(0.8, 0.6, 0.2, 1.0) or ImVec4(0.6, 0.6, 0.6, 1.0)
+        local lockHoverColor = inventoryUI.windowLocked and ImVec4(1.0, 0.8, 0.4, 1.0) or ImVec4(0.8, 0.8, 0.8, 1.0)
+        local lockActiveColor = inventoryUI.windowLocked and ImVec4(0.6, 0.4, 0.1, 1.0) or ImVec4(0.4, 0.4, 0.4, 1.0)
+        ImGui.PushStyleColor(ImGuiCol.Button, lockColor)
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, lockHoverColor)
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, lockActiveColor)
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
         if ImGui.Button(lockIcon, iconSize, iconSize) then
             inventoryUI.windowLocked = not inventoryUI.windowLocked
         end
         if ImGui.IsItemHovered() then
             ImGui.SetTooltip(inventoryUI.windowLocked and "Unlock window" or "Lock window")
         end
-
+        ImGui.PopStyleVar()
+        ImGui.PopStyleColor(3)
         ImGui.SameLine()
-        ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.2, 0.8, 0.2, 1.0))        -- Green
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.4, 1.0, 0.4, 1.0)) -- Lighter green on hover
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.1, 0.6, 0.1, 1.0))  -- Darker green when pressed
+        ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.2, 0.8, 0.2, 1.0))       
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.4, 1.0, 0.4, 1.0)) 
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.1, 0.6, 0.1, 1.0)) 
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
-
         if ImGui.Button("Close") then
             inventoryUI.visible = false
         end
-
         if ImGui.IsItemHovered() then
             ImGui.SetTooltip("Minimizes the UI")
         end
-
         ImGui.PopStyleVar()
         ImGui.PopStyleColor(3)
-
         ImGui.SameLine()
-        ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.8, 0.2, 0.2, 1.0))        -- Red background
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(1.0, 0.4, 0.4, 1.0)) -- Lighter red on hover
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.6, 0.1, 0.1, 1.0))  -- Darker red when pressed
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)                     -- Rounded corners
-
+        ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.8, 0.2, 0.2, 1.0))        
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(1.0, 0.4, 0.4, 1.0)) 
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.6, 0.1, 0.1, 1.0))  
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)                     
         if ImGui.Button("Exit") then
             mq.exit()
         end
-
         if ImGui.IsItemHovered() then
             ImGui.SetTooltip("Exits the Script On This Screen")
         end
-
         ImGui.PopStyleVar()
         ImGui.PopStyleColor(3)
-
-
         ImGui.Separator()
         ImGui.Text("Search Items:")
         ImGui.SameLine()
@@ -2157,21 +2274,16 @@ function inventoryUI.render()
             searchText = ""
         end
         ImGui.Separator()
-
         local matchingBags = {}
-
         local function matchesSearch(item)
             if not searchText or searchText == "" then
                 return true
             end
-
             local searchTerm = searchText:lower()
             local itemName = (item.name or ""):lower()
-
             if itemName:find(searchTerm) then
                 return true
             end
-
             for i = 1, 6 do
                 local augField = "aug" .. i .. "Name"
                 if item[augField] and item[augField] ~= "" then
@@ -2181,23 +2293,22 @@ function inventoryUI.render()
                     end
                 end
             end
-
             return false
         end
-
         renderMultiSelectIndicator()
-
         ------------------------------
+        --- @tag Inventory UI
+        --- @category UI.Equipped
         -- Equipped Items Section
         ------------------------------
         local avail = ImGui.GetContentRegionAvail()
-        ImGui.BeginChild("TabbedContentRegion", x, y, true, ImGuiChildFlags.Border)
-        if ImGui.BeginTabBar("InventoryTabs") then
+        ImGui.BeginChild("TabbedContentRegion", 0, 0, ImGuiChildFlags.Border)
+        if ImGui.BeginTabBar("InventoryTabs", ImGuiTabBarFlags.Reorderable) then
             if ImGui.BeginTabItem("Equipped") then
-                if ImGui.BeginTabBar("EquippedViewTabs") then
+                if ImGui.BeginTabBar("EquippedViewTabs", ImGuiTabBarFlags.Reorderable) then
                     if ImGui.BeginTabItem("Table View") then
                         inventoryUI.equipView = "table"
-                        if ImGui.BeginChild("EquippedScrollRegion", 0, 0, true, ImGuiChildFlags.HorizontalScrollbar) then
+                        if ImGui.BeginChild("EquippedScrollRegion", 0, 0) then
                             ImGui.Text("Show Columns:")
                             ImGui.SameLine()
                             inventoryUI.showAug1 = ImGui.Checkbox("Aug 1", inventoryUI.showAug1)
@@ -2266,7 +2377,6 @@ function inventoryUI.render()
                             if visibleAugs > 0 then
                                 augWidth = math.max(80, remainingForAugs / visibleAugs)
                             end
-
                             if inventoryUI.isLoadingData then
                                 renderLoadingScreen("Loading Inventory Data", "Scanning items", "This may take a moment for large inventories")
                             else
@@ -3018,79 +3128,173 @@ function inventoryUI.render()
             if not inventoryUI.inventoryData.bank or #inventoryUI.inventoryData.bank == 0 then
                 ImGui.Text("There's no loot here! Go visit a bank and re-sync!")
             else
-                if ImGui.BeginTable("BankTable", 5, bit.bor(ImGuiTableFlags.BordersInnerV, ImGuiTableFlags.RowBg)) then
+                -- Add sorting controls
+                inventoryUI.bankSortMode = inventoryUI.bankSortMode or "slot" -- Default to slot sorting
+                inventoryUI.bankSortDirection = inventoryUI.bankSortDirection or "asc" -- Default to ascending
+                
+                ImGui.Text("Sort by:")
+                ImGui.SameLine()
+                ImGui.SetNextItemWidth(120)
+                if ImGui.BeginCombo("##BankSortMode", inventoryUI.bankSortMode == "slot" and "Slot Number" or "Item Name") then
+                    if ImGui.Selectable("Slot Number", inventoryUI.bankSortMode == "slot") then
+                        inventoryUI.bankSortMode = "slot"
+                    end
+                    if ImGui.Selectable("Item Name", inventoryUI.bankSortMode == "name") then
+                        inventoryUI.bankSortMode = "name"
+                    end
+                    ImGui.EndCombo()
+                end
+                
+                ImGui.SameLine()
+                if ImGui.Button(inventoryUI.bankSortDirection == "asc" and "↑ Ascending" or "↓ Descending") then
+                    inventoryUI.bankSortDirection = inventoryUI.bankSortDirection == "asc" and "desc" or "asc"
+                end
+                
+                ImGui.Separator()
+                
+                -- Create a sorted copy of bank items
+                local sortedBankItems = {}
+                for i, item in ipairs(inventoryUI.inventoryData.bank) do
+                    if matchesSearch(item) then
+                        table.insert(sortedBankItems, item)
+                    end
+                end
+                
+                -- Sort the items based on selected criteria
+                table.sort(sortedBankItems, function(a, b)
+                    local valueA, valueB
+                    
+                    if inventoryUI.bankSortMode == "name" then
+                        valueA = (a.name or ""):lower()
+                        valueB = (b.name or ""):lower()
+                    else -- slot mode
+                        -- Sort by bank slot first, then by item slot within the same bank slot
+                        local bankSlotA = tonumber(a.bankslotid) or 0
+                        local bankSlotB = tonumber(b.bankslotid) or 0
+                        local itemSlotA = tonumber(a.slotid) or -1
+                        local itemSlotB = tonumber(b.slotid) or -1
+                        
+                        if bankSlotA ~= bankSlotB then
+                            valueA = bankSlotA
+                            valueB = bankSlotB
+                        else
+                            valueA = itemSlotA
+                            valueB = itemSlotB
+                        end
+                    end
+                    
+                    if inventoryUI.bankSortDirection == "asc" then
+                        return valueA < valueB
+                    else
+                        return valueA > valueB
+                    end
+                end)
+
+                if ImGui.BeginTable("BankTable", 4, bit.bor(ImGuiTableFlags.BordersInnerV, ImGuiTableFlags.RowBg)) then
                     ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
                     ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
-                    ImGui.TableSetupColumn("Bank Slot", ImGuiTableColumnFlags.WidthFixed, 70)
-                    ImGui.TableSetupColumn("Item Slot", ImGuiTableColumnFlags.WidthFixed, 70)
+                    ImGui.TableSetupColumn("Quantity", ImGuiTableColumnFlags.WidthFixed, 70)
                     ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 70)
                     ImGui.TableHeadersRow()
 
-                    for i, item in ipairs(inventoryUI.inventoryData.bank) do
-                        if matchesSearch(item) then
-                            ImGui.TableNextRow()
-                            local bankSlotId = item.bankslotid or "nobankslot"
-                            local slotId = item.slotid or "noslot"
-                            local itemName = item.name or "noname"
-                            local uniqueID = string.format("%s_bank%s_slot%s_%d", itemName, bankSlotId, slotId, i)
+                    for i, item in ipairs(sortedBankItems) do
+                        ImGui.TableNextRow()
+                        local bankSlotId = item.bankslotid or "nobankslot"
+                        local slotId = item.slotid or "noslot"
+                        local itemName = item.name or "noname"
+                        local uniqueID = string.format("%s_bank%s_slot%s_%d", itemName, bankSlotId, slotId, i)
 
-                            ImGui.PushID(uniqueID)
+                        ImGui.PushID(uniqueID)
 
-                            ImGui.TableSetColumnIndex(0)
-                            if item.icon and item.icon ~= 0 then
-                                drawItemIcon(item.icon)
-                            else
-                                ImGui.Text("N/A")
-                            end
-                            ImGui.TableSetColumnIndex(1)
-                            if ImGui.Selectable(item.name .. "##" .. uniqueID) then
-                                local links = mq.ExtractLinks(item.itemlink)
-                                if links and #links > 0 then
-                                    mq.ExecuteTextLink(links[1])
-                                else
-                                    mq.cmd('/echo No item link found in the database.')
-                                end
-                            end
-                            ImGui.TableSetColumnIndex(2)
-                            ImGui.Text(tostring(item.bankslotid or "N/A"))
-                            ImGui.TableSetColumnIndex(3)
-                            ImGui.Text(tostring(item.slotid or "N/A"))
-
-                            ImGui.TableSetColumnIndex(4)
-                            if ImGui.Button("Pickup##" .. uniqueID) then
-                                local BankSlotId = tonumber(item.bankslotid) or 0
-                                local SlotId = tonumber(item.slotid) or -1
-
-                                if BankSlotId >= 1 and BankSlotId <= 24 then
-                                    if SlotId == -1 then
-                                        mq.cmdf("/shift /itemnotify bank%d leftmouseup", BankSlotId)
-                                    else
-                                        mq.cmdf("/shift /itemnotify in bank%d %d leftmouseup", BankSlotId, SlotId)
-                                    end
-                                elseif BankSlotId >= 25 and BankSlotId <= 26 then
-                                    local sharedSlot = BankSlotId - 24 -- Convert to 1-2
-                                    if SlotId == -1 then
-                                        -- Direct shared bank slot
-                                        mq.cmdf("/shift /itemnotify sharedbank%d leftmouseup", sharedSlot)
-                                    else
-                                        -- Item in a shared bank bag
-                                        mq.cmdf("/shift /itemnotify in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
-                                    end
-                                else
-                                    mq.cmdf("/echo Unknown bank slot ID: %d", BankSlotId)
-                                end
-                            end
-
-                            if ImGui.IsItemHovered() then
-                                ImGui.SetTooltip("You need to be near a banker to pick up this item")
-                            end
-
-                            ImGui.PopID()
+                        ImGui.TableSetColumnIndex(0)
+                        if item.icon and item.icon ~= 0 then
+                            drawItemIcon(item.icon)
+                        else
+                            ImGui.Text("N/A")
                         end
+                        
+                        ImGui.TableSetColumnIndex(1)
+                        if ImGui.Selectable(item.name .. "##" .. uniqueID) then
+                            local links = mq.ExtractLinks(item.itemlink)
+                            if links and #links > 0 then
+                                mq.ExecuteTextLink(links[1])
+                            else
+                                mq.cmd('/echo No item link found in the database.')
+                            end
+                        end
+                        
+                        -- Add hover tooltip for sorted items
+                        if ImGui.IsItemHovered() then
+                            ImGui.BeginTooltip()
+                            ImGui.Text(item.name or "Unknown Item")
+                            ImGui.Text("Click to examine item")
+                            ImGui.Text(string.format("Bank Slot: %s, Item Slot: %s", 
+                                tostring(item.bankslotid or "N/A"), 
+                                tostring(item.slotid or "N/A")))
+                            if inventoryUI.bankSortMode == "name" then
+                                ImGui.Text("Sorted alphabetically")
+                            else
+                                ImGui.Text("Sorted by slot position")
+                            end
+                            ImGui.EndTooltip()
+                        end
+                        
+                        ImGui.TableSetColumnIndex(2)
+                        local quantity = tonumber(item.qty) or tonumber(item.stack) or 1
+                        if quantity > 1 then
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.4, 0.8, 1.0, 1.0) -- Light blue for stacks
+                            ImGui.Text(tostring(quantity))
+                            ImGui.PopStyleColor()
+                        else
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.8, 0.8, 0.8, 1.0) -- Gray for single items
+                            ImGui.Text("1")
+                            ImGui.PopStyleColor()
+                        end
+
+                        ImGui.TableSetColumnIndex(3)
+                        if ImGui.Button("Pickup##" .. uniqueID) then
+                            local BankSlotId = tonumber(item.bankslotid) or 0
+                            local SlotId = tonumber(item.slotid) or -1
+
+                            if BankSlotId >= 1 and BankSlotId <= 24 then
+                                if SlotId == -1 then
+                                    mq.cmdf("/shift /itemnotify bank%d leftmouseup", BankSlotId)
+                                else
+                                    mq.cmdf("/shift /itemnotify in bank%d %d leftmouseup", BankSlotId, SlotId)
+                                end
+                            elseif BankSlotId >= 25 and BankSlotId <= 26 then
+                                local sharedSlot = BankSlotId - 24 -- Convert to 1-2
+                                if SlotId == -1 then
+                                    -- Direct shared bank slot
+                                    mq.cmdf("/shift /itemnotify sharedbank%d leftmouseup", sharedSlot)
+                                else
+                                    -- Item in a shared bank bag
+                                    mq.cmdf("/shift /itemnotify in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
+                                end
+                            else
+                                mq.cmdf("/echo Unknown bank slot ID: %d", BankSlotId)
+                            end
+                        end
+
+                        if ImGui.IsItemHovered() then
+                            ImGui.SetTooltip("You need to be near a banker to pick up this item")
+                        end
+
+                        ImGui.PopID()
                     end
 
                     ImGui.EndTable()
                 end
+                
+                -- Display sorting info
+                ImGui.Spacing()
+                ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0)
+                local sortInfo = string.format("Showing %d items sorted by %s (%s)", 
+                    #sortedBankItems, 
+                    inventoryUI.bankSortMode == "slot" and "slot number" or "item name",
+                    inventoryUI.bankSortDirection == "asc" and "ascending" or "descending")
+                ImGui.Text(sortInfo)
+                ImGui.PopStyleColor()
             end
             ImGui.EndTabItem()
         end
@@ -3916,16 +4120,14 @@ function inventoryUI.render()
 
             ImGui.Separator()
 
-            -- Build peer status with stable ordering and proper name matching
             local peerStatus = {}
-            local peerNames = {} -- For stable ordering
+            local peerNames = {}
 
-            -- First pass: Add all connected peers
             for _, peer in ipairs(connectedPeers) do
                 if not peerStatus[peer.name] then
                     peerStatus[peer.name] = {
                         name = peer.name,
-                        displayName = peer.displayName, -- Store both names
+                        displayName = peer.displayName,
                         connected = true,
                         hasInventory = false,
                         method = peer.method,
@@ -3934,20 +4136,16 @@ function inventoryUI.render()
                     table.insert(peerNames, peer.name)
                 end
             end
-
-            -- Second pass: Add peers with inventory data (but may not be connected)
             for peerID, invData in pairs(inventory_actor.peer_inventories) do
                 local peerName = invData.name or "Unknown"
                 if peerName ~= mq.TLO.Me.CleanName() then
                     if peerStatus[peerName] then
-                        -- Update existing entry
                         peerStatus[peerName].hasInventory = true
                         peerStatus[peerName].lastSeen = "Has Inventory Data"
                     else
-                        -- Add new entry for offline peer with inventory data
                         peerStatus[peerName] = {
                             name = peerName,
-                            displayName = peerName, -- No display name for offline peers
+                            displayName = peerName,
                             connected = false,
                             hasInventory = true,
                             method = "Unknown",
@@ -3957,8 +4155,6 @@ function inventoryUI.render()
                     end
                 end
             end
-
-            -- Sort peer names alphabetically for consistent display order
             table.sort(peerNames, function(a, b)
                 return a:lower() < b:lower()
             end)
@@ -3972,17 +4168,12 @@ function inventoryUI.render()
                 ImGui.TableSetupColumn("Method", ImGuiTableColumnFlags.WidthFixed, 80)
                 ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 120)
                 ImGui.TableHeadersRow()
-
-                -- Use the sorted peer names list for consistent ordering
                 for _, peerName in ipairs(peerNames) do
                     local status = peerStatus[peerName]
                     if status then -- Safety check
                         ImGui.TableNextRow()
                         ImGui.TableNextColumn()
-
-                        -- Show display name if available, otherwise use character name
                         local nameToShow = status.displayName or status.name
-
                         if status.connected then
                             ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.8, 1.0, 1.0)
                             if ImGui.Selectable(nameToShow .. "##peer_" .. peerName) then
@@ -3998,7 +4189,6 @@ function inventoryUI.render()
                             ImGui.Text(nameToShow)
                             ImGui.PopStyleColor()
                         end
-
                         ImGui.TableNextColumn()
                         if status.connected then
                             ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
@@ -4009,7 +4199,6 @@ function inventoryUI.render()
                             ImGui.Text("No")
                             ImGui.PopStyleColor()
                         end
-
                         ImGui.TableNextColumn()
                         if status.hasInventory then
                             ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
@@ -4020,10 +4209,8 @@ function inventoryUI.render()
                             ImGui.Text("No")
                             ImGui.PopStyleColor()
                         end
-
                         ImGui.TableNextColumn()
                         ImGui.Text(status.method)
-
                         ImGui.TableNextColumn()
                         if status.connected and not status.hasInventory then
                             if ImGui.Button("Start Script##" .. peerName) then
@@ -4043,16 +4230,12 @@ function inventoryUI.render()
                         end
                     end
                 end
-
                 ImGui.EndTable()
             end
-
-            -- Debug section remains the same...
             ImGui.Separator()
             if ImGui.CollapsingHeader("Debug Information") then
                 ImGui.Text("Connection Method Details:")
                 ImGui.Indent()
-
                 if connectionMethod == "MQ2Mono" then
                     ImGui.Text("MQ2Mono Status: Loaded")
                     local e3Query = "e3,E3Bots.ConnectedClients"
@@ -4088,6 +4271,349 @@ function inventoryUI.render()
                 ImGui.Text(string.format("Known Inventory Peers: %d", inventoryPeerCount))
                 ImGui.Text(string.format("Actor Initialized: %s", inventory_actor.is_initialized() and "Yes" or "No"))
 
+                ImGui.Unindent()
+            end
+
+            ImGui.EndTabItem()
+        end
+
+-----------------------------------
+---Performance and Settings Tab
+-----------------------------------
+
+        if ImGui.BeginTabItem("Performance & Loading") then
+            ImGui.Text("Configure how inventory data is loaded and processed")
+            ImGui.Separator()
+            
+            -- Stats Loading Mode Section
+            if ImGui.BeginChild("StatsLoadingSection", 0, 200, true, ImGuiChildFlags.Border) then
+                ImGui.Text("Statistics Loading Configuration")
+                ImGui.Separator()
+                
+                -- Mode selector with descriptions
+                ImGui.Text("Loading Mode:")
+                ImGui.SameLine()
+                ImGui.SetNextItemWidth(150)
+                
+                local statsLoadingModes = {
+                    { id = "minimal", name = "Minimal", desc = "Essential data only (fastest)" },
+                    { id = "selective", name = "Selective", desc = "Basic stats (balanced)" },
+                    { id = "full", name = "Full", desc = "All statistics (complete)" }
+                }
+                
+                local currentMode = Settings.statsLoadingMode or "selective"
+                local currentModeDisplay = currentMode
+                for _, mode in ipairs(statsLoadingModes) do
+                    if mode.id == currentMode then
+                        currentModeDisplay = mode.name
+                        break
+                    end
+                end
+                
+                if ImGui.BeginCombo("##StatsLoadingMode", Settings.statsLoadingMode or "selective") then
+                    for _, mode in ipairs(statsLoadingModes) do
+                        local isSelected = (Settings.statsLoadingMode == mode.id)
+                        if ImGui.Selectable(mode.name .. " - " .. mode.desc, isSelected) then
+                            --print(string.format("[EZInventory] User selected mode: %s", mode.id))
+                            
+                            -- Update settings immediately
+                            OnStatsLoadingModeChanged(mode.id)
+                        end
+                        if isSelected then
+                            ImGui.SetItemDefaultFocus()
+                        end
+                    end
+                    ImGui.EndCombo()
+                end
+                ImGui.Spacing()
+                if Settings.statsLoadingMode == "minimal" then
+                    ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0)
+                    ImGui.Text("* Fastest startup and lowest memory usage")
+                    ImGui.Text("*  Only loads: Name, Icon, Quantity, No Drop status")
+                    ImGui.Text("* Best for: Large inventories, slower systems")
+                    ImGui.PopStyleColor()
+                elseif Settings.statsLoadingMode == "selective" then
+                    ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.8, 1.0, 1.0)
+                    ImGui.Text("* Balanced performance with essential stats")
+                    ImGui.Text("* Includes: AC, HP, Mana, Value, Tribute, Clickies, Augments")
+                    ImGui.Text("* Best for: Most users, medium-sized inventories")
+                    ImGui.PopStyleColor()
+                elseif Settings.statsLoadingMode == "full" then
+                    ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.8, 0.3, 1.0)
+                    ImGui.Text("* Complete item analysis with all statistics")
+                    ImGui.Text("* Everything: Heroics, Resistances, Combat Stats, Requirements")
+                    ImGui.Text("* Best for: Item analysis, smaller inventories")
+                    ImGui.PopStyleColor()
+                end
+                if Settings.statsLoadingMode == "selective" then
+                    ImGui.Spacing()
+                    ImGui.Separator()
+                    ImGui.Text("Fine-tune Selective Mode:")
+                    
+                    local basicStatsChanged = ImGui.Checkbox("Load Basic Stats", Settings.loadBasicStats)
+                    if basicStatsChanged ~= Settings.loadBasicStats then
+                        Settings.loadBasicStats = basicStatsChanged
+                        UpdateInventoryActorConfig()
+                    end
+                    
+                    ImGui.SameLine()
+                    if ImGui.Button("?##BasicStatsHelp") then
+                        inventoryUI.showBasicStatsHelp = not inventoryUI.showBasicStatsHelp
+                    end
+                    
+                    if inventoryUI.showBasicStatsHelp then
+                        ImGui.Indent()
+                        ImGui.PushStyleColor(ImGuiCol.Text, 0.8, 0.8, 0.8, 1.0)
+                        ImGui.Text("* AC, HP, Mana, Endurance")
+                        ImGui.Text("* Item Type, Value, Tribute")
+                        ImGui.Text("* Clicky spells and effects")
+                        ImGui.Text("* Augment names and links")
+                        ImGui.PopStyleColor()
+                        ImGui.Unindent()
+                    end
+                    
+                    local detailedStatsChanged = ImGui.Checkbox("Load Detailed Stats", Settings.loadDetailedStats)
+                    if detailedStatsChanged ~= Settings.loadDetailedStats then
+                        Settings.loadDetailedStats = detailedStatsChanged
+                        UpdateInventoryActorConfig()
+                    end
+                    
+                    ImGui.SameLine()
+                    if ImGui.Button("?##DetailedStatsHelp") then
+                        inventoryUI.showDetailedStatsHelp = not inventoryUI.showDetailedStatsHelp
+                    end
+                    
+                    if inventoryUI.showDetailedStatsHelp then
+                        ImGui.Indent()
+                        ImGui.PushStyleColor(ImGuiCol.Text, 0.8, 0.8, 0.8, 1.0)
+                        ImGui.Text("* All Attributes: STR, STA, AGI, DEX, WIS, INT, CHA")
+                        ImGui.Text("* All Resistances: Magic, Fire, Cold, Disease, Poison, Corruption")
+                        ImGui.Text("* Heroic Stats: Heroic STR, STA, etc.")
+                        ImGui.Text("* Combat: Attack, Accuracy, Avoidance, Haste")
+                        ImGui.Text("* Specialized: Spell Damage, Heal Amount, etc.")
+                        ImGui.PopStyleColor()
+                        ImGui.Unindent()
+                    end
+                end
+            end
+            ImGui.EndChild()
+            
+            -- Performance Metrics Section
+            if ImGui.BeginChild("PerformanceSection", 0, 150, true, ImGuiChildFlags.Border) then
+                ImGui.Text("Performance Metrics")
+                ImGui.Separator()
+                
+                -- Calculate current inventory stats
+                local itemCount = 0
+                local peerCount = 0
+                local totalNetworkItems = 0
+                
+                if inventoryUI.inventoryData then
+                    itemCount = #(inventoryUI.inventoryData.equipped or {})
+                    for _, bagItems in pairs(inventoryUI.inventoryData.bags or {}) do
+                        itemCount = itemCount + #bagItems
+                    end
+                    itemCount = itemCount + #(inventoryUI.inventoryData.bank or {})
+                end
+                
+                for _, invData in pairs(inventory_actor.peer_inventories) do
+                    peerCount = peerCount + 1
+                    if invData.equipped then totalNetworkItems = totalNetworkItems + #invData.equipped end
+                    if invData.bags then
+                        for _, bagItems in pairs(invData.bags) do
+                            totalNetworkItems = totalNetworkItems + #bagItems
+                        end
+                    end
+                    if invData.bank then totalNetworkItems = totalNetworkItems + #invData.bank end
+                end
+                
+                -- Performance estimates
+                local estimatedLoadTime = "Unknown"
+                local memoryEstimate = "Unknown"
+                local networkLoad = "Light"
+                
+                if Settings.statsLoadingMode == "minimal" then
+                    estimatedLoadTime = string.format("~%.1fs", itemCount * 0.001)
+                    memoryEstimate = string.format("~%.1f MB", itemCount * 0.0005)
+                    networkLoad = "Light"
+                elseif Settings.statsLoadingMode == "selective" then
+                    estimatedLoadTime = string.format("~%.1fs", itemCount * 0.003)
+                    memoryEstimate = string.format("~%.1f MB", itemCount * 0.002)
+                    networkLoad = totalNetworkItems > 2000 and "Moderate" or "Light"
+                elseif Settings.statsLoadingMode == "full" then
+                    estimatedLoadTime = string.format("~%.1fs", itemCount * 0.008)
+                    memoryEstimate = string.format("~%.1f MB", itemCount * 0.005)
+                    networkLoad = totalNetworkItems > 1000 and "Heavy" or "Moderate"
+                end
+                
+                -- Display metrics in a table
+                if ImGui.BeginTable("PerformanceMetrics", 2, ImGuiTableFlags.Borders) then
+                    ImGui.TableSetupColumn("Metric", ImGuiTableColumnFlags.WidthFixed, 120)
+                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch)
+                    
+                    ImGui.TableNextRow()
+                    ImGui.TableNextColumn()
+                    ImGui.Text("Local Items:")
+                    ImGui.TableNextColumn()
+                    ImGui.Text(tostring(itemCount))
+                    
+                    ImGui.TableNextRow()
+                    ImGui.TableNextColumn()
+                    ImGui.Text("Network Peers:")
+                    ImGui.TableNextColumn()
+                    ImGui.Text(tostring(peerCount))
+                    
+                    ImGui.TableNextRow()
+                    ImGui.TableNextColumn()
+                    ImGui.Text("Total Network Items:")
+                    ImGui.TableNextColumn()
+                    ImGui.Text(tostring(totalNetworkItems))
+                    
+                    ImGui.TableNextRow()
+                    ImGui.TableNextColumn()
+                    ImGui.Text("Est. Load Time:")
+                    ImGui.TableNextColumn()
+                    ImGui.Text(estimatedLoadTime)
+                    
+                    ImGui.TableNextRow()
+                    ImGui.TableNextColumn()
+                    ImGui.Text("Est. Memory:")
+                    ImGui.TableNextColumn()
+                    ImGui.Text(memoryEstimate)
+                    
+                    ImGui.TableNextRow()
+                    ImGui.TableNextColumn()
+                    ImGui.Text("Network Load:")
+                    ImGui.TableNextColumn()
+                    if networkLoad == "Heavy" then
+                        ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
+                    elseif networkLoad == "Moderate" then
+                        ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.8, 0.3, 1.0)
+                    else
+                        ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0)
+                    end
+                    ImGui.Text(networkLoad)
+                    ImGui.PopStyleColor()
+                    
+                    ImGui.EndTable()
+                end
+                
+                -- Warning for heavy loads
+                if networkLoad == "Heavy" then
+                    ImGui.Spacing()
+                    ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.5, 0.0, 1.0)
+                    ImGui.Text("*** Consider switching to Selective mode for better performance")
+                    ImGui.PopStyleColor()
+                end
+            end
+            ImGui.EndChild()
+            
+            -- Action Buttons Section
+            if ImGui.BeginChild("ActionsSection", 0, 80, true, ImGuiChildFlags.Border) then
+                ImGui.Text("* Actions")
+                ImGui.Separator()
+                
+                -- Apply Settings button
+                if ImGui.Button("Apply Settings", 120, 0) then
+                    UpdateInventoryActorConfig()
+                    SaveConfigWithStatsUpdate()
+                    print("[EZInventory] Configuration applied and saved")
+                end
+                
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Apply current settings and save to config file")
+                end
+                
+                ImGui.SameLine()
+                if ImGui.Button("Refresh Inventory", 120, 0) then
+                    inventoryUI.isLoadingData = true
+                    table.insert(inventory_actor.deferred_tasks, function()
+                        inventory_actor.publish_inventory()
+                        inventory_actor.request_all_inventories()
+                        local myName = mq.TLO.Me.Name()
+                        local selfPeer = {
+                            name = myName,
+                            server = server,
+                            isMailbox = true,
+                            data = inventory_actor.gather_inventory(),
+                        }
+                        loadInventoryData(selfPeer)
+                        inventoryUI.isLoadingData = false
+                        
+                        --print("[EZInventory] Inventory data refreshed")
+                    end)
+                end
+                
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Refresh all inventory data with current settings")
+                end
+                
+                ImGui.SameLine()
+                if ImGui.Button("Reset to Defaults", 120, 0) then
+                    Settings.statsLoadingMode = "selective"
+                    Settings.loadBasicStats = true
+                    Settings.loadDetailedStats = false
+                    OnStatsLoadingModeChanged("selective")
+                    --print("[EZInventory] Settings reset to defaults")
+                end
+                
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Reset all performance settings to recommended defaults")
+                end
+                if inventoryUI.isLoadingData then
+                    ImGui.Spacing()
+                    ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 1.0, 0.0, 1.0)
+                    ImGui.Text("Loading inventory data...")
+                    ImGui.PopStyleColor()
+                end
+            end
+            ImGui.EndChild()
+            if ImGui.CollapsingHeader("Advanced Settings") then
+                ImGui.Indent()
+                
+                -- Auto-refresh settings
+                local autoRefreshChanged = ImGui.Checkbox("Auto-refresh on config change", Settings.autoRefreshInventory or true)
+                if autoRefreshChanged ~= (Settings.autoRefreshInventory or true) then
+                    Settings.autoRefreshInventory = autoRefreshChanged
+                end
+                
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Automatically refresh inventory when performance settings change")
+                end
+                
+                -- Network broadcasting
+                local enableNetworkBroadcast = Settings.enableNetworkBroadcast or false
+                local networkBroadcastChanged = ImGui.Checkbox("Broadcast config to network", enableNetworkBroadcast)
+                if networkBroadcastChanged ~= enableNetworkBroadcast then
+                    Settings.enableNetworkBroadcast = networkBroadcastChanged
+                end
+                
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Automatically send configuration changes to other connected characters")
+                end
+                
+                ImGui.SameLine()
+                if ImGui.Button("Broadcast Now") then
+                    if inventory_actor and inventory_actor.broadcast_config_update then
+                        inventory_actor.broadcast_config_update()
+                        --print("[EZInventory] Configuration broadcast to all connected peers")
+                    end
+                end
+                
+                -- Filtering options
+                ImGui.Spacing()
+                ImGui.Text("Filtering Options:")
+                
+                local enableStatsFilteringChanged = ImGui.Checkbox("Enable stats-based filtering", Settings.enableStatsFiltering or true)
+                if enableStatsFilteringChanged ~= (Settings.enableStatsFiltering or true) then
+                    Settings.enableStatsFiltering = enableStatsFilteringChanged
+                    UpdateInventoryActorConfig()
+                end
+                
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Allow filtering items by statistics in the All Characters tab")
+                end
+                
                 ImGui.Unindent()
             end
 
@@ -4534,8 +5060,11 @@ mq.imgui.init("InventoryWindow", function()
 end)
 
 local helpInfo = {
-    { binding = "/ezinventory_ui",   description = "Toggles the visibility of the inventory window.", },
-    { binding = "/ezinventory_help", description = "Displays this help information.", },
+    { binding = "/ezinventory_ui",           description = "Toggles the visibility of the inventory window." },
+    { binding = "/ezinventory_help",         description = "Displays this help information." },
+    { binding = "/ezinventory_stats_mode",   description = "Changes stats loading mode: minimal/selective/full" },
+    { binding = "/ezinventory_toggle_basic", description = "Toggles basic stats loading on/off" },
+    { binding = "/ezinventory_toggle_detailed", description = "Toggles detailed stats loading on/off" },
 }
 
 local function displayHelp()
@@ -4561,6 +5090,34 @@ mq.bind("/ezinventory_cmd", function(peer, command, ...)
     end
     local args = { ..., }
     inventory_actor.send_inventory_command(peer, command, args)
+end)
+
+mq.bind("/ezinventory_stats_mode", function(mode)
+    if not mode or mode == "" then
+        print("Usage: /ezinventory_stats_mode <minimal|selective|full>")
+        print("Current mode: " .. (Settings.statsLoadingMode or "selective"))
+        return
+    end
+    
+    local validModes = { minimal = true, selective = true, full = true }
+    if validModes[mode] then
+        Settings.statsLoadingMode = mode
+        OnStatsLoadingModeChanged(mode)
+    else
+        print("Invalid mode. Use: minimal, selective, or full")
+    end
+end)
+
+mq.bind("/ezinventory_toggle_basic", function()
+    Settings.loadBasicStats = not Settings.loadBasicStats
+    UpdateInventoryActorConfig()
+    print(string.format("[EZInventory] Basic stats loading: %s", Settings.loadBasicStats and "ENABLED" or "DISABLED"))
+end)
+
+mq.bind("/ezinventory_toggle_detailed", function()
+    Settings.loadDetailedStats = not Settings.loadDetailedStats
+    UpdateInventoryActorConfig()
+    print(string.format("[EZInventory] Detailed stats loading: %s", Settings.loadDetailedStats and "ENABLED" or "DISABLED"))
 end)
 
 if isEMU then
@@ -4591,6 +5148,8 @@ local function main()
             print("\ag[EZInventory] Bot inventory system initialized\ax")
         end
     end
+
+    UpdateInventoryActorConfig()
 
     mq.delay(200)
     if isForeground then
