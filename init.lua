@@ -3318,6 +3318,32 @@ function inventoryUI.render()
             inventoryUI.raceFilter = inventoryUI.raceFilter or "All"
             inventoryUI.sortColumn = inventoryUI.sortColumn or "none"
             inventoryUI.sortDirection = inventoryUI.sortDirection or "asc"
+            
+            -- Pagination state
+            inventoryUI.pcCurrentPage = inventoryUI.pcCurrentPage or 1
+            inventoryUI.pcItemsPerPage = inventoryUI.pcItemsPerPage or 50
+            inventoryUI.pcTotalPages = inventoryUI.pcTotalPages or 1
+            
+            -- Track filter state for page reset
+            inventoryUI.pcPrevFilterState = inventoryUI.pcPrevFilterState or ""
+            local currentFilterState = string.format("%s_%s_%s_%s_%s_%d_%d_%d_%s_%s",
+                inventoryUI.sourceFilter,
+                tostring(inventoryUI.filterNoDrop),
+                inventoryUI.itemTypeFilter,
+                inventoryUI.classFilter,
+                inventoryUI.raceFilter,
+                inventoryUI.minValueFilter,
+                inventoryUI.maxValueFilter,
+                inventoryUI.minTributeFilter,
+                inventoryUI.sortColumn,
+                inventoryUI.sortDirection
+            )
+            
+            -- Reset to page 1 if filters changed
+            if inventoryUI.pcPrevFilterState ~= currentFilterState then
+                inventoryUI.pcCurrentPage = 1
+                inventoryUI.pcPrevFilterState = currentFilterState
+            end
 
             -- Enhanced search function with new filters
             local function enhancedSearchAcrossPeers()
@@ -3519,6 +3545,7 @@ function inventoryUI.render()
                         local selected = (inventoryUI.sourceFilter == option)
                         if ImGui.Selectable(option, selected) then
                             inventoryUI.sourceFilter = option
+                            inventoryUI.pcCurrentPage = 1  -- Reset to first page
                         end
                     end
                     ImGui.EndCombo()
@@ -3654,6 +3681,7 @@ function inventoryUI.render()
                     inventoryUI.minTributeFilter = 0
                     inventoryUI.sortColumn = "none"
                     inventoryUI.showValueFilters = false
+                    inventoryUI.pcCurrentPage = 1  -- Reset to first page
                 end
             end
             ImGui.EndChild()
@@ -3676,6 +3704,59 @@ function inventoryUI.render()
                 ImGui.PushStyleColor(ImGuiCol.Text, 0.6, 0.6, 1.0, 1.0)
                 ImGui.Text("Purple = Bank")
                 ImGui.PopStyleColor()
+                
+                -- Calculate pagination
+                local totalItems = #results
+                inventoryUI.pcTotalPages = math.max(1, math.ceil(totalItems / inventoryUI.pcItemsPerPage))
+                
+                -- Reset to page 1 if current page is out of bounds
+                if inventoryUI.pcCurrentPage > inventoryUI.pcTotalPages then
+                    inventoryUI.pcCurrentPage = 1
+                end
+                
+                -- Calculate page bounds
+                local startIdx = ((inventoryUI.pcCurrentPage - 1) * inventoryUI.pcItemsPerPage) + 1
+                local endIdx = math.min(startIdx + inventoryUI.pcItemsPerPage - 1, totalItems)
+                
+                -- Pagination controls
+                ImGui.Separator()
+                ImGui.Text(string.format("Page %d of %d | Showing items %d-%d of %d", 
+                    inventoryUI.pcCurrentPage, inventoryUI.pcTotalPages, startIdx, endIdx, totalItems))
+                ImGui.SameLine()
+                
+                -- Previous button
+                if inventoryUI.pcCurrentPage > 1 then
+                    if ImGui.Button("< Previous") then
+                        inventoryUI.pcCurrentPage = inventoryUI.pcCurrentPage - 1
+                    end
+                else
+                    ImGui.BeginDisabled()
+                    ImGui.Button("< Previous")
+                    ImGui.EndDisabled()
+                end
+                
+                ImGui.SameLine()
+                
+                -- Next button
+                if inventoryUI.pcCurrentPage < inventoryUI.pcTotalPages then
+                    if ImGui.Button("Next >") then
+                        inventoryUI.pcCurrentPage = inventoryUI.pcCurrentPage + 1
+                    end
+                else
+                    ImGui.BeginDisabled()
+                    ImGui.Button("Next >")
+                    ImGui.EndDisabled()
+                end
+                
+                ImGui.SameLine()
+                ImGui.SetNextItemWidth(100)
+                inventoryUI.pcItemsPerPage, changed = ImGui.InputInt("Items/Page", inventoryUI.pcItemsPerPage)
+                if changed then
+                    inventoryUI.pcItemsPerPage = math.max(10, math.min(200, inventoryUI.pcItemsPerPage))
+                    inventoryUI.pcCurrentPage = 1  -- Reset to first page when changing items per page
+                end
+                
+                ImGui.Separator()
 
                 local colors = {
                     -- Item type colors
@@ -3765,7 +3846,9 @@ function inventoryUI.render()
 
                     ImGui.PopStyleColor()
 
-                    for idx, item in ipairs(results) do
+                    -- Only render items for the current page
+                    for idx = startIdx, endIdx do
+                        local item = results[idx]
                         if item then -- Additional safety check
                             ImGui.TableNextRow()
                             

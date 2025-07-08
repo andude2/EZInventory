@@ -363,9 +363,14 @@ local function message_handler(message)
     
     if content.type == M.MSG_TYPE.UPDATE then
         if content.data and content.data.name and content.data.server then
-            local peerId = content.data.server .. "_" .. content.data.name
-            M.peer_inventories[peerId] = content.data
-            --print(string.format("[Inventory Actor] Updated inventory for %s/%s", content.data.name, content.data.server))
+            -- Filter out corpse inventories to prevent duplicates
+            if not string.match(content.data.name, "_corpse$") then
+                local peerId = content.data.server .. "_" .. content.data.name
+                M.peer_inventories[peerId] = content.data
+                --print(string.format("[Inventory Actor] Updated inventory for %s/%s", content.data.name, content.data.server))
+            else
+                --print(string.format("[Inventory Actor] Skipping corpse inventory for %s", content.data.name))
+            end
         end
         
     elseif content.type == M.MSG_TYPE.REQUEST then
@@ -379,8 +384,13 @@ local function message_handler(message)
         
     elseif content.type == M.MSG_TYPE.RESPONSE then
         if content.data and content.data.name and content.data.server then
-            local peerId = content.data.server .. "_" .. content.data.name
-            M.peer_inventories[peerId] = content.data
+            -- Filter out corpse inventories to prevent duplicates
+            if not string.match(content.data.name, "_corpse$") then
+                local peerId = content.data.server .. "_" .. content.data.name
+                M.peer_inventories[peerId] = content.data
+            else
+                --print(string.format("[Inventory Actor] Skipping corpse inventory for %s", content.data.name))
+            end
         end
         
     elseif content.type == M.MSG_TYPE.CONFIG_UPDATE then
