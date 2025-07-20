@@ -20,6 +20,10 @@ M.MSG_TYPE = {
     STATS_REQUEST   = "stats_request",
     STATS_RESPONSE  = "stats_response",
     CONFIG_UPDATE   = "config_update", -- New message type for config updates
+    PATH_REQUEST    = "path_request",   -- Request EverQuest path from peers
+    PATH_RESPONSE   = "path_response",  -- Response with EverQuest path
+    SCRIPT_PATH_REQUEST  = "script_path_request",   -- Request script path from peers
+    SCRIPT_PATH_RESPONSE = "script_path_response",  -- Response with script path
 }
 
 M.peer_inventories = {}
@@ -284,9 +288,17 @@ function M.get_item_detailed_stats(itemName, location, slotInfo)
     return nil
 end
 
+-- Helper function to normalize character names to Title Case
+local function normalizeCharacterName(name)
+    if name and #name > 0 then
+        return name:sub(1, 1):upper() .. name:sub(2):lower()
+    end
+    return name
+end
+
 function M.gather_inventory()
     local data = {
-        name = mq.TLO.Me.Name(),
+        name = normalizeCharacterName(mq.TLO.Me.Name()),
         server = mq.TLO.MacroQuest.Server(),
         class = mq.TLO.Me.Class(),
         equipped = {},
@@ -365,7 +377,10 @@ local function message_handler(message)
         if content.data and content.data.name and content.data.server then
             -- Filter out corpse inventories to prevent duplicates
             if not string.match(content.data.name, "_corpse$") then
-                local peerId = content.data.server .. "_" .. content.data.name
+                local normalizedName = normalizeCharacterName(content.data.name)
+                local peerId = content.data.server .. "_" .. normalizedName
+                -- Update the data name to normalized version
+                content.data.name = normalizedName
                 M.peer_inventories[peerId] = content.data
                 --print(string.format("[Inventory Actor] Updated inventory for %s/%s", content.data.name, content.data.server))
             else
@@ -386,7 +401,10 @@ local function message_handler(message)
         if content.data and content.data.name and content.data.server then
             -- Filter out corpse inventories to prevent duplicates
             if not string.match(content.data.name, "_corpse$") then
-                local peerId = content.data.server .. "_" .. content.data.name
+                local normalizedName = normalizeCharacterName(content.data.name)
+                local peerId = content.data.server .. "_" .. normalizedName
+                -- Update the data name to normalized version
+                content.data.name = normalizedName
                 M.peer_inventories[peerId] = content.data
             else
                 --print(string.format("[Inventory Actor] Skipping corpse inventory for %s", content.data.name))
@@ -422,6 +440,63 @@ local function message_handler(message)
         if M.stats_callbacks and M.stats_callbacks[content.requestId] then
             M.stats_callbacks[content.requestId](content.stats)
             M.stats_callbacks[content.requestId] = nil
+        end
+        
+    elseif content.type == M.MSG_TYPE.PATH_REQUEST then
+        -- Respond with our EverQuest path
+        local eqPath = mq.TLO.EverQuest.Path() or "Unknown"
+        if actor_mailbox then
+            actor_mailbox:send(
+                { mailbox = 'inventory_exchange' },
+                { 
+                    type = M.MSG_TYPE.PATH_RESPONSE, 
+                    peerName = normalizeCharacterName(mq.TLO.Me.CleanName()),
+                    path = eqPath
+                }
+            )
+        end
+        
+    elseif content.type == M.MSG_TYPE.PATH_RESPONSE then
+        -- Store the received path information
+        if content.peerName and content.path then
+            -- We'll need to expose this data to the main UI
+            M.peer_paths = M.peer_paths or {}
+            local normalizedPeerName = normalizeCharacterName(content.peerName)
+            M.peer_paths[normalizedPeerName] = content.path
+        end
+        
+    elseif content.type == M.MSG_TYPE.SCRIPT_PATH_REQUEST then
+        -- Respond with our script path (relative to EQ installation)
+        local eqPath = mq.TLO.EverQuest.Path() or ""
+        local scriptPath = debug.getinfo(1, "S").source:sub(2) -- Remove @ prefix
+        local relativePath = "Unknown"
+        
+        if eqPath ~= "" and scriptPath:find(eqPath, 1, true) == 1 then
+            relativePath = scriptPath:sub(#eqPath + 1):gsub("\\", "/")
+            if relativePath:sub(1, 1) == "/" then
+                relativePath = relativePath:sub(2)
+            end
+        else
+            relativePath = scriptPath:gsub("\\", "/")
+        end
+        
+        if actor_mailbox then
+            actor_mailbox:send(
+                { mailbox = 'inventory_exchange' },
+                { 
+                    type = M.MSG_TYPE.SCRIPT_PATH_RESPONSE, 
+                    peerName = normalizeCharacterName(mq.TLO.Me.CleanName()),
+                    scriptPath = relativePath
+                }
+            )
+        end
+        
+    elseif content.type == M.MSG_TYPE.SCRIPT_PATH_RESPONSE then
+        -- Store the received script path information
+        if content.peerName and content.scriptPath then
+            M.peer_script_paths = M.peer_script_paths or {}
+            local normalizedPeerName = normalizeCharacterName(content.peerName)
+            M.peer_script_paths[normalizedPeerName] = content.scriptPath
         end
     end
 end
@@ -487,6 +562,38 @@ function M.request_all_inventories()
         { type = M.MSG_TYPE.REQUEST }
     )
     return true
+end
+
+function M.request_all_paths()
+    if not actor_mailbox then
+        print("[Inventory Actor] Cannot request paths - actor system not initialized")
+        return false
+    end
+    actor_mailbox:send(
+        { mailbox = 'inventory_exchange' },
+        { type = M.MSG_TYPE.PATH_REQUEST }
+    )
+    return true
+end
+
+function M.get_peer_paths()
+    return M.peer_paths or {}
+end
+
+function M.request_all_script_paths()
+    if not actor_mailbox then
+        print("[Inventory Actor] Cannot request script paths - actor system not initialized")
+        return false
+    end
+    actor_mailbox:send(
+        { mailbox = 'inventory_exchange' },
+        { type = M.MSG_TYPE.SCRIPT_PATH_REQUEST }
+    )
+    return true
+end
+
+function M.get_peer_script_paths()
+    return M.peer_script_paths or {}
 end
 
 local function handle_proxy_give_batch(data)
@@ -1029,7 +1136,8 @@ local function handle_command_message(message)
     local args = content.args or {}
     local target = content.target
 
-    if target and target ~= mq.TLO.Me.CleanName() then
+    local myNormalizedName = normalizeCharacterName(mq.TLO.Me.CleanName())
+    if target and normalizeCharacterName(target) ~= myNormalizedName then
         return
     end
 
@@ -1113,7 +1221,8 @@ function M.broadcast_inventory_command(command, args)
     
     for peerID, _ in pairs(M.peer_inventories) do
         local name = peerID:match("_(.+)$")
-        if name and name ~= mq.TLO.Me.CleanName() then
+        local myNormalizedName = normalizeCharacterName(mq.TLO.Me.CleanName())
+        if name and name ~= myNormalizedName then
             M.send_inventory_command(name, command, args)
         end
     end
