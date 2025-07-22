@@ -1260,6 +1260,18 @@ function renderContextMenu()
             end
             hideContextMenu()
         end
+        
+        -- Only show Compare Equipment for equippable items
+        local item = inventoryUI.contextMenu.item
+        local canEquip = false
+        if item then
+            canEquip = (item.slots and #item.slots > 0) or item.slotid
+        end
+        
+        if canEquip and ImGui.MenuItem("Compare Equipment") then
+            showEquipmentComparison(item)
+            hideContextMenu()
+        end
         if not inventoryUI.multiSelectMode then
             local isNoDrop = false
             if inventoryUI.contextMenu.item and inventoryUI.contextMenu.item.nodrop and inventoryUI.contextMenu.item.nodrop == 1 then
@@ -1299,6 +1311,278 @@ function renderContextMenu()
 
     if ImGui.IsMouseClicked(ImGuiMouseButton.Left) and not ImGui.IsWindowHovered(ImGuiHoveredFlags.AnyWindow) then
         hideContextMenu()
+    end
+end
+
+---------------------------------------------------
+-- Equipment Comparison Functions
+---------------------------------------------------
+
+function showEquipmentComparison(item)
+    if not item then
+        mq.cmd("/echo Cannot compare - no item provided")
+        return
+    end
+    
+    -- Determine available slots for this item
+    local availableSlots = {}
+    
+    if item.slots and #item.slots > 0 then
+        -- Use the item's defined slots
+        for _, slotID in ipairs(item.slots) do
+            table.insert(availableSlots, tonumber(slotID))
+        end
+    elseif item.slotid then
+        -- Fallback to single slotid if available
+        table.insert(availableSlots, tonumber(item.slotid))
+    else
+        mq.cmd("/echo Cannot compare - item has no slot information")
+        return
+    end
+    
+    if #availableSlots == 0 then
+        mq.cmd("/echo Cannot compare - item has no valid slots")
+        return
+    end
+    
+    -- If multiple slots, show selection; if one slot, auto-select
+    if #availableSlots == 1 then
+        -- Auto-select the only available slot
+        inventoryUI.equipmentComparison = {
+            visible = true,
+            compareItem = item,
+            slotID = availableSlots[1],
+            availableSlots = availableSlots,
+            results = {}
+        }
+        generateEquipmentComparison(item, availableSlots[1])
+    else
+        -- Show slot selection interface
+        inventoryUI.equipmentComparison = {
+            visible = true,
+            compareItem = item,
+            slotID = nil, -- Will be selected by user
+            availableSlots = availableSlots,
+            showSlotSelection = true,
+            results = {}
+        }
+    end
+end
+
+function generateEquipmentComparison(compareItem, slotID)
+    local results = {}
+    slotID = slotID or compareItem.slotid
+    
+    -- Get stats from the comparison item
+    local compareStats = {
+        ac = compareItem.ac or 0,
+        hp = compareItem.hp or 0,
+        mana = compareItem.mana or 0
+    }
+    
+    -- Compare against each character's equipped item in that slot
+    for peerID, invData in pairs(inventory_actor.peer_inventories) do
+        if invData and invData.name and invData.equipped then
+            local equippedItem = nil
+            
+            -- Find the equipped item in this slot
+            for _, item in ipairs(invData.equipped) do
+                if item.slotid == slotID then
+                    equippedItem = item
+                    break
+                end
+            end
+            
+            local currentStats = {
+                ac = 0,
+                hp = 0,
+                mana = 0
+            }
+            
+            if equippedItem then
+                currentStats.ac = equippedItem.ac or 0
+                currentStats.hp = equippedItem.hp or 0
+                currentStats.mana = equippedItem.mana or 0
+            end
+            
+            -- Calculate net changes
+            local netChange = {
+                ac = compareStats.ac - currentStats.ac,
+                hp = compareStats.hp - currentStats.hp,
+                mana = compareStats.mana - currentStats.mana
+            }
+            
+            table.insert(results, {
+                characterName = invData.name,
+                currentItem = equippedItem,
+                netChange = netChange,
+                currentStats = currentStats,
+                newStats = compareStats
+            })
+        end
+    end
+    
+    -- Sort by character name
+    table.sort(results, function(a, b)
+        return a.characterName < b.characterName
+    end)
+    
+    inventoryUI.equipmentComparison.results = results
+end
+
+function renderEquipmentComparison()
+    if not inventoryUI.equipmentComparison or not inventoryUI.equipmentComparison.visible then
+        return
+    end
+    
+    local comparison = inventoryUI.equipmentComparison
+    if not comparison.compareItem then
+        inventoryUI.equipmentComparison.visible = false
+        return
+    end
+    
+    ImGui.SetNextWindowSize(800, 400, ImGuiCond.FirstUseEver)
+    local windowTitle = string.format("Equipment Comparison: %s", comparison.compareItem.name or "Unknown Item")
+    
+    if ImGui.Begin(windowTitle, true) then
+        -- Show slot selection if needed
+        if comparison.showSlotSelection then
+            ImGui.Text("Select slot to compare against:")
+            
+            -- Create slot name mapping
+            local slotNames = {
+                [0] = "Charm", [1] = "Left Ear", [2] = "Head", [3] = "Face", [4] = "Right Ear",
+                [5] = "Neck", [6] = "Shoulders", [7] = "Arms", [8] = "Back", [9] = "Left Wrist",
+                [10] = "Right Wrist", [11] = "Range", [12] = "Hands", [13] = "Primary", [14] = "Secondary",
+                [15] = "Left Ring", [16] = "Right Ring", [17] = "Chest", [18] = "Legs", [19] = "Feet",
+                [20] = "Waist", [21] = "Ammo", [22] = "Power Source"
+            }
+            
+            for _, slotID in ipairs(comparison.availableSlots) do
+                local slotName = slotNames[slotID] or ("Slot " .. slotID)
+                if ImGui.Button(string.format("%s (Slot %d)", slotName, slotID)) then
+                    comparison.slotID = slotID
+                    comparison.showSlotSelection = false
+                    generateEquipmentComparison(comparison.compareItem, slotID)
+                    break
+                end
+            end
+            
+            ImGui.Separator()
+            if ImGui.Button("Cancel") then
+                inventoryUI.equipmentComparison.visible = false
+            end
+        else
+            -- Show comparison results
+            local slotNames = {
+                [0] = "Charm", [1] = "Left Ear", [2] = "Head", [3] = "Face", [4] = "Right Ear",
+                [5] = "Neck", [6] = "Shoulders", [7] = "Arms", [8] = "Back", [9] = "Left Wrist",
+                [10] = "Right Wrist", [11] = "Range", [12] = "Hands", [13] = "Primary", [14] = "Secondary",
+                [15] = "Left Ring", [16] = "Right Ring", [17] = "Chest", [18] = "Legs", [19] = "Feet",
+                [20] = "Waist", [21] = "Ammo", [22] = "Power Source"
+            }
+            local slotName = slotNames[comparison.slotID] or ("Slot " .. (comparison.slotID or 0))
+            
+            ImGui.Text(string.format("Comparing %s vs %s", comparison.compareItem.name or "Unknown", slotName))
+            ImGui.Text(string.format("New Item Stats - AC: %d, HP: %d, Mana: %d", 
+                comparison.compareItem.ac or 0,
+                comparison.compareItem.hp or 0, 
+                comparison.compareItem.mana or 0))
+                
+            -- Show slot selection button if multiple slots available
+            if comparison.availableSlots and #comparison.availableSlots > 1 then
+                if ImGui.Button("Change Slot") then
+                    comparison.showSlotSelection = true
+                end
+                ImGui.SameLine()
+            end
+            
+            ImGui.Separator()
+            
+            if ImGui.BeginTable("ComparisonTable", 8, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+            ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 100)
+            ImGui.TableSetupColumn("Current Item", ImGuiTableColumnFlags.WidthStretch)
+            ImGui.TableSetupColumn("AC Change", ImGuiTableColumnFlags.WidthFixed, 80)
+            ImGui.TableSetupColumn("HP Change", ImGuiTableColumnFlags.WidthFixed, 80)
+            ImGui.TableSetupColumn("Mana Change", ImGuiTableColumnFlags.WidthFixed, 80)
+            ImGui.TableSetupColumn("New AC", ImGuiTableColumnFlags.WidthFixed, 60)
+            ImGui.TableSetupColumn("New HP", ImGuiTableColumnFlags.WidthFixed, 60)
+            ImGui.TableSetupColumn("New Mana", ImGuiTableColumnFlags.WidthFixed, 60)
+            ImGui.TableHeadersRow()
+            
+            for _, result in ipairs(comparison.results) do
+                ImGui.TableNextRow()
+                
+                -- Character name
+                ImGui.TableNextColumn()
+                ImGui.Text(result.characterName)
+                
+                -- Current item
+                ImGui.TableNextColumn()
+                if result.currentItem then
+                    ImGui.Text(result.currentItem.name or "Unknown")
+                else
+                    ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "(empty slot)")
+                end
+                
+                -- AC Change
+                ImGui.TableNextColumn()
+                local acChange = result.netChange.ac
+                if acChange > 0 then
+                    ImGui.TextColored(0.0, 1.0, 0.0, 1.0, string.format("+%d", acChange))
+                elseif acChange < 0 then
+                    ImGui.TextColored(1.0, 0.0, 0.0, 1.0, string.format("%d", acChange))
+                else
+                    ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "0")
+                end
+                
+                -- HP Change
+                ImGui.TableNextColumn()
+                local hpChange = result.netChange.hp
+                if hpChange > 0 then
+                    ImGui.TextColored(0.0, 1.0, 0.0, 1.0, string.format("+%d", hpChange))
+                elseif hpChange < 0 then
+                    ImGui.TextColored(1.0, 0.0, 0.0, 1.0, string.format("%d", hpChange))
+                else
+                    ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "0")
+                end
+                
+                -- Mana Change
+                ImGui.TableNextColumn()
+                local manaChange = result.netChange.mana
+                if manaChange > 0 then
+                    ImGui.TextColored(0.0, 1.0, 0.0, 1.0, string.format("+%d", manaChange))
+                elseif manaChange < 0 then
+                    ImGui.TextColored(1.0, 0.0, 0.0, 1.0, string.format("%d", manaChange))
+                else
+                    ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "0")
+                end
+                
+                -- New AC Total
+                ImGui.TableNextColumn()
+                ImGui.TextColored(1.0, 0.84, 0.0, 1.0, tostring(result.newStats.ac))
+                
+                -- New HP Total  
+                ImGui.TableNextColumn()
+                ImGui.TextColored(0.0, 0.8, 0.0, 1.0, tostring(result.newStats.hp))
+                
+                -- New Mana Total
+                ImGui.TableNextColumn()
+                ImGui.TextColored(0.2, 0.4, 1.0, 1.0, tostring(result.newStats.mana))
+            end
+            
+            ImGui.EndTable()
+        end
+        
+            ImGui.Separator()
+            if ImGui.Button("Close") then
+                inventoryUI.equipmentComparison.visible = false
+            end
+        end
+        
+        ImGui.End()
+    else
+        inventoryUI.equipmentComparison.visible = false
     end
 end
 
@@ -2797,10 +3081,13 @@ function inventoryUI.render()
                                     end
                                     if #equippedResults > 0 then
                                         ImGui.Text("Characters with " .. inventoryUI.selectedSlotName .. " equipped:")
-                                        if ImGui.BeginTable("EquippedComparisonTable", 3, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+                                        if ImGui.BeginTable("EquippedComparisonTable", 6, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
                                             ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 100)
                                             ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
                                             ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
+                                            ImGui.TableSetupColumn("AC", ImGuiTableColumnFlags.WidthFixed, 50)
+                                            ImGui.TableSetupColumn("HP", ImGuiTableColumnFlags.WidthFixed, 50)
+                                            ImGui.TableSetupColumn("Mana", ImGuiTableColumnFlags.WidthFixed, 50)
                                             ImGui.TableHeadersRow()
 
                                             for idx, result in ipairs(equippedResults) do
@@ -2838,6 +3125,30 @@ function inventoryUI.render()
                                                         inventoryUI.itemSuggestionsSlotID = result.item.slotid
                                                         inventoryUI.showItemSuggestions = true
                                                     end
+                                                end
+
+                                                -- AC Column (Gold)
+                                                ImGui.TableNextColumn()
+                                                if result.item and result.item.ac then
+                                                    ImGui.TextColored(1.0, 0.84, 0.0, 1.0, tostring(result.item.ac))
+                                                else
+                                                    ImGui.TextColored(0.5, 0.5, 0.5, 1.0, "--")
+                                                end
+
+                                                -- HP Column (Green)
+                                                ImGui.TableNextColumn()
+                                                if result.item and result.item.hp then
+                                                    ImGui.TextColored(0.0, 0.8, 0.0, 1.0, tostring(result.item.hp))
+                                                else
+                                                    ImGui.TextColored(0.5, 0.5, 0.5, 1.0, "--")
+                                                end
+
+                                                -- Mana Column (Blue)
+                                                ImGui.TableNextColumn()
+                                                if result.item and result.item.mana then
+                                                    ImGui.TextColored(0.2, 0.4, 1.0, 1.0, tostring(result.item.mana))
+                                                else
+                                                    ImGui.TextColored(0.5, 0.5, 0.5, 1.0, "--")
                                                 end
 
                                                 ImGui.PopID()
@@ -3491,7 +3802,9 @@ function inventoryUI.render()
                     -- Class filter
                     if inventoryUI.classFilter ~= "All" then
                         local classes = item.classes or ""
-                        if not classes:find(inventoryUI.classFilter) then
+                        if type(classes) == "string" and not classes:find(inventoryUI.classFilter) then
+                            return false
+                        elseif type(classes) ~= "string" then
                             return false
                         end
                     end
@@ -3499,7 +3812,9 @@ function inventoryUI.render()
                     -- Race filter
                     if inventoryUI.raceFilter ~= "All" then
                         local races = item.races or ""
-                        if not races:find(inventoryUI.raceFilter) then
+                        if type(races) == "string" and not races:find(inventoryUI.raceFilter) then
+                            return false
+                        elseif type(races) ~= "string" then
                             return false
                         end
                     end
@@ -4893,6 +5208,7 @@ function inventoryUI.render()
     renderContextMenu()
     renderMultiSelectIndicator()
     renderMultiTradePanel()
+    renderEquipmentComparison()
     renderItemSuggestions()
 
     renderItemExchange()
