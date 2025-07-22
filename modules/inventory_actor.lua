@@ -46,13 +46,7 @@ function M.is_initialized()
     local actorReady = actor_mailbox ~= nil
     local commandReady = command_mailbox ~= nil
     local bothReady = actorReady and commandReady
-    
-    -- Debug output to help diagnose initialization issues
-    if not bothReady then
-        print(string.format("[Inventory Actor] Initialization status - Actor: %s, Command: %s", 
-            tostring(actorReady), tostring(commandReady)))
-    end
-    
+
     return bothReady
 end
 
@@ -391,8 +385,9 @@ local function message_handler(message)
     elseif content.type == M.MSG_TYPE.REQUEST then
         local myInventory = M.gather_inventory()
         if actor_mailbox then
+            local module_name = _G.EZINV_MODULE or "ezinventory"
             actor_mailbox:send(
-                { mailbox = 'inventory_exchange' },
+                { mailbox = module_name:lower() .. '_exchange' },
                 { type = M.MSG_TYPE.RESPONSE, data = myInventory }
             )
         end
@@ -426,7 +421,7 @@ local function message_handler(message)
         
         if actor_mailbox then
             actor_mailbox:send(
-                { mailbox = 'inventory_exchange' },
+                { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
                 { 
                     type = M.MSG_TYPE.STATS_RESPONSE, 
                     requestId = requestId,
@@ -447,7 +442,7 @@ local function message_handler(message)
         local eqPath = mq.TLO.EverQuest.Path() or "Unknown"
         if actor_mailbox then
             actor_mailbox:send(
-                { mailbox = 'inventory_exchange' },
+                { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
                 { 
                     type = M.MSG_TYPE.PATH_RESPONSE, 
                     peerName = normalizeCharacterName(mq.TLO.Me.CleanName()),
@@ -482,7 +477,7 @@ local function message_handler(message)
         
         if actor_mailbox then
             actor_mailbox:send(
-                { mailbox = 'inventory_exchange' },
+                { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
                 { 
                     type = M.MSG_TYPE.SCRIPT_PATH_RESPONSE, 
                     peerName = normalizeCharacterName(mq.TLO.Me.CleanName()),
@@ -508,7 +503,7 @@ function M.broadcast_config_update()
     end
     
     actor_mailbox:send(
-        { mailbox = 'inventory_exchange' },
+        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
         { type = M.MSG_TYPE.CONFIG_UPDATE, config = M.config }
     )
     return true
@@ -517,7 +512,7 @@ end
 M.stats_callbacks = {}
 function M.request_item_stats(peerName, itemName, location, slotInfo, callback)
     if not actor_mailbox then
-        print("[Inventory Actor] Cannot request stats - actor system not initialized")
+        --print("[Inventory Actor] Cannot request stats - actor system not initialized")
         return false
     end
     
@@ -546,7 +541,7 @@ function M.publish_inventory()
     
     local inventoryData = M.gather_inventory()
     actor_mailbox:send(
-        { mailbox = 'inventory_exchange' },
+        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
         { type = M.MSG_TYPE.UPDATE, data = inventoryData }
     )
     return true
@@ -558,7 +553,7 @@ function M.request_all_inventories()
         return false
     end
     actor_mailbox:send(
-        { mailbox = 'inventory_exchange' },
+        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
         { type = M.MSG_TYPE.REQUEST }
     )
     return true
@@ -566,11 +561,11 @@ end
 
 function M.request_all_paths()
     if not actor_mailbox then
-        print("[Inventory Actor] Cannot request paths - actor system not initialized")
+        --print("[Inventory Actor] Cannot request paths - actor system not initialized")
         return false
     end
     actor_mailbox:send(
-        { mailbox = 'inventory_exchange' },
+        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
         { type = M.MSG_TYPE.PATH_REQUEST }
     )
     return true
@@ -582,11 +577,11 @@ end
 
 function M.request_all_script_paths()
     if not actor_mailbox then
-        print("[Inventory Actor] Cannot request script paths - actor system not initialized")
+        --print("[Inventory Actor] Cannot request script paths - actor system not initialized")
         return false
     end
     actor_mailbox:send(
-        { mailbox = 'inventory_exchange' },
+        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
         { type = M.MSG_TYPE.SCRIPT_PATH_REQUEST }
     )
     return true
@@ -1237,29 +1232,42 @@ function M.init()
         return true
     end
 
+    -- Get module name from global (should be set by main script)
+    local module_name = _G.EZINV_MODULE or "ezinventory"
+    
+    -- Ensure it's lowercase for consistency
+    module_name = module_name:lower()
+    _G.EZINV_MODULE = module_name
+
+    --print(string.format("[Inventory Actor] Using module name: %s", module_name))
+    --print(string.format("[Inventory Actor] DEBUG: Registering mailbox: %s_exchange", module_name))
+
+    -- Register exchange mailbox
     local ok1, mailbox1 = pcall(function()
-        return actors.register('inventory_exchange', message_handler)
+        return actors.register(module_name .. "_exchange", message_handler)
     end)
-    if not ok1 then
-        print(string.format('[Inventory Actor] Failed to register inventory_exchange: %s', tostring(mailbox1)))
-        return false
-    elseif not mailbox1 then
-        print('[Inventory Actor] actors.register returned nil for inventory_exchange')
+
+    if not ok1 or not mailbox1 then
+        print(string.format('[Inventory Actor] Failed to register %s_exchange: %s', module_name, tostring(mailbox1)))
         return false
     end
-    actor_mailbox = mailbox1
-    print("[Inventory Actor] inventory_exchange registered")
 
+    actor_mailbox = mailbox1
+    --print(string.format("[Inventory Actor] %s_exchange registered for: %s", module_name, mq.TLO.Me.Name()))
+    --print(string.format("[Inventory Actor] DEBUG: Registering mailbox: %s_command", module_name))
+
+    -- Register command mailbox
     local ok2, mailbox2 = pcall(function()
-        return actors.register('inventory_command', handle_command_message)
+        return actors.register(module_name .. "_command", handle_command_message)
     end)
 
     if not ok2 or not mailbox2 then
-        print(string.format('[Inventory Actor] Failed to register inventory_command: %s', tostring(mailbox2)))
+        print(string.format('[Inventory Actor] Failed to register %s_command: %s', module_name, tostring(mailbox2)))
         return false
     end
+
     command_mailbox = mailbox2
-    print("[Inventory Actor] inventory_command registered")
+    --print(string.format("[Inventory Actor] %s_command registered", module_name))
 
     return true
 end

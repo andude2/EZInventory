@@ -5,6 +5,40 @@ local mq                  = require("mq")
 local ImGui               = require("ImGui")
 local icons               = require("mq.icons")
 local Files               = require("mq.Utils")
+
+local function getModuleName()
+    local info = debug.getinfo(1, "S")
+    if info and info.source then
+        local scriptPath = info.source:sub(2) -- Remove @ prefix
+        
+        -- If this is init.lua, try to get the directory name instead
+        if scriptPath:match("init%.lua$") then
+            local directory = scriptPath:match("([^/\\]+)[/\\]init%.lua$")
+            if directory then
+                return directory
+            end
+        end
+        
+        -- Otherwise get the filename without extension
+        local filename = scriptPath:match("([^/\\]+)%.lua$")
+        if filename and filename ~= "init" then
+            return filename
+        end
+    end
+    
+    if _G.EZINV_MODULE then
+        return _G.EZINV_MODULE
+    end
+    
+    return "EZInventory"
+end
+
+local original_module_name = getModuleName()
+local module_name = original_module_name:lower()
+_G.EZINV_MODULE = module_name
+_G.EZINV_BROADCAST_NAME = original_module_name
+print(string.format("[EZInventory] Internal module name: %s, Broadcast name: %s", module_name, original_module_name))
+
 local inventory_actor     = require("EZInventory.modules.inventory_actor")
 local peerCache           = {}
 local lastCacheTime       = 0
@@ -5062,14 +5096,15 @@ local function main()
 
     mq.delay(200)
     if isForeground then
+        local broadcast_name = _G.EZINV_BROADCAST_NAME or "EZInventory"
         if mq.TLO.Plugin("MQ2Mono").IsLoaded() then
-            mq.cmd("/e3bcaa /lua run ezinventory")
+            mq.cmdf("/e3bca /lua run %s", broadcast_name)
             print("Broadcasting inventory startup via MQ2Mono to all connected clients...")
         elseif mq.TLO.Plugin("MQ2DanNet").IsLoaded() then
-            mq.cmd("/dgaexecute /lua run ezinventory")
+            mq.cmdf("/dgaexecute /lua run %s", broadcast_name)
             print("Broadcasting inventory startup via DanNet to all connected clients...")
         elseif mq.TLO.Plugin("MQ2EQBC").IsLoaded() and mq.TLO.EQBC.Connected() then
-            mq.cmd("/bca //lua run ezinventory")
+            mq.cmdf("/bca //lua run %s", broadcast_name)
             print("Broadcasting inventory startup via EQBC to all connected clients...")
         else
             print("\ar[EZInventory] Warning: Neither DanNet nor EQBC is available for broadcasting\ax")
