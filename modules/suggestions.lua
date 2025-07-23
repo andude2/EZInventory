@@ -60,15 +60,25 @@ function Suggestions.canClassUseItem(item, targetClass)
 end
 
 function Suggestions.requestDetailedStats(peerName, itemName, location, callback)
-    local cacheKey = string.format("%s_%s_%s", peerName, itemName, location)
-    if Suggestions.detailed_stats_cache[cacheKey] then
-        callback(Suggestions.detailed_stats_cache[cacheKey])
-        return
+    local cacheKey = string.format("%s_%s_%s_%d", peerName, itemName, location, os.time())
+    local shortCacheKey = string.format("%s_%s_%s", peerName, itemName, location)
+    
+    if Suggestions.detailed_stats_cache[shortCacheKey] then
+        local cachedEntry = Suggestions.detailed_stats_cache[shortCacheKey]
+        if os.time() - cachedEntry.timestamp < 30 then
+            callback(cachedEntry.stats)
+            return
+        else
+            Suggestions.detailed_stats_cache[shortCacheKey] = nil
+        end
     end
     if peerName == mq.TLO.Me.CleanName() then
         local stats = inventory_actor.get_item_detailed_stats(itemName, location, nil)
         if stats then
-            Suggestions.detailed_stats_cache[cacheKey] = stats
+            Suggestions.detailed_stats_cache[shortCacheKey] = {
+                stats = stats,
+                timestamp = os.time()
+            }
             callback(stats)
         else
             callback(nil)
@@ -77,7 +87,10 @@ function Suggestions.requestDetailedStats(peerName, itemName, location, callback
     end
     inventory_actor.request_item_stats(peerName, itemName, location, nil, function(stats)
         if stats then
-            Suggestions.detailed_stats_cache[cacheKey] = stats
+            Suggestions.detailed_stats_cache[shortCacheKey] = {
+                stats = stats,
+                timestamp = os.time()
+            }
         end
         callback(stats)
     end)

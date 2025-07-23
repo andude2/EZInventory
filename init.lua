@@ -69,6 +69,14 @@ local Defaults = {
     showHP               = false,
     showMana             = false,
     showClicky           = false,
+    comparisonShowSvMagic         = false,
+    comparisonShowSvFire          = false,
+    comparisonShowSvCold          = false,
+    comparisonShowSvDisease       = false,
+    comparisonShowSvPoison        = false,
+    comparisonShowFocusEffects    = false,
+    comparisonShowMod2s           = false,
+    comparisonShowClickies        = false,
     loadBasicStats       = true,
     loadDetailedStats    = false,
     enableStatsFiltering = true,
@@ -163,6 +171,14 @@ local inventoryUI = {
     showHP                        = false,
     showMana                      = false,
     showClicky                    = false,
+    comparisonShowSvMagic         = false,
+    comparisonShowSvFire          = false,
+    comparisonShowSvCold          = false,
+    comparisonShowSvDisease       = false,
+    comparisonShowSvPoison        = false,
+    comparisonShowFocusEffects    = false,
+    comparisonShowMod2s           = false,
+    comparisonShowClickies        = false,
     windowLocked                  = false,
     equipView                     = "table",
     selectedSlotID                = nil,
@@ -1377,12 +1393,39 @@ function generateEquipmentComparison(compareItem, slotID)
     local compareStats = {
         ac = compareItem.ac or 0,
         hp = compareItem.hp or 0,
-        mana = compareItem.mana or 0
+        mana = compareItem.mana or 0,
+        svMagic = compareItem.svMagic or 0,
+        svFire = compareItem.svFire or 0,
+        svCold = compareItem.svCold or 0,
+        svDisease = compareItem.svDisease or 0,
+        svPoison = compareItem.svPoison or 0,
+        clickySpell = compareItem.clickySpell or "None"
     }
     
     -- Compare against each character's equipped item in that slot
     for peerID, invData in pairs(inventory_actor.peer_inventories) do
         if invData and invData.name and invData.equipped then
+            -- Check if this character's class can use the comparison item
+            local characterClass = invData.class
+            
+            -- Fallback: Try to get class from spawn data if not in inventory data
+            if not characterClass or characterClass == "UNK" then
+                local spawn = mq.TLO.Spawn("pc = " .. invData.name)
+                if spawn() then
+                    characterClass = spawn.Class()
+                end
+            end
+            
+            -- Final fallback: If it's the current character, use Me.Class
+            if (not characterClass or characterClass == "UNK") and invData.name == mq.TLO.Me.CleanName() then
+                characterClass = mq.TLO.Me.Class()
+            end
+            
+            -- Skip if we still don't have a class or if the class can't use the item
+            if not characterClass or characterClass == "UNK" or not Suggestions.canClassUseItem(compareItem, characterClass) then
+                goto continue  -- Skip this character
+            end
+            
             local equippedItem = nil
             
             -- Find the equipped item in this slot
@@ -1396,20 +1439,37 @@ function generateEquipmentComparison(compareItem, slotID)
             local currentStats = {
                 ac = 0,
                 hp = 0,
-                mana = 0
+                mana = 0,
+                svMagic = 0,
+                svFire = 0,
+                svCold = 0,
+                svDisease = 0,
+                svPoison = 0,
+                clickySpell = "None"
             }
             
             if equippedItem then
                 currentStats.ac = equippedItem.ac or 0
                 currentStats.hp = equippedItem.hp or 0
                 currentStats.mana = equippedItem.mana or 0
+                currentStats.svMagic = equippedItem.svMagic or 0
+                currentStats.svFire = equippedItem.svFire or 0
+                currentStats.svCold = equippedItem.svCold or 0
+                currentStats.svDisease = equippedItem.svDisease or 0
+                currentStats.svPoison = equippedItem.svPoison or 0
+                currentStats.clickySpell = equippedItem.clickySpell or "None"
             end
             
             -- Calculate net changes
             local netChange = {
                 ac = compareStats.ac - currentStats.ac,
                 hp = compareStats.hp - currentStats.hp,
-                mana = compareStats.mana - currentStats.mana
+                mana = compareStats.mana - currentStats.mana,
+                svMagic = compareStats.svMagic - currentStats.svMagic,
+                svFire = compareStats.svFire - currentStats.svFire,
+                svCold = compareStats.svCold - currentStats.svCold,
+                svDisease = compareStats.svDisease - currentStats.svDisease,
+                svPoison = compareStats.svPoison - currentStats.svPoison
             }
             
             table.insert(results, {
@@ -1420,6 +1480,7 @@ function generateEquipmentComparison(compareItem, slotID)
                 newStats = compareStats
             })
         end
+        ::continue::
     end
     
     -- Sort by character name
@@ -1488,6 +1549,11 @@ function renderEquipmentComparison()
                 comparison.compareItem.ac or 0,
                 comparison.compareItem.hp or 0, 
                 comparison.compareItem.mana or 0))
+            
+            -- Show class restrictions and filtering info
+            local classInfo = Suggestions.getItemClassInfo(comparison.compareItem)
+            ImGui.TextColored(0.7, 0.7, 1.0, 1.0, string.format("Classes: %s", classInfo))
+            ImGui.TextColored(0.6, 0.8, 0.6, 1.0, "Note: Only showing characters whose class can use this item")
                 
             -- Show slot selection button if multiple slots available
             if comparison.availableSlots and #comparison.availableSlots > 1 then
@@ -1497,17 +1563,60 @@ function renderEquipmentComparison()
                 ImGui.SameLine()
             end
             
+            -- Column visibility checkboxes
+            ImGui.Text("Show Columns:")
+            ImGui.SameLine()
+            inventoryUI.comparisonShowSvMagic = ImGui.Checkbox("SvMagic", inventoryUI.comparisonShowSvMagic)
+            ImGui.SameLine()
+            inventoryUI.comparisonShowSvFire = ImGui.Checkbox("SvFire", inventoryUI.comparisonShowSvFire)
+            ImGui.SameLine()
+            inventoryUI.comparisonShowSvCold = ImGui.Checkbox("SvCold", inventoryUI.comparisonShowSvCold)
+            ImGui.SameLine()
+            inventoryUI.comparisonShowSvDisease = ImGui.Checkbox("SvDisease", inventoryUI.comparisonShowSvDisease)
+            ImGui.SameLine()
+            inventoryUI.comparisonShowSvPoison = ImGui.Checkbox("SvPoison", inventoryUI.comparisonShowSvPoison)
+            ImGui.SameLine()
+            inventoryUI.comparisonShowClickies = ImGui.Checkbox("Clickies", inventoryUI.comparisonShowClickies)
+            
             ImGui.Separator()
             
-            if ImGui.BeginTable("ComparisonTable", 8, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+            -- Calculate dynamic column count
+            local baseColumns = 5  -- Character, Current Item, AC Change, HP Change, Mana Change
+            local optionalColumns = 0
+            if inventoryUI.comparisonShowSvMagic then optionalColumns = optionalColumns + 1 end
+            if inventoryUI.comparisonShowSvFire then optionalColumns = optionalColumns + 1 end
+            if inventoryUI.comparisonShowSvCold then optionalColumns = optionalColumns + 1 end
+            if inventoryUI.comparisonShowSvDisease then optionalColumns = optionalColumns + 1 end
+            if inventoryUI.comparisonShowSvPoison then optionalColumns = optionalColumns + 1 end
+            if inventoryUI.comparisonShowClickies then optionalColumns = optionalColumns + 1 end
+            local totalColumns = baseColumns + optionalColumns
+            
+            if ImGui.BeginTable("ComparisonTable", totalColumns, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
             ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 100)
             ImGui.TableSetupColumn("Current Item", ImGuiTableColumnFlags.WidthStretch)
             ImGui.TableSetupColumn("AC Change", ImGuiTableColumnFlags.WidthFixed, 80)
             ImGui.TableSetupColumn("HP Change", ImGuiTableColumnFlags.WidthFixed, 80)
             ImGui.TableSetupColumn("Mana Change", ImGuiTableColumnFlags.WidthFixed, 80)
-            ImGui.TableSetupColumn("New AC", ImGuiTableColumnFlags.WidthFixed, 60)
-            ImGui.TableSetupColumn("New HP", ImGuiTableColumnFlags.WidthFixed, 60)
-            ImGui.TableSetupColumn("New Mana", ImGuiTableColumnFlags.WidthFixed, 60)
+            
+            -- Dynamic optional columns
+            if inventoryUI.comparisonShowSvMagic then
+                ImGui.TableSetupColumn("SvMagic Change", ImGuiTableColumnFlags.WidthFixed, 80)
+            end
+            if inventoryUI.comparisonShowSvFire then
+                ImGui.TableSetupColumn("SvFire Change", ImGuiTableColumnFlags.WidthFixed, 80)
+            end
+            if inventoryUI.comparisonShowSvCold then
+                ImGui.TableSetupColumn("SvCold Change", ImGuiTableColumnFlags.WidthFixed, 80)
+            end
+            if inventoryUI.comparisonShowSvDisease then
+                ImGui.TableSetupColumn("SvDisease Change", ImGuiTableColumnFlags.WidthFixed, 80)
+            end
+            if inventoryUI.comparisonShowSvPoison then
+                ImGui.TableSetupColumn("SvPoison Change", ImGuiTableColumnFlags.WidthFixed, 80)
+            end
+            if inventoryUI.comparisonShowClickies then
+                ImGui.TableSetupColumn("Clicky Effect", ImGuiTableColumnFlags.WidthStretch)
+            end
             ImGui.TableHeadersRow()
             
             for _, result in ipairs(comparison.results) do
@@ -1520,7 +1629,16 @@ function renderEquipmentComparison()
                 -- Current item
                 ImGui.TableNextColumn()
                 if result.currentItem then
-                    ImGui.Text(result.currentItem.name or "Unknown")
+                    local itemName = result.currentItem.name or "Unknown"
+                    local uniqueID = string.format("%s_%s", result.characterName, result.currentItem.slotid or "0")
+                    if ImGui.Selectable(itemName .. "##" .. uniqueID) then
+                        local links = mq.ExtractLinks(result.currentItem.itemlink)
+                        if links and #links > 0 then
+                            mq.ExecuteTextLink(links[1])
+                        else
+                            mq.cmd('/echo No item link found in the database.')
+                        end
+                    end
                 else
                     ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "(empty slot)")
                 end
@@ -1558,17 +1676,79 @@ function renderEquipmentComparison()
                     ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "0")
                 end
                 
-                -- New AC Total
-                ImGui.TableNextColumn()
-                ImGui.TextColored(1.0, 0.84, 0.0, 1.0, tostring(result.newStats.ac))
+                -- Optional resist columns
+                if inventoryUI.comparisonShowSvMagic then
+                    ImGui.TableNextColumn()
+                    local svMagicChange = (result.newStats.svMagic or 0) - (result.currentStats.svMagic or 0)
+                    if svMagicChange > 0 then
+                        ImGui.TextColored(0.0, 1.0, 0.0, 1.0, string.format("+%d", svMagicChange))
+                    elseif svMagicChange < 0 then
+                        ImGui.TextColored(1.0, 0.0, 0.0, 1.0, string.format("%d", svMagicChange))
+                    else
+                        ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "0")
+                    end
+                end
                 
-                -- New HP Total  
-                ImGui.TableNextColumn()
-                ImGui.TextColored(0.0, 0.8, 0.0, 1.0, tostring(result.newStats.hp))
+                if inventoryUI.comparisonShowSvFire then
+                    ImGui.TableNextColumn()
+                    local svFireChange = (result.newStats.svFire or 0) - (result.currentStats.svFire or 0)
+                    if svFireChange > 0 then
+                        ImGui.TextColored(0.0, 1.0, 0.0, 1.0, string.format("+%d", svFireChange))
+                    elseif svFireChange < 0 then
+                        ImGui.TextColored(1.0, 0.0, 0.0, 1.0, string.format("%d", svFireChange))
+                    else
+                        ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "0")
+                    end
+                end
                 
-                -- New Mana Total
-                ImGui.TableNextColumn()
-                ImGui.TextColored(0.2, 0.4, 1.0, 1.0, tostring(result.newStats.mana))
+                if inventoryUI.comparisonShowSvCold then
+                    ImGui.TableNextColumn()
+                    local svColdChange = (result.newStats.svCold or 0) - (result.currentStats.svCold or 0)
+                    if svColdChange > 0 then
+                        ImGui.TextColored(0.0, 1.0, 0.0, 1.0, string.format("+%d", svColdChange))
+                    elseif svColdChange < 0 then
+                        ImGui.TextColored(1.0, 0.0, 0.0, 1.0, string.format("%d", svColdChange))
+                    else
+                        ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "0")
+                    end
+                end
+                
+                if inventoryUI.comparisonShowSvDisease then
+                    ImGui.TableNextColumn()
+                    local svDiseaseChange = (result.newStats.svDisease or 0) - (result.currentStats.svDisease or 0)
+                    if svDiseaseChange > 0 then
+                        ImGui.TextColored(0.0, 1.0, 0.0, 1.0, string.format("+%d", svDiseaseChange))
+                    elseif svDiseaseChange < 0 then
+                        ImGui.TextColored(1.0, 0.0, 0.0, 1.0, string.format("%d", svDiseaseChange))
+                    else
+                        ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "0")
+                    end
+                end
+                
+                if inventoryUI.comparisonShowSvPoison then
+                    ImGui.TableNextColumn()
+                    local svPoisonChange = (result.newStats.svPoison or 0) - (result.currentStats.svPoison or 0)
+                    if svPoisonChange > 0 then
+                        ImGui.TextColored(0.0, 1.0, 0.0, 1.0, string.format("+%d", svPoisonChange))
+                    elseif svPoisonChange < 0 then
+                        ImGui.TextColored(1.0, 0.0, 0.0, 1.0, string.format("%d", svPoisonChange))
+                    else
+                        ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "0")
+                    end
+                end
+                
+                if inventoryUI.comparisonShowClickies then
+                    ImGui.TableNextColumn()
+                    local newClicky = result.newStats.clickySpell or "None"
+                    local currentClicky = result.currentStats.clickySpell or "None"
+                    if newClicky ~= "None" and newClicky ~= currentClicky then
+                        ImGui.TextColored(0.3, 1.0, 0.3, 1.0, newClicky)
+                    elseif currentClicky ~= "None" and newClicky ~= currentClicky then
+                        ImGui.TextColored(1.0, 0.3, 0.3, 1.0, "Lost: " .. currentClicky)
+                    else
+                        ImGui.TextColored(0.6, 0.6, 0.6, 1.0, newClicky)
+                    end
+                end
             end
             
             ImGui.EndTable()
@@ -1586,17 +1766,30 @@ function renderEquipmentComparison()
     end
 end
 
+local itemSuggestionsCache = {
+    equippedItem = nil,
+    lastUpdateTime = 0,
+    updateInterval = 0.5
+}
+
 function renderItemSuggestions()
     if not inventoryUI.showItemSuggestions then return end
 
     local function getEquippedItemForPeerSlot(peerName, slotID)
         if not peerName or not slotID then return nil end
 
+        local currentTime = os.clock()
+        if currentTime - itemSuggestionsCache.lastUpdateTime < itemSuggestionsCache.updateInterval and itemSuggestionsCache.equippedItem then
+            return itemSuggestionsCache.equippedItem
+        end
+
+        local equippedItem = nil
         if peerName == extractCharacterName(mq.TLO.Me.Name()) then
             local equipped = inventory_actor.gather_inventory().equipped or {}
             for _, item in ipairs(equipped) do
                 if tonumber(item.slotid) == tonumber(slotID) then
-                    return item
+                    equippedItem = item
+                    break
                 end
             end
         else
@@ -1604,14 +1797,18 @@ function renderItemSuggestions()
                 if peer.name == peerName and peer.equipped then
                     for _, item in ipairs(peer.equipped) do
                         if tonumber(item.slotid) == tonumber(slotID) then
-                            return item
+                            equippedItem = item
+                            break
                         end
                     end
+                    if equippedItem then break end
                 end
             end
         end
 
-        return nil
+        itemSuggestionsCache.equippedItem = equippedItem
+        itemSuggestionsCache.lastUpdateTime = currentTime
+        return equippedItem
     end
 
     local currentlyEquipped = getEquippedItemForPeerSlot(inventoryUI.itemSuggestionsTarget,
@@ -1716,7 +1913,7 @@ function renderItemSuggestions()
             inventoryUI.itemSuggestionsLocationFilter = inventoryUI.itemSuggestionsLocationFilter or "All"
             ImGui.SetNextItemWidth(100)
             if ImGui.BeginCombo("##LocationFilter", inventoryUI.itemSuggestionsLocationFilter) then
-                local locations = { "All", "Equipped", "Inventory", "Bank", }
+                local locations = { "All", "Equipped", "Bags", "Bank", }
                 for _, location in ipairs(locations) do
                     if ImGui.Selectable(location, inventoryUI.itemSuggestionsLocationFilter == location) then
                         inventoryUI.itemSuggestionsLocationFilter = location
@@ -1745,13 +1942,45 @@ function renderItemSuggestions()
             end
 
             ImGui.Spacing()
+            
+            inventoryUI.itemSuggestionsPage = inventoryUI.itemSuggestionsPage or 1
+            local itemsPerPage = 20
+            local totalPages = math.max(1, math.ceil(#filteredItems / itemsPerPage))
+            
+            if inventoryUI.itemSuggestionsPage > totalPages then
+                inventoryUI.itemSuggestionsPage = totalPages
+            end
+            
+            local startIdx = (inventoryUI.itemSuggestionsPage - 1) * itemsPerPage + 1
+            local endIdx = math.min(startIdx + itemsPerPage - 1, #filteredItems)
+            local pagedItems = {}
+            for i = startIdx, endIdx do
+                if filteredItems[i] then
+                    table.insert(pagedItems, filteredItems[i])
+                end
+            end
+            
             if #filteredItems ~= #inventoryUI.availableItems then
-                ImGui.Text(string.format("Showing %d of %d items (filtered)", #filteredItems, #inventoryUI
-                    .availableItems))
+                ImGui.Text(string.format("Showing %d-%d of %d items (filtered, page %d/%d)", 
+                    startIdx, endIdx, #filteredItems, inventoryUI.itemSuggestionsPage, totalPages))
+            else
+                ImGui.Text(string.format("Showing %d-%d of %d items (page %d/%d)", 
+                    startIdx, endIdx, #filteredItems, inventoryUI.itemSuggestionsPage, totalPages))
+            end
+            
+            if totalPages > 1 then
+                ImGui.SameLine()
+                if ImGui.Button("Prev") and inventoryUI.itemSuggestionsPage > 1 then
+                    inventoryUI.itemSuggestionsPage = inventoryUI.itemSuggestionsPage - 1
+                end
+                ImGui.SameLine()
+                if ImGui.Button("Next") and inventoryUI.itemSuggestionsPage < totalPages then
+                    inventoryUI.itemSuggestionsPage = inventoryUI.itemSuggestionsPage + 1
+                end
             end
 
             -- FIXED: Better table height calculation and error handling
-            local calculatedTableHeight = math.min(maxTableHeight, math.max(100, (#filteredItems + 1) * rowHeight + 30))
+            local calculatedTableHeight = math.min(maxTableHeight, math.max(100, (itemsPerPage + 1) * rowHeight + 30))
 
             if ImGui.BeginTable("AvailableItemsTable", 6, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.ScrollY + ImGuiTableFlags.Sortable, 0, calculatedTableHeight) then
                 ImGui.TableSetupColumn("Select", ImGuiTableColumnFlags.WidthFixed, 50)
@@ -1770,7 +1999,7 @@ function renderItemSuggestions()
                     inventoryUI.selectedComparisonItem = nil
                 end
 
-                for idx, availableItem in ipairs(filteredItems) do
+                for idx, availableItem in ipairs(pagedItems) do
                     ImGui.TableNextRow()
                     ImGui.PushID("available_item_" .. idx)
 
@@ -1787,19 +2016,22 @@ function renderItemSuggestions()
                         inventoryUI.selectedComparisonItemId = itemId
                         inventoryUI.selectedComparisonItem = availableItem
 
-                        -- Clear previous detailed stats and trigger loading
-                        inventoryUI.detailedAvailableStats = nil
-                        inventoryUI.detailedEquippedStats = nil
+                        if not itemSuggestionsCache.statsRequested or itemSuggestionsCache.lastStatsItemId ~= itemId then
+                            inventoryUI.detailedAvailableStats = nil
+                            inventoryUI.detailedEquippedStats = nil
+                            itemSuggestionsCache.statsRequested = true
+                            itemSuggestionsCache.lastStatsItemId = itemId
 
-                        -- Request detailed stats for comparison
-                        requestDetailedStatsForComparison(
-                            availableItem,
-                            currentlyEquipped,
-                            function(availableStats, equippedStats)
-                                inventoryUI.detailedAvailableStats = availableStats
-                                inventoryUI.detailedEquippedStats = equippedStats
-                            end
-                        )
+                            requestDetailedStatsForComparison(
+                                availableItem,
+                                currentlyEquipped,
+                                function(availableStats, equippedStats)
+                                    inventoryUI.detailedAvailableStats = availableStats
+                                    inventoryUI.detailedEquippedStats = equippedStats
+                                    itemSuggestionsCache.statsRequested = false
+                                end
+                            )
+                        end
                     end
 
                     ImGui.TableNextColumn()
@@ -1931,9 +2163,10 @@ function renderItemSuggestions()
 
                         for _, stat in ipairs(statList) do
                             local label = stat.label
+                            local fieldName = stat.field or label:lower()
                             local suffix = stat.suffix or ""
-                            local newVal = tonumber(selectedItem[label:lower()]) or 0
-                            local oldVal = tonumber(equippedItem[label:lower()]) or 0
+                            local newVal = tonumber(selectedItem[fieldName]) or 0
+                            local oldVal = tonumber(equippedItem[fieldName]) or 0
                             local diff = newVal - oldVal
 
                             if diff ~= 0 then
@@ -1966,19 +2199,20 @@ function renderItemSuggestions()
 
                     ImGui.TableSetColumnIndex(0)
                     showStatComparisonColumn({
-                        { label = "AC", }, { label = "HP", }, { label = "Mana", }, { label = "Endurance", },
+                        { label = "AC", field = "ac" }, { label = "HP", field = "hp" }, { label = "Mana", field = "mana" }, { label = "Endurance", field = "endurance" },
                     }, selectedItem, equippedItem)
 
                     ImGui.TableSetColumnIndex(1)
                     showStatComparisonColumn({
-                        { label = "STR", }, { label = "STA", }, { label = "AGI", }, { label = "DEX", },
-                        { label = "WIS", }, { label = "INT", }, { label = "CHA", },
+                        { label = "STR", field = "str" }, { label = "STA", field = "sta" }, { label = "AGI", field = "agi" }, { label = "DEX", field = "dex" },
+                        { label = "WIS", field = "wis" }, { label = "INT", field = "int" }, { label = "CHA", field = "cha" },
                     }, selectedItem, equippedItem)
 
                     ImGui.TableSetColumnIndex(2)
                     showStatComparisonColumn({
-                        { label = "SvMagic", }, { label = "SvFire", }, { label = "SvCold", }, { label = "SvDisease", }, { label = "SvPoison", },
-                        { label = "Attack", }, { label = "Haste", suffix = "%", },
+                        { label = "SvMagic", field = "svMagic" }, { label = "SvFire", field = "svFire" }, { label = "SvCold", field = "svCold" }, 
+                        { label = "SvDisease", field = "svDisease" }, { label = "SvPoison", field = "svPoison" },
+                        { label = "Attack", field = "attack" }, { label = "Haste", field = "haste", suffix = "%", },
                     }, selectedItem, equippedItem)
 
                     ImGui.EndTable()
@@ -1991,6 +2225,9 @@ function renderItemSuggestions()
             local targetChar = inventoryUI.itemSuggestionsTarget
             local slotID = inventoryUI.itemSuggestionsSlot
             clearComparisonCache()
+            Suggestions.clearStatsCache()
+            itemSuggestionsCache.equippedItem = nil
+            itemSuggestionsCache.lastUpdateTime = 0
             inventory_actor.request_all_inventories()
             inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
             inventoryUI.selectedComparisonItem = nil
