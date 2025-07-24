@@ -83,39 +83,33 @@ end
 
 -- Safe auto-exchange function with comprehensive safety checks
 function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
-    --printf("[DEBUG] safe_auto_exchange called with itemName=%s, targetSlot=%s, targetSlotName=%s", tostring(itemName), tostring(targetSlot), tostring(targetSlotName))
     
     -- Convert slot name to MQ2Exchange compatible format
     local mq2ExchangeSlotName = convertSlotNameForMQ2Exchange(targetSlotName)
-    --printf("[DEBUG] Converted slot name from '%s' to '%s' for MQ2Exchange", targetSlotName, mq2ExchangeSlotName)
     
     -- Check if MQ2Exchange plugin is loaded
     if not mq.TLO.Plugin("MQ2Exchange").IsLoaded() then
         printf("[AUTO-EXCHANGE] ERROR: MQ2Exchange plugin is not loaded!")
         return false
     end
-    --printf("[DEBUG] MQ2Exchange plugin is loaded")
     
     -- Check if cursor is free
     if mq.TLO.Cursor() then
         printf("[AUTO-EXCHANGE] Cursor not free, cannot exchange %s", itemName)
         return false
     end
-    --printf("[DEBUG] Cursor is free, proceeding with exchange")
     
     -- Wait up to 10 seconds for the item to appear in inventory
     local foundItem = nil
     local maxWaitTime = 10
     local startTime = os.time()
     
-    --printf("[DEBUG] Waiting up to %d seconds for %s to appear in inventory...", maxWaitTime, itemName)
     
     while (os.time() - startTime) < maxWaitTime do
         -- Use FindItem TLO for better item detection
         local findItem = mq.TLO.FindItem(itemName)
         if findItem() then
             foundItem = findItem
-            --printf("[DEBUG] Found item %s using FindItem", itemName)
             break
         end
         
@@ -124,7 +118,6 @@ function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
             local item = mq.TLO.Me.Inventory(i)
             if item() and item.Name() == itemName then
                 foundItem = item
-                --printf("[DEBUG] Found item %s in inventory slot %d", itemName, i)
                 break
             end
         end
@@ -139,7 +132,6 @@ function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
                     local item = bagSlot.Item(slot)
                     if item() and item.Name() == itemName then
                         foundItem = item
-                        --printf("[DEBUG] Found item %s in bag %d slot %d", itemName, bag, slot)
                         break
                     end
                 end
@@ -149,6 +141,7 @@ function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
         
         if foundItem then break end
         
+        -- Can't use mq.delay() in actor thread, so we'll just continue the loop with os.time() check
     end
     
     if not foundItem then
@@ -159,32 +152,26 @@ function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
     -- Check if there's enough bag space for currently equipped item (if any)
     local currentlyEquipped = mq.TLO.Me.Inventory(targetSlot)
     if currentlyEquipped() then
-        --printf("[DEBUG] Currently equipped item: %s", currentlyEquipped.Name())
         
         -- Check bag space using MacroQuest TLO
         -- Size 1 = tiny, 2 = small, 3 = medium, 4 = large, 5 = giant
         local equippedItemSize = currentlyEquipped.Size() or 1
         local freeSpace = mq.TLO.Me.FreeInventory(equippedItemSize)()
         
-        --printf("[DEBUG] Currently equipped item size: %d, free inventory slots for that size: %d", equippedItemSize, freeSpace)
         
         if freeSpace == 0 then
-            printf("[AUTO-EXCHANGE] No bag space available for currently equipped %s (size %d)", currentlyEquipped.Name(), equippedItemSize)
+            printf("[AUTO-EXCHANGE] No bag space available for currently equipped %s (size %d)", 
+                currentlyEquipped.Name(), equippedItemSize)
             return false
         end
         
-        --printf("[DEBUG] Sufficient bag space available (%d slots)", freeSpace)
     else
-        --printf("[DEBUG] No item currently equipped in %s slot", targetSlotName)
     end
     
-    --printf("[DEBUG] Item found! Proceeding with exchange...")
     
     -- Perform the exchange using MQ2Exchange
     -- Use mq2ExchangeSlotName (converted slot name) for the command
-    --printf("[DEBUG] Executing exchange command: /exchange \"%s\" %s", itemName, mq2ExchangeSlotName)
     mq.cmdf("/exchange \"%s\" %s", itemName, mq2ExchangeSlotName)
-    --printf("[DEBUG] Exchange command sent")
     
     -- Note: We can't reliably wait/verify in the actor thread context, 
     -- but the /exchange command appears to work correctly.
@@ -1126,8 +1113,6 @@ end
 
 function M.perform_single_item_trade(request)
     printf("Performing single item trade for: %s to %s", request.name, request.toon)
-    printf("[DEBUG] autoExchange=%s, TargetSlot=%s, targetSlotName=%s", 
-        tostring(request.autoExchange), tostring(request.targetSlot), tostring(request.targetSlotName))
 
     if request.fromBank then
         printf("Attempting to retrieve %s from bank.", request.name)
@@ -1256,27 +1241,20 @@ function M.perform_single_item_trade(request)
     mq.delay(500)
 
     mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
-    printf("[DEBUG] Trade button clicked, waiting for trade to complete...")
 
     timeout = os.time() + 10
     while mq.TLO.Window("TradeWnd").Open() and os.time() < timeout do
         mq.delay(500)
     end
 
-    printf("[DEBUG] Trade window check: Open=%s, Timeout=%s", 
-        tostring(mq.TLO.Window("TradeWnd").Open()), tostring(os.time() >= timeout))
 
     if mq.TLO.Window("TradeWnd").Open() then
         printf("[WARN] Trade window remained open for %s. Possible issue with trade.", request.name)
         mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
     else
         printf("Successfully traded %s to %s.", request.name, request.toon)
-        printf("[DEBUG] autoExchange %s targetslot %s", tostring(request.autoExchange), tostring(request.targetSlot))
         -- If auto-exchange is enabled, send exchange command to recipient after successful trade
         if request.autoExchange and request.targetSlot then
-            printf("[DEBUG] Trade successful, sending auto-exchange command to %s", request.toon)
-            printf("[DEBUG] autoExchange data: itemName=%s, targetSlot=%s, targetSlotName=%s", 
-                tostring(request.name), tostring(request.targetSlot), tostring(request.targetSlotName))
             -- Wait 2 seconds for the item to be fully transferred
             mq.delay(2000)
             M.send_inventory_command(request.toon, "perform_auto_exchange", {
@@ -1286,9 +1264,6 @@ function M.perform_single_item_trade(request)
                     targetSlotName = request.targetSlotName
                 })
             })
-        else
-            printf("[DEBUG] Auto-exchange not triggered: autoExchange=%s, targetSlot=%s", 
-                tostring(request.autoExchange), tostring(request.targetSlot))
         end
     end
 
@@ -1338,8 +1313,6 @@ local function handle_command_message(message)
         if request then
             printf("Received proxy_give (single) command for: %s to %s",
                 request.name, request.to)
-            printf("[DEBUG PROXY_GIVE] autoExchange=%s, TargetSlot=%s, targetSlotName=%s", 
-                tostring(request.autoExchange), tostring(request.targetSlot), tostring(request.targetSlotName))
         else
             printf("[ERROR] Failed to decode proxy_give JSON: %s", tostring(args[1]))
         end

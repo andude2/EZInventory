@@ -201,6 +201,7 @@ local inventoryUI = {
     itemSuggestionsSlot           = nil,
     itemSuggestionsSlotName       = "",
     availableItems                = {},
+    filteredItemsCache            = { items = {}, lastFilterKey = "" },
     selectedComparisonItemId      = "",
     selectedComparisonItem        = nil,
     itemSuggestionsSourceFilter   = "All",
@@ -1770,20 +1771,24 @@ end
 
 local itemSuggestionsCache = {
     equippedItem = nil,
-    lastUpdateTime = 0,
-    updateInterval = 0.5
+    lastPeerName = nil,
+    lastSlotID = nil
 }
 
 function renderItemSuggestions()
     if not inventoryUI.showItemSuggestions then return end
+    
 
     local function getEquippedItemForPeerSlot(peerName, slotID)
         if not peerName or not slotID then return nil end
 
-        local currentTime = os.clock()
-        if currentTime - itemSuggestionsCache.lastUpdateTime < itemSuggestionsCache.updateInterval and itemSuggestionsCache.equippedItem then
+        -- Check if we can use cached result (parameters haven't changed)
+        if itemSuggestionsCache.equippedItem and 
+           itemSuggestionsCache.lastPeerName == peerName and 
+           itemSuggestionsCache.lastSlotID == slotID then
             return itemSuggestionsCache.equippedItem
         end
+        
 
         local equippedItem = nil
         if peerName == extractCharacterName(mq.TLO.Me.Name()) then
@@ -1808,8 +1813,10 @@ function renderItemSuggestions()
             end
         end
 
+        -- Cache the result with the parameters used
         itemSuggestionsCache.equippedItem = equippedItem
-        itemSuggestionsCache.lastUpdateTime = currentTime
+        itemSuggestionsCache.lastPeerName = peerName
+        itemSuggestionsCache.lastSlotID = slotID
         return equippedItem
     end
 
@@ -1964,70 +1971,114 @@ function renderItemSuggestions()
                 ImGui.SameLine()
                 if ImGui.Button(inventoryUI.itemSuggestionsSortDirection == "asc" and "Asc" or "Desc") then
                     inventoryUI.itemSuggestionsSortDirection = inventoryUI.itemSuggestionsSortDirection == "asc" and "desc" or "asc"
+                    inventoryUI.filteredItemsCache.lastFilterKey = ""  -- Invalidate cache
                 end
             end
 
+            -- Cached filtering system to avoid re-filtering every frame
             local filteredItems = {}
-            for _, availableItem in ipairs(inventoryUI.availableItems) do
-                local includeItem = true
+            local filterKey = string.format("%s_%s_%s_%s_%s_%d", 
+                inventoryUI.itemSuggestionsTarget or "nil",
+                inventoryUI.itemSuggestionsSourceFilter or "nil",
+                inventoryUI.itemSuggestionsLocationFilter or "nil", 
+                currentlyEquipped and currentlyEquipped.name or "nil",
+                inventoryUI.itemSuggestionsSortColumn or "nil",
+                #inventoryUI.availableItems)
+            
+            -- Only rebuild filtered items if something changed
+            if inventoryUI.filteredItemsCache.lastFilterKey ~= filterKey then
+                local newFilteredItems = {}
+                
+                for _, availableItem in ipairs(inventoryUI.availableItems) do
+                    local includeItem = true
 
-                if inventoryUI.itemSuggestionsSourceFilter ~= "All" and
-                    availableItem.source ~= inventoryUI.itemSuggestionsSourceFilter then
-                    includeItem = false
-                end
+                    -- Check if item is an augment (do this first)
+                    local isAugment = availableItem.item and availableItem.item.itemtype and 
+                                     tostring(availableItem.item.itemtype):lower():find("augment")
 
-                if inventoryUI.itemSuggestionsLocationFilter ~= "All" and
-                    availableItem.location ~= inventoryUI.itemSuggestionsLocationFilter then
-                    includeItem = false
-                end
-
-                if includeItem then
-                    table.insert(filteredItems, availableItem)
-                end
-            end
-
-            -- Apply sorting to filtered items
-            if inventoryUI.itemSuggestionsSortColumn ~= "none" and #filteredItems > 0 then
-                table.sort(filteredItems, function(a, b)
-                    if not a or not b then return false end
-                    
-                    local valueA, valueB
-                    
-                    if inventoryUI.itemSuggestionsSortColumn == "name" then
-                        valueA = (a.name or ""):lower()
-                        valueB = (b.name or ""):lower()
-                    elseif inventoryUI.itemSuggestionsSortColumn == "source" then
-                        valueA = (a.source or ""):lower()
-                        valueB = (b.source or ""):lower()
-                    elseif inventoryUI.itemSuggestionsSortColumn == "location" then
-                        valueA = (a.location or ""):lower()
-                        valueB = (b.location or ""):lower()
-                    elseif inventoryUI.itemSuggestionsSortColumn == "hp" then
-                        valueA = tonumber(a.item.hp) or 0
-                        valueB = tonumber(b.item.hp) or 0
-                    elseif inventoryUI.itemSuggestionsSortColumn == "mana" then
-                        valueA = tonumber(a.item.mana) or 0
-                        valueB = tonumber(b.item.mana) or 0
-                    elseif inventoryUI.itemSuggestionsSortColumn == "ac" then
-                        valueA = tonumber(a.item.ac) or 0
-                        valueB = tonumber(b.item.ac) or 0
-                    elseif inventoryUI.itemSuggestionsSortColumn == "str" then
-                        valueA = tonumber(a.item.str) or 0
-                        valueB = tonumber(b.item.str) or 0
-                    elseif inventoryUI.itemSuggestionsSortColumn == "agi" then
-                        valueA = tonumber(a.item.agi) or 0
-                        valueB = tonumber(b.item.agi) or 0
-                    else
-                        return false
+                    -- Filter out augments if they belong to the target character
+                    if isAugment and availableItem.source == inventoryUI.itemSuggestionsTarget then
+                        includeItem = false
                     end
-                    
-                    if inventoryUI.itemSuggestionsSortDirection == "asc" then
-                        return valueA < valueB
-                    else
-                        return valueA > valueB
+
+                    -- Filter nodrop items: only show nodrop items if they belong to the target character
+                    if includeItem and availableItem.item and availableItem.item.nodrop == 1 and 
+                       availableItem.source ~= inventoryUI.itemSuggestionsTarget then
+                        includeItem = false
                     end
-                end)
+
+                    -- Filter out items that are currently equipped in the same slot
+                    if includeItem and availableItem.source == inventoryUI.itemSuggestionsTarget and 
+                       currentlyEquipped and availableItem.name == currentlyEquipped.name and
+                       availableItem.location == "Equipped" then
+                        includeItem = false
+                    end
+
+                    if includeItem and inventoryUI.itemSuggestionsSourceFilter ~= "All" and
+                        availableItem.source ~= inventoryUI.itemSuggestionsSourceFilter then
+                        includeItem = false
+                    end
+
+                    if includeItem and inventoryUI.itemSuggestionsLocationFilter ~= "All" and
+                        availableItem.location ~= inventoryUI.itemSuggestionsLocationFilter then
+                        includeItem = false
+                    end
+
+                    if includeItem then
+                        table.insert(newFilteredItems, availableItem)
+                    end
+                end
+                
+                -- Apply sorting to the filtered items before caching
+                if inventoryUI.itemSuggestionsSortColumn ~= "none" and #newFilteredItems > 0 then
+                    table.sort(newFilteredItems, function(a, b)
+                        if not a or not b then return false end
+                        
+                        local valueA, valueB
+                        
+                        if inventoryUI.itemSuggestionsSortColumn == "name" then
+                            valueA = (a.name or ""):lower()
+                            valueB = (b.name or ""):lower()
+                        elseif inventoryUI.itemSuggestionsSortColumn == "source" then
+                            valueA = (a.source or ""):lower()
+                            valueB = (b.source or ""):lower()
+                        elseif inventoryUI.itemSuggestionsSortColumn == "location" then
+                            valueA = (a.location or ""):lower()
+                            valueB = (b.location or ""):lower()
+                        elseif inventoryUI.itemSuggestionsSortColumn == "hp" then
+                            valueA = tonumber(a.item.hp) or 0
+                            valueB = tonumber(b.item.hp) or 0
+                        elseif inventoryUI.itemSuggestionsSortColumn == "mana" then
+                            valueA = tonumber(a.item.mana) or 0
+                            valueB = tonumber(b.item.mana) or 0
+                        elseif inventoryUI.itemSuggestionsSortColumn == "ac" then
+                            valueA = tonumber(a.item.ac) or 0
+                            valueB = tonumber(b.item.ac) or 0
+                        elseif inventoryUI.itemSuggestionsSortColumn == "str" then
+                            valueA = tonumber(a.item.str) or 0
+                            valueB = tonumber(b.item.str) or 0
+                        elseif inventoryUI.itemSuggestionsSortColumn == "agi" then
+                            valueA = tonumber(a.item.agi) or 0
+                            valueB = tonumber(b.item.agi) or 0
+                        else
+                            return false
+                        end
+                        
+                        if inventoryUI.itemSuggestionsSortDirection == "asc" then
+                            return valueA < valueB
+                        else
+                            return valueA > valueB
+                        end
+                    end)
+                end
+
+                -- Cache the filtered and sorted results
+                inventoryUI.filteredItemsCache.items = newFilteredItems
+                inventoryUI.filteredItemsCache.lastFilterKey = filterKey
             end
+            
+            -- Use cached filtered and sorted items
+            filteredItems = inventoryUI.filteredItemsCache.items
 
             ImGui.Spacing()
             
@@ -2265,36 +2316,86 @@ function renderItemSuggestions()
                     end
 
                     ImGui.TableNextColumn()
-                    if ImGui.Button("Trade##" .. idx) then
-                        local peerRequest = {
-                            name = availableItem.name,
-                            to = inventoryUI.itemSuggestionsTarget,
-                            fromBank = availableItem.location == "Bank",
-                            bagid = availableItem.item.bagid,
-                            slotid = availableItem.item.slotid,
-                            bankslotid = availableItem.item.bankslotid,
-                            -- Add auto-exchange information
-                            autoExchange = Settings.autoExchangeEnabled,
-                            targetSlot = inventoryUI.itemSuggestionsSlot,
-                            targetSlotName = inventoryUI.itemSuggestionsSlotName
-                        }
-
-                        -- printf("[DEBUG] Sending proxy_give with autoExchange=%s, targetSlot=%s, targetSlotName=%s", tostring(Settings.autoExchangeEnabled), tostring(inventoryUI.itemSuggestionsSlot), tostring(inventoryUI.itemSuggestionsSlotName))
-                        inventory_actor.send_inventory_command(availableItem.source, "proxy_give",
-                            { json.encode(peerRequest), })
-                        if Settings.autoExchangeEnabled then
-                            printf("Requesting %s to give %s to %s for auto-exchange to %s",
-                                availableItem.source,
-                                availableItem.name,
-                                inventoryUI.itemSuggestionsTarget,
-                                inventoryUI.itemSuggestionsSlotName)
-                        else
-                            printf("Requesting %s to give %s to %s",
-                                availableItem.source,
-                                availableItem.name,
-                                inventoryUI.itemSuggestionsTarget)
+                    -- Check if this is an augment (special handling)
+                    local isAugment = availableItem.item and availableItem.item.itemtype and 
+                                     tostring(availableItem.item.itemtype):lower():find("augment")
+                    
+                    if isAugment then
+                        -- Augments: only show "Trade" button, never exchange logic
+                        if ImGui.Button("Trade##" .. idx) then
+                            inventoryUI.showGiveItemPanel = true
+                            inventoryUI.selectedGiveItem = availableItem.name
+                            inventoryUI.selectedGiveTarget = inventoryUI.itemSuggestionsTarget
+                            inventoryUI.selectedGiveSource = availableItem.source
                         end
-                        inventoryUI.showItemSuggestions = false
+                    elseif availableItem.source == inventoryUI.itemSuggestionsTarget then
+                        -- Determine if this is a swap (item equipped in different slot) or equip (unequipped item)
+                        local isSwap = (availableItem.location == "Equipped")
+                        local buttonText = isSwap and "Swap##" .. idx or "Equip##" .. idx
+                        local actionText = isSwap and "swap" or "equip"
+                        
+                        -- Use different colors for Swap vs Equip
+                        if isSwap then
+                            -- Orange colors for Swap
+                            ImGui.PushStyleColor(ImGuiCol.Button, 1.0, 0.6, 0.2, 1.0)
+                            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 1.0, 0.7, 0.3, 1.0)
+                            ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0.9, 0.5, 0.1, 1.0)
+                        else
+                            -- Purple colors for Equip
+                            ImGui.PushStyleColor(ImGuiCol.Button, 0.8, 0.2, 0.8, 1.0)
+                            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0.9, 0.3, 0.9, 1.0)
+                            ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0.7, 0.1, 0.7, 1.0)
+                        end
+                        
+                        if ImGui.Button(buttonText) then
+                            -- Send exchange command directly to the target character
+                            if inventory_actor and inventory_actor.send_inventory_command then
+                                local exchangeData = {
+                                    itemName = availableItem.name,
+                                    targetSlot = inventoryUI.itemSuggestionsSlot,
+                                    targetSlotName = inventoryUI.itemSuggestionsSlotName
+                                }
+                                inventory_actor.send_inventory_command(availableItem.source, "perform_auto_exchange", 
+                                    { json.encode(exchangeData) })
+                                printf("Sent %s command to %s for %s -> %s", 
+                                    actionText, availableItem.source, availableItem.name, inventoryUI.itemSuggestionsSlotName)
+                            end
+                            inventoryUI.showItemSuggestions = false
+                        end
+                        ImGui.PopStyleColor(3)
+                    else
+                        -- Show Trade button for items from other characters
+                        local tradeButtonText = Settings.autoExchangeEnabled and "Trade and Equip##" .. idx or "Trade##" .. idx
+                        if ImGui.Button(tradeButtonText) then
+                            local peerRequest = {
+                                name = availableItem.name,
+                                to = inventoryUI.itemSuggestionsTarget,
+                                fromBank = availableItem.location == "Bank",
+                                bagid = availableItem.item.bagid,
+                                slotid = availableItem.item.slotid,
+                                bankslotid = availableItem.item.bankslotid,
+                                -- Add auto-exchange information
+                                autoExchange = Settings.autoExchangeEnabled,
+                                targetSlot = inventoryUI.itemSuggestionsSlot,
+                                targetSlotName = inventoryUI.itemSuggestionsSlotName
+                            }
+
+                            inventory_actor.send_inventory_command(availableItem.source, "proxy_give",
+                                { json.encode(peerRequest), })
+                            if Settings.autoExchangeEnabled then
+                                printf("Requesting %s to give %s to %s for auto-exchange to %s",
+                                    availableItem.source,
+                                    availableItem.name,
+                                    inventoryUI.itemSuggestionsTarget,
+                                    inventoryUI.itemSuggestionsSlotName)
+                            else
+                                printf("Requesting %s to give %s to %s",
+                                    availableItem.source,
+                                    availableItem.name,
+                                    inventoryUI.itemSuggestionsTarget)
+                            end
+                            inventoryUI.showItemSuggestions = false
+                        end
                     end
 
                     ImGui.PopID()
@@ -2435,9 +2536,11 @@ function renderItemSuggestions()
             clearComparisonCache()
             Suggestions.clearStatsCache()
             itemSuggestionsCache.equippedItem = nil
-            itemSuggestionsCache.lastUpdateTime = 0
+            itemSuggestionsCache.lastPeerName = nil
+            itemSuggestionsCache.lastSlotID = nil
             inventory_actor.request_all_inventories()
             inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
+            inventoryUI.filteredItemsCache.lastFilterKey = ""  -- Invalidate cache
             inventoryUI.selectedComparisonItem = nil
             inventoryUI.selectedComparisonItemId = ""
         end
@@ -3376,6 +3479,7 @@ function inventoryUI.render()
                                                 local targetChar = inventoryUI.selectedPeer or extractCharacterName(mq.TLO.Me.Name())
                                                 inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(
                                                     targetChar, slotID)
+                                                inventoryUI.filteredItemsCache.lastFilterKey = ""  -- Invalidate cache
                                                 inventoryUI.showItemSuggestions = true
                                                 inventoryUI.itemSuggestionsTarget = targetChar
                                                 inventoryUI.itemSuggestionsSlot = slotID
@@ -3419,6 +3523,7 @@ function inventoryUI.render()
                                                 local targetChar = inventoryUI.selectedPeer or extractCharacterName(mq.TLO.Me.Name())
                                                 inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(
                                                     targetChar, slotID)
+                                                inventoryUI.filteredItemsCache.lastFilterKey = ""  -- Invalidate cache
                                                 inventoryUI.showItemSuggestions = true
                                                 inventoryUI.itemSuggestionsTarget = targetChar
                                                 inventoryUI.itemSuggestionsSlot = slotID
@@ -3632,6 +3737,7 @@ function inventoryUI.render()
                                                     local targetChar = result.peerName
                                                     inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(
                                                         targetChar, slotID)
+                                                    inventoryUI.filteredItemsCache.lastFilterKey = ""  -- Invalidate cache
                                                     inventoryUI.showItemSuggestions = true
                                                     inventoryUI.itemSuggestionsTarget = targetChar
                                                     inventoryUI.itemSuggestionsSlot = slotID
