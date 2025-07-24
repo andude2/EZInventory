@@ -84,6 +84,8 @@ local Defaults = {
     statsLoadingMode     = "selective",
     showEQPath           = true,
     showScriptPath       = true,
+    showDetailedStats    = false,
+    autoExchangeEnabled  = true,
 }
 
 local function LoadSettings()
@@ -215,7 +217,6 @@ local inventoryUI = {
     enableStatsFiltering          = true,
     autoRefreshInventory          = true,
     statsLoadingMode              = "selective",
-    equipmentComparisonCache      = { lastUpdateTime = 0, data = nil },
 }
 for k, v in pairs(Settings) do
     inventoryUI[k] = v
@@ -255,15 +256,15 @@ local function broadcastLuaRun(connectionMethod)
 
     if connectionMethod == "MQ2Mono" then
         mq.cmd("/e3bcaa " .. command)
-        mq.cmd("/echo Broadcasting via MQ2Mono: " .. command)
+        print("Broadcasting via MQ2Mono: " .. command)
     elseif connectionMethod == "DanNet" then
         mq.cmd("/dgaexecute " .. command)
-        mq.cmd("/echo Broadcasting via DanNet: " .. command)
+        print("Broadcasting via DanNet: " .. command)
     elseif connectionMethod == "EQBC" then
         mq.cmd("/bca /" .. command)
-        mq.cmd("/echo Broadcasting via EQBC: " .. command)
+        print("Broadcasting via EQBC: " .. command)
     else
-        mq.cmd("/echo No valid connection method available for broadcasting")
+        print("No valid connection method available for broadcasting")
     end
 end
 
@@ -272,15 +273,15 @@ local function sendLuaRunToPeer(peerName, connectionMethod)
 
     if connectionMethod == "DanNet" then
         mq.cmdf("/dgt %s %s", peerName, command)
-        mq.cmdf("/echo Sent to %s via DanNet: %s", peerName, command)
+        printf("Sent to %s via DanNet: %s", peerName, command)
     elseif connectionMethod == "EQBC" then
         mq.cmdf("/bct %s /%s", peerName, command)
-        mq.cmdf("/echo Sent to %s via EQBC: %s", peerName, command)
+        printf("Sent to %s via EQBC: %s", peerName, command)
     elseif connectionMethod == "MQ2Mono" then
         mq.cmdf("/e3bct %s %s", peerName, command)
-        mq.cmdf("/echo Sent to %s via MQ2Mono: %s", peerName, command)
+        printf("Sent to %s via MQ2Mono: %s", peerName, command)
     else
-        mq.cmdf("/echo Cannot send to %s - no valid connection method", peerName)
+        printf("Cannot send to %s - no valid connection method", peerName)
     end
 end
 
@@ -463,10 +464,10 @@ local function draw_empty_slot_cbb(cell_id)
             local slotIndex = tonumber(slotIndex_str)
 
             if not pack_number then
-                mq.cmd("/echo [ERROR] Invalid pack number")
+                print("[ERROR] Invalid pack number")
                 return
             end
-            --mq.cmdf("/echo [DEBUG] Drop Attempt: pack_number=%s, slotIndex=%s", tostring(pack_number), tostring(slotIndex))
+            --printf("[DEBUG] Drop Attempt: pack_number=%s, slotIndex=%s", tostring(pack_number), tostring(slotIndex))
             if pack_number >= 1 and pack_number <= 12 and slotIndex >= 1 then
                 if inventoryUI.selectedPeer == extractCharacterName(mq.TLO.Me.Name()) then
                     mq.cmdf("/itemnotify in pack%d %d leftmouseup", pack_number, slotIndex)
@@ -488,7 +489,7 @@ local function draw_empty_slot_cbb(cell_id)
                     local bagItems = inventoryUI.inventoryData.bags[pack_number]
                     for i = #bagItems, 1, -1 do
                         if tonumber(bagItems[i].slotid) == slotIndex then
-                            --mq.cmdf("/echo [DEBUG] Optimistically replacing existing item in UI data: Bag %d, Slot %d", pack_number, slotIndex)
+                            --printf("[DEBUG] Optimistically replacing existing item in UI data: Bag %d, Slot %d", pack_number, slotIndex)
                             bagItems[i] = newItem
                             replaced = true
                             break
@@ -496,18 +497,18 @@ local function draw_empty_slot_cbb(cell_id)
                     end
 
                     if not replaced then
-                        --mq.cmdf("/echo [DEBUG] Optimistically adding new item to UI data: Bag %d, Slot %d", pack_number, slotIndex)
+                        --printf("[DEBUG] Optimistically adding new item to UI data: Bag %d, Slot %d", pack_number, slotIndex)
                         table.insert(inventoryUI.inventoryData.bags[pack_number], newItem)
                     end
                 else
-                    mq.cmd("/echo Cannot directly place items in another character's bag.")
+                    print("Cannot directly place items in another character's bag.")
                 end
             else
-                mq.cmdf("/echo [ERROR] Invalid pack/slot ID derived from cell_id: %s (pack_number=%s, slotIndex=%s)",
+                printf("[ERROR] Invalid pack/slot ID derived from cell_id: %s (pack_number=%s, slotIndex=%s)",
                     cell_id, tostring(pack_number), tostring(slotIndex))
             end
         else
-            mq.cmd("/echo [ERROR] Could not parse pack/slot ID from cell_id: " .. cell_id)
+            print("[ERROR] Could not parse pack/slot ID from cell_id: " .. cell_id)
         end
     end
 end
@@ -555,19 +556,19 @@ local function draw_live_item_icon_cbb(item_tlo, cell_id)
         local mainSlot = item_tlo.ItemSlot()
         local subSlot = item_tlo.ItemSlot2()
 
-        --mq.cmdf("/echo [DEBUG] Live Pickup Click: mainSlot=%s, subSlot=%s", tostring(mainSlot), tostring(subSlot))
+        --printf("[DEBUG] Live Pickup Click: mainSlot=%s, subSlot=%s", tostring(mainSlot), tostring(subSlot))
 
         if mainSlot >= 23 and mainSlot <= 34 then -- It's in a bag slot
             local pack_number = mainSlot - 22
             if subSlot == -1 then
                 mq.cmdf('/shift /itemnotify "%s" leftmouseup', item_tlo.Name())
-                mq.cmd('/echo [WARN] Pickup fallback: Used item name for item not in subslot.')
+                print(' [WARN] Pickup fallback: Used item name for item not in subslot.')
             else
                 local command_slotid = subSlot + 1
                 mq.cmdf("/shift /itemnotify in pack%d %d leftmouseup", pack_number, command_slotid)
             end
         else
-            mq.cmd("/echo [ERROR] Cannot perform standard bag pickup for item in slot " .. tostring(mainSlot))
+            print("[ERROR] Cannot perform standard bag pickup for item in slot " .. tostring(mainSlot))
         end
     end
 
@@ -628,17 +629,17 @@ local function draw_item_icon_cbb(item, cell_id)
     if ImGui.IsItemClicked(ImGuiMouseButton.Left) then
         local bagid_raw = item.bagid
         local slotid_raw = item.slotid
-        --mq.cmdf("/echo [DEBUG] Clicked '%s': DB bagid=%s, DB slotid=%s", item.name, tostring(bagid_raw), tostring(slotid_raw))
+        --printf("[DEBUG] Clicked '%s': DB bagid=%s, DB slotid=%s", item.name, tostring(bagid_raw), tostring(slotid_raw))
 
         local pack_number = tonumber(bagid_raw)
         local command_slotid = tonumber(slotid_raw)
 
         if not pack_number or not command_slotid then
-            mq.cmdf(
-                "/echo [ERROR] Missing or non-numeric bagid/slotid in database item: %s (bagid_raw=%s, slotid_raw=%s)",
+            printf(
+                "[ERROR] Missing or non-numeric bagid/slotid in database item: %s (bagid_raw=%s, slotid_raw=%s)",
                 item.name, tostring(bagid_raw), tostring(slotid_raw))
         else
-            --mq.cmdf("/echo [DEBUG] Interpreted: pack_number=%s, command_slotid=%s", tostring(pack_number), tostring(command_slotid))
+            --printf("[DEBUG] Interpreted: pack_number=%s, command_slotid=%s", tostring(pack_number), tostring(command_slotid))
 
             if pack_number >= 1 and pack_number <= 12 and command_slotid >= 1 then
                 if inventoryUI.selectedPeer == extractCharacterName(mq.TLO.Me.Name()) then
@@ -648,18 +649,18 @@ local function draw_item_icon_cbb(item, cell_id)
                         local bagItems = inventoryUI.inventoryData.bags[pack_number]
                         for i = #bagItems, 1, -1 do
                             if tonumber(bagItems[i].slotid) == command_slotid then
-                                --mq.cmdf("/echo [DEBUG] Optimistically removing item from UI data: Bag %d, Slot %d", pack_number, command_slotid)
+                                --printf("[DEBUG] Optimistically removing item from UI data: Bag %d, Slot %d", pack_number, command_slotid)
                                 table.remove(bagItems, i)
                                 break
                             end
                         end
                     end
                 else
-                    mq.cmd("/echo Cannot directly pick up items from another character's bag.")
+                    print("Cannot directly pick up items from another character's bag.")
                 end
             else
-                mq.cmdf(
-                    "/echo [ERROR] Invalid pack/slot ID check failed for item: %s (pack_number=%s, command_slotid=%s)",
+                printf(
+                    "[ERROR] Invalid pack/slot ID check failed for item: %s (pack_number=%s, command_slotid=%s)",
                     item.name, tostring(pack_number),
                     tostring(command_slotid))
             end
@@ -1158,12 +1159,12 @@ end
 
 function showContextMenu(item, sourceChar, mouseX, mouseY)
     if not item then
-        mq.cmd("/echo [ERROR] Cannot show context menu for nil item")
+        print("[ERROR] Cannot show context menu for nil item")
         return
     end
 
     if not sourceChar then
-        mq.cmd("/echo [ERROR] Cannot show context menu - source character is nil")
+        print("[ERROR] Cannot show context menu - source character is nil")
         return
     end
 
@@ -1197,7 +1198,7 @@ function showContextMenu(item, sourceChar, mouseX, mouseY)
     table.sort(inventoryUI.contextMenu.peers)
     inventoryUI.contextMenu.selectedPeer = nil
 
-    --mq.cmdf("/echo [DEBUG] Context menu opened for %s from %s", (itemCopy.name or "Unknown Item"), (sourceChar or "Unknown Source"))
+    --printf("[DEBUG] Context menu opened for %s from %s", (itemCopy.name or "Unknown Item"), (sourceChar or "Unknown Source"))
 end
 
 function hideContextMenu()
@@ -1213,7 +1214,7 @@ end
 function renderContextMenu()
     if not inventoryUI.contextMenu.visible then return end
     if not inventoryUI.contextMenu.item then
-        mq.cmd("/echo [DEBUG] Context menu item is nil, closing menu")
+        print("[DEBUG] Context menu item is nil, closing menu")
         hideContextMenu()
         return
     end
@@ -1270,10 +1271,10 @@ function renderContextMenu()
                 if links and #links > 0 then
                     mq.ExecuteTextLink(links[1])
                 else
-                    mq.cmd('/echo No item link found in the database.')
+                    print(' No item link found in the database.')
                 end
             else
-                mq.cmd('/echo No item data available for examination.')
+                print(' No item data available for examination.')
             end
             hideContextMenu()
         end
@@ -1303,7 +1304,7 @@ function renderContextMenu()
                             if inventoryUI.contextMenu.item then
                                 initiateProxyTrade(inventoryUI.contextMenu.item, inventoryUI.contextMenu.source, peerName)
                             else
-                                mq.cmd('/echo Cannot trade - item data is missing.')
+                                print(' Cannot trade - item data is missing.')
                             end
                             hideContextMenu()
                         end
@@ -1337,7 +1338,7 @@ end
 
 function showEquipmentComparison(item)
     if not item then
-        mq.cmd("/echo Cannot compare - no item provided")
+        print("Cannot compare - no item provided")
         return
     end
     
@@ -1353,12 +1354,12 @@ function showEquipmentComparison(item)
         -- Fallback to single slotid if available
         table.insert(availableSlots, tonumber(item.slotid))
     else
-        mq.cmd("/echo Cannot compare - item has no slot information")
+        print("Cannot compare - item has no slot information")
         return
     end
     
     if #availableSlots == 0 then
-        mq.cmd("/echo Cannot compare - item has no valid slots")
+        print("Cannot compare - item has no valid slots")
         return
     end
     
@@ -1387,18 +1388,8 @@ function showEquipmentComparison(item)
 end
 
 function generateEquipmentComparison(compareItem, slotID)
-    local CACHE_DURATION = 15 -- seconds
-    local now = os.time()
-    slotID = slotID or compareItem.slotid
-    local cache = inventoryUI.equipmentComparisonCache
-
-    if cache and cache.data and (now - (cache.lastUpdateTime or 0) < CACHE_DURATION) and
-       cache.compareItemID == (compareItem and compareItem.id) and cache.slotID == slotID then
-        inventoryUI.equipmentComparison.results = cache.data
-        return
-    end
-
     local results = {}
+    slotID = slotID or compareItem.slotid
     
     -- Get stats from the comparison item
     local compareStats = {
@@ -1500,12 +1491,6 @@ function generateEquipmentComparison(compareItem, slotID)
     end)
     
     inventoryUI.equipmentComparison.results = results
-    inventoryUI.equipmentComparisonCache = {
-        lastUpdateTime = now,
-        data = results,
-        compareItemID = compareItem and compareItem.id,
-        slotID = slotID
-    }
 end
 
 function renderEquipmentComparison()
@@ -1522,12 +1507,7 @@ function renderEquipmentComparison()
     ImGui.SetNextWindowSize(800, 400, ImGuiCond.FirstUseEver)
     local windowTitle = string.format("Equipment Comparison: %s", comparison.compareItem.name or "Unknown Item")
     
-    local is_open, was_not_collapsed = ImGui.Begin(windowTitle, true)
-    if not is_open then
-        inventoryUI.equipmentComparison.visible = false
-    end
-
-    if was_not_collapsed then
+    if ImGui.Begin(windowTitle, true) then
         -- Show slot selection if needed
         if comparison.showSlotSelection then
             ImGui.Text("Select slot to compare against:")
@@ -1658,7 +1638,7 @@ function renderEquipmentComparison()
                         if links and #links > 0 then
                             mq.ExecuteTextLink(links[1])
                         else
-                            mq.cmd('/echo No item link found in the database.')
+                            print(' No item link found in the database.')
                         end
                     end
                 else
@@ -1781,8 +1761,11 @@ function renderEquipmentComparison()
                 inventoryUI.equipmentComparison.visible = false
             end
         end
+        
+        ImGui.End()
+    else
+        inventoryUI.equipmentComparison.visible = false
     end
-    ImGui.End()
 end
 
 local itemSuggestionsCache = {
@@ -1941,6 +1924,49 @@ function renderItemSuggestions()
                 ImGui.EndCombo()
             end
 
+            -- Add sorting controls
+            ImGui.SameLine()
+            ImGui.Text("Sort by:")
+            ImGui.SameLine()
+            
+            -- Initialize sorting state
+            inventoryUI.itemSuggestionsSortColumn = inventoryUI.itemSuggestionsSortColumn or "none"
+            inventoryUI.itemSuggestionsSortDirection = inventoryUI.itemSuggestionsSortDirection or "asc"
+            
+            ImGui.SetNextItemWidth(120)
+            if ImGui.BeginCombo("##SuggestionsSortColumn", inventoryUI.itemSuggestionsSortColumn) then
+                local sortOptions = {
+                    { "none", "None" },
+                    { "name", "Item Name" },
+                    { "source", "Source" },
+                    { "location", "Location" }
+                }
+                
+                -- Add detailed stat sorting options if enabled
+                if Settings.showDetailedStats then
+                    table.insert(sortOptions, { "hp", "HP" })
+                    table.insert(sortOptions, { "mana", "Mana" })
+                    table.insert(sortOptions, { "ac", "AC" })
+                    table.insert(sortOptions, { "str", "STR" })
+                    table.insert(sortOptions, { "agi", "AGI" })
+                end
+                
+                for _, option in ipairs(sortOptions) do
+                    local selected = (inventoryUI.itemSuggestionsSortColumn == option[1])
+                    if ImGui.Selectable(option[2], selected) then
+                        inventoryUI.itemSuggestionsSortColumn = option[1]
+                    end
+                end
+                ImGui.EndCombo()
+            end
+            
+            if inventoryUI.itemSuggestionsSortColumn ~= "none" then
+                ImGui.SameLine()
+                if ImGui.Button(inventoryUI.itemSuggestionsSortDirection == "asc" and "Asc" or "Desc") then
+                    inventoryUI.itemSuggestionsSortDirection = inventoryUI.itemSuggestionsSortDirection == "asc" and "desc" or "asc"
+                end
+            end
+
             local filteredItems = {}
             for _, availableItem in ipairs(inventoryUI.availableItems) do
                 local includeItem = true
@@ -1958,6 +1984,49 @@ function renderItemSuggestions()
                 if includeItem then
                     table.insert(filteredItems, availableItem)
                 end
+            end
+
+            -- Apply sorting to filtered items
+            if inventoryUI.itemSuggestionsSortColumn ~= "none" and #filteredItems > 0 then
+                table.sort(filteredItems, function(a, b)
+                    if not a or not b then return false end
+                    
+                    local valueA, valueB
+                    
+                    if inventoryUI.itemSuggestionsSortColumn == "name" then
+                        valueA = (a.name or ""):lower()
+                        valueB = (b.name or ""):lower()
+                    elseif inventoryUI.itemSuggestionsSortColumn == "source" then
+                        valueA = (a.source or ""):lower()
+                        valueB = (b.source or ""):lower()
+                    elseif inventoryUI.itemSuggestionsSortColumn == "location" then
+                        valueA = (a.location or ""):lower()
+                        valueB = (b.location or ""):lower()
+                    elseif inventoryUI.itemSuggestionsSortColumn == "hp" then
+                        valueA = tonumber(a.item.hp) or 0
+                        valueB = tonumber(b.item.hp) or 0
+                    elseif inventoryUI.itemSuggestionsSortColumn == "mana" then
+                        valueA = tonumber(a.item.mana) or 0
+                        valueB = tonumber(b.item.mana) or 0
+                    elseif inventoryUI.itemSuggestionsSortColumn == "ac" then
+                        valueA = tonumber(a.item.ac) or 0
+                        valueB = tonumber(b.item.ac) or 0
+                    elseif inventoryUI.itemSuggestionsSortColumn == "str" then
+                        valueA = tonumber(a.item.str) or 0
+                        valueB = tonumber(b.item.str) or 0
+                    elseif inventoryUI.itemSuggestionsSortColumn == "agi" then
+                        valueA = tonumber(a.item.agi) or 0
+                        valueB = tonumber(b.item.agi) or 0
+                    else
+                        return false
+                    end
+                    
+                    if inventoryUI.itemSuggestionsSortDirection == "asc" then
+                        return valueA < valueB
+                    else
+                        return valueA > valueB
+                    end
+                end)
             end
 
             ImGui.Spacing()
@@ -1998,15 +2067,43 @@ function renderItemSuggestions()
                 end
             end
 
+            -- Show all details checkbox
+            ImGui.Spacing()
+            local showDetailedStats, detailedChanged = ImGui.Checkbox("Show All Details", Settings.showDetailedStats)
+            if detailedChanged then
+                Settings.showDetailedStats = showDetailedStats
+                mq.pickle(SettingsFile, Settings)
+            end
+            
+            ImGui.SameLine()
+            local autoExchangeEnabled, autoExchangeChanged = ImGui.Checkbox("Auto Exchange", Settings.autoExchangeEnabled)
+            if autoExchangeChanged then
+                Settings.autoExchangeEnabled = autoExchangeEnabled
+                mq.pickle(SettingsFile, Settings)
+            end
+            ImGui.Spacing()
+
             -- FIXED: Better table height calculation and error handling
             local calculatedTableHeight = math.min(maxTableHeight, math.max(100, (itemsPerPage + 1) * rowHeight + 30))
 
-            if ImGui.BeginTable("AvailableItemsTable", 6, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.ScrollY + ImGuiTableFlags.Sortable, 0, calculatedTableHeight) then
+            -- Determine number of columns based on detailed view
+            local numColumns = Settings.showDetailedStats and 12 or 6
+            if ImGui.BeginTable("AvailableItemsTable", numColumns, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.ScrollY, 0, calculatedTableHeight) then
                 ImGui.TableSetupColumn("Select", ImGuiTableColumnFlags.WidthFixed, 50)
                 ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
                 ImGui.TableSetupColumn("Item Name", ImGuiTableColumnFlags.WidthStretch)
                 ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 100)
                 ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthFixed, 100)
+                
+                if Settings.showDetailedStats then
+                    ImGui.TableSetupColumn("HP", ImGuiTableColumnFlags.WidthFixed, 60)
+                    ImGui.TableSetupColumn("MANA", ImGuiTableColumnFlags.WidthFixed, 60)
+                    ImGui.TableSetupColumn("AC", ImGuiTableColumnFlags.WidthFixed, 50)
+                    ImGui.TableSetupColumn("STR", ImGuiTableColumnFlags.WidthFixed, 50)
+                    ImGui.TableSetupColumn("AGI", ImGuiTableColumnFlags.WidthFixed, 50)
+                    ImGui.TableSetupColumn("Combat", ImGuiTableColumnFlags.WidthFixed, 80)
+                end
+                
                 ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 80)
 
                 ImGui.TableHeadersRow()
@@ -2082,11 +2179,90 @@ function renderItemSuggestions()
                     ImGui.TableNextColumn()
                     if ImGui.Selectable(availableItem.source) then
                         inventory_actor.send_inventory_command(availableItem.source, "foreground", {})
-                        mq.cmdf("/echo Bringing %s to the foreground...", availableItem.source)
+                        printf("Bringing %s to the foreground...", availableItem.source)
                     end
 
                     ImGui.TableNextColumn()
                     ImGui.Text(availableItem.location)
+
+                    -- Add detailed stat columns if enabled
+                    if Settings.showDetailedStats then
+                        -- HP Column
+                        ImGui.TableNextColumn()
+                        local hp = availableItem.item.hp or 0
+                        if hp > 0 then
+                            ImGui.Text(tostring(hp))
+                        else
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                            ImGui.Text("-")
+                            ImGui.PopStyleColor()
+                        end
+
+                        -- MANA Column
+                        ImGui.TableNextColumn()
+                        local mana = availableItem.item.mana or 0
+                        if mana > 0 then
+                            ImGui.Text(tostring(mana))
+                        else
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                            ImGui.Text("-")
+                            ImGui.PopStyleColor()
+                        end
+
+                        -- AC Column
+                        ImGui.TableNextColumn()
+                        local ac = availableItem.item.ac or 0
+                        if ac > 0 then
+                            ImGui.Text(tostring(ac))
+                        else
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                            ImGui.Text("-")
+                            ImGui.PopStyleColor()
+                        end
+
+                        -- STR Column
+                        ImGui.TableNextColumn()
+                        local str = availableItem.item.str or 0
+                        if str > 0 then
+                            ImGui.Text("+" .. tostring(str))
+                        elseif str < 0 then
+                            ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
+                            ImGui.Text(tostring(str))
+                            ImGui.PopStyleColor()
+                        else
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                            ImGui.Text("-")
+                            ImGui.PopStyleColor()
+                        end
+
+                        -- AGI Column
+                        ImGui.TableNextColumn()
+                        local agi = availableItem.item.agi or 0
+                        if agi > 0 then
+                            ImGui.Text("+" .. tostring(agi))
+                        elseif agi < 0 then
+                            ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
+                            ImGui.Text(tostring(agi))
+                            ImGui.PopStyleColor()
+                        else
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                            ImGui.Text("-")
+                            ImGui.PopStyleColor()
+                        end
+
+                        -- Combat Column (simplified - could show ATK, haste, etc.)
+                        ImGui.TableNextColumn()
+                        local hasEffect = (availableItem.item.effect and availableItem.item.effect ~= "")
+                        if hasEffect then
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.8, 0.3, 1.0)
+                            ImGui.Text("Effect")
+                            ImGui.PopStyleColor()
+                        else
+                            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                            ImGui.Text("-")
+                            ImGui.PopStyleColor()
+                        end
+                    end
 
                     ImGui.TableNextColumn()
                     if ImGui.Button("Trade##" .. idx) then
@@ -2097,14 +2273,27 @@ function renderItemSuggestions()
                             bagid = availableItem.item.bagid,
                             slotid = availableItem.item.slotid,
                             bankslotid = availableItem.item.bankslotid,
+                            -- Add auto-exchange information
+                            autoExchange = Settings.autoExchangeEnabled,
+                            targetSlot = inventoryUI.itemSuggestionsSlot,
+                            targetSlotName = inventoryUI.itemSuggestionsSlotName
                         }
 
+                        -- printf("[DEBUG] Sending proxy_give with autoExchange=%s, targetSlot=%s, targetSlotName=%s", tostring(Settings.autoExchangeEnabled), tostring(inventoryUI.itemSuggestionsSlot), tostring(inventoryUI.itemSuggestionsSlotName))
                         inventory_actor.send_inventory_command(availableItem.source, "proxy_give",
                             { json.encode(peerRequest), })
-                        mq.cmdf("/echo Requesting %s to give %s to %s",
-                            availableItem.source,
-                            availableItem.name,
-                            inventoryUI.itemSuggestionsTarget)
+                        if Settings.autoExchangeEnabled then
+                            printf("Requesting %s to give %s to %s for auto-exchange to %s",
+                                availableItem.source,
+                                availableItem.name,
+                                inventoryUI.itemSuggestionsTarget,
+                                inventoryUI.itemSuggestionsSlotName)
+                        else
+                            printf("Requesting %s to give %s to %s",
+                                availableItem.source,
+                                availableItem.name,
+                                inventoryUI.itemSuggestionsTarget)
+                        end
                         inventoryUI.showItemSuggestions = false
                     end
 
@@ -2270,7 +2459,7 @@ function renderItemSuggestions()
 end
 
 function initiateProxyTrade(item, sourceChar, targetChar)
-    mq.cmdf("/echo Initiating trade: %s from %s to %s", item.name, sourceChar, targetChar)
+    printf("Initiating trade: %s from %s to %s", item.name, sourceChar, targetChar)
 
     local peerRequest = {
         name = item.name,
@@ -2282,11 +2471,11 @@ function initiateProxyTrade(item, sourceChar, targetChar)
     }
 
     inventory_actor.send_inventory_command(sourceChar, "proxy_give", { json.encode(peerRequest), })
-    mq.cmdf("/echo Trade request sent: %s will give %s to %s", sourceChar, item.name, targetChar)
+    printf("Trade request sent: %s will give %s to %s", sourceChar, item.name, targetChar)
 end
 
 function initiateMultiItemTrade(targetChar)
-    --mq.cmdf("/echo [DEBUG] initiateMultiItemTrade called for target: %s", tostring(targetChar))
+    --printf("[DEBUG] initiateMultiItemTrade called for target: %s", tostring(targetChar))
     local tradableItems = {}
     local noDropItems = {}
     local sourceChar = nil
@@ -2319,11 +2508,11 @@ function initiateMultiItemTrade(targetChar)
     end
 
     if #noDropItems > 0 then
-        mq.cmdf("/echo Warning: %d selected items are No Drop and cannot be traded", #noDropItems)
+        printf("Warning: %d selected items are No Drop and cannot be traded", #noDropItems)
     end
 
     if #tradableItems > 0 and sourceChar and targetChar then
-        mq.cmdf("/echo Initiating multi-item trade: %d items from %s to %s", #tradableItems, sourceChar, targetChar)
+        printf("Initiating multi-item trade: %d items from %s to %s", #tradableItems, sourceChar, targetChar)
         local itemsBySource = {}
         for _, tradableItem in ipairs(tradableItems) do
             local source = tradableItem.source
@@ -2351,16 +2540,16 @@ function initiateMultiItemTrade(targetChar)
                 end
 
                 inventory_actor.send_inventory_command(source, "proxy_give_batch", { json.encode(batchRequest), })
-                mq.cmdf("/echo Multi-trade request sent: %d items from %s to %s", #items, source, targetChar)
+                printf("Multi-trade request sent: %d items from %s to %s", #items, source, targetChar)
             end
         end
     else
         if #tradableItems == 0 then
-            mq.cmd("/echo No tradable items selected")
+            print("No tradable items selected")
         elseif not sourceChar then
-            mq.cmd("/echo Cannot determine source character for trade")
+            print("Cannot determine source character for trade")
         elseif not targetChar then
-            mq.cmd("/echo No target character specified")
+            print("No target character specified")
         end
     end
 
@@ -2463,7 +2652,7 @@ function renderMultiTradePanel()
         -- Action buttons
         if selectedCount > 0 and inventoryUI.multiTradeTarget ~= "" then
             if ImGui.Button("Execute Multi-Trade") then
-                mq.cmdf("/echo [UI] Execute Multi-Trade for %s", inventoryUI.multiTradeTarget)
+                printf("[UI] Execute Multi-Trade for %s", inventoryUI.multiTradeTarget)
                 initiateMultiItemTrade(inventoryUI.multiTradeTarget)
                 inventoryUI.showMultiTradePanel = false
                 inventoryUI.multiSelectMode = false
@@ -2559,7 +2748,7 @@ if isEMU then
                             if links and #links > 0 then
                                 mq.ExecuteTextLink(links[1])
                             else
-                                mq.cmd('/echo No item link found in the database.')
+                                print(' No item link found in the database.')
                             end
                         end
                         if ImGui.IsItemHovered() then
@@ -2592,7 +2781,7 @@ if isEMU then
                                     local botSpawn = mq.TLO.Spawn(string.format("= %s", botName))
                                     if botSpawn.ID() and botSpawn.ID() > 0 then
                                         mq.cmdf("/target id %d", botSpawn.ID())
-                                        mq.cmdf("/echo Targeting %s for unequip...", botName)
+                                        printf("Targeting %s for unequip...", botName)
 
                                         -- Set up a targeting check task
                                         local targetCheckTask = function()
@@ -2626,17 +2815,17 @@ if isEMU then
                                                             return targetCheckTask()
                                                         end)
                                                     elseif attempts >= maxAttempts then
-                                                        mq.cmd("/echo Timeout targeting bot for unequip")
+                                                        print("Timeout targeting bot for unequip")
                                                     end
                                                 end)
                                             end
                                         end)
                                     else
-                                        mq.cmd("/echo Could not find bot spawn for unequip command")
+                                        print("Could not find bot spawn for unequip command")
                                     end
                                 end)
 
-                                mq.cmdf("/echo Queued unequip request for %s slot %s", botName, slotId)
+                                printf("Queued unequip request for %s slot %s", botName, slotId)
                             end
                         end
 
@@ -2658,7 +2847,7 @@ if isEMU then
             if ImGui.Button("Refresh Inventory") then
                 if inventoryUI.selectedBotInventory and inventoryUI.selectedBotInventory.name then
                     bot_inventory.requestBotInventory(inventoryUI.selectedBotInventory.name)
-                    mq.cmdf("/echo Refreshing inventory for bot: %s", inventoryUI.selectedBotInventory.name)
+                    printf("Refreshing inventory for bot: %s", inventoryUI.selectedBotInventory.name)
                 end
             end
 
@@ -3033,7 +3222,7 @@ function inventoryUI.render()
                                             if links and #links > 0 then
                                                 mq.ExecuteTextLink(links[1])
                                             else
-                                                mq.cmd('/echo No item link found in the database.')
+                                                print(' No item link found in the database.')
                                             end
                                         end
                                         -- Aug columns
@@ -3048,7 +3237,7 @@ function inventoryUI.render()
                                                         if links and #links > 0 then
                                                             mq.ExecuteTextLink(links[1])
                                                         else
-                                                            mq.cmd('/echo No aug link found in the database.')
+                                                            print(' No aug link found in the database.')
                                                         end
                                                     end
                                                 end
@@ -3096,7 +3285,7 @@ function inventoryUI.render()
                                         local ok, err = pcall(renderEquippedTableRow, item, augVisibility)
                                         ImGui.PopID()
                                         if not ok then
-                                            mq.cmdf("/echo Error rendering item row: %s", err)
+                                            printf("Error rendering item row: %s", err)
                                         end
                                     end
                                 end
@@ -3264,7 +3453,7 @@ function inventoryUI.render()
                                                 local success, err = pcall(renderEquippedSlot, slotID, item, slotName)
                                                 ImGui.PopID()
                                                 if not success then
-                                                    mq.cmdf("/echo Error drawing slot %s: %s", tostring(slotID), err)
+                                                    printf("Error drawing slot %s: %s", tostring(slotID), err)
                                                 end
                                             else
                                                 ImGui.Text("")
@@ -3356,7 +3545,7 @@ function inventoryUI.render()
                                                 if ImGui.Selectable(result.peerName) then
                                                     inventory_actor.send_inventory_command(result.peerName, "foreground",
                                                         {})
-                                                    mq.cmdf("/echo Bringing %s to the foreground...", result.peerName)
+                                                    printf("Bringing %s to the foreground...", result.peerName)
                                                 end
 
                                                 ImGui.TableNextColumn()
@@ -3434,7 +3623,7 @@ function inventoryUI.render()
                                                 if ImGui.Selectable(result.peerName) then
                                                     inventory_actor.send_inventory_command(result.peerName, "foreground",
                                                         {})
-                                                    mq.cmdf("/echo Bringing %s to the foreground...", result.peerName)
+                                                    printf("Bringing %s to the foreground...", result.peerName)
                                                 end
                                                 ImGui.TableNextColumn()
                                                 ImGui.PushStyleColor(ImGuiCol.Text, 0.6, 0.6, 0.6, 1.0)
@@ -3600,7 +3789,7 @@ function inventoryUI.render()
                                                 if links and #links > 0 then
                                                     mq.ExecuteTextLink(links[1])
                                                 else
-                                                    mq.cmd('/echo No item link found in the database.')
+                                                    print(' No item link found in the database.')
                                                 end
                                             end
                                         end
@@ -3871,7 +4060,7 @@ function inventoryUI.render()
                             if links and #links > 0 then
                                 mq.ExecuteTextLink(links[1])
                             else
-                                mq.cmd('/echo No item link found in the database.')
+                                print(' No item link found in the database.')
                             end
                         end
 
@@ -3924,7 +4113,7 @@ function inventoryUI.render()
                                     mq.cmdf("/shift /itemnotify in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
                                 end
                             else
-                                mq.cmdf("/echo Unknown bank slot ID: %d", BankSlotId)
+                                printf("Unknown bank slot ID: %d", BankSlotId)
                             end
                         end
 
@@ -4524,7 +4713,7 @@ function inventoryUI.render()
                                     inventory_actor.send_inventory_command(item.peerName, "foreground", {})
                                 end
                                 if mq and mq.cmdf then
-                                    mq.cmdf("/echo Bringing %s to the foreground...", item.peerName or "unknown")
+                                    printf("Bringing %s to the foreground...", item.peerName or "unknown")
                                 end
                             end
                             ImGui.PopStyleColor()
@@ -4588,7 +4777,7 @@ function inventoryUI.render()
                                             mq.ExecuteTextLink(links[1])
                                         end
                                     elseif mq and mq.cmd then
-                                        mq.cmd('/echo No item link found.')
+                                        print(' No item link found.')
                                     end
                                 end
                             end
@@ -4693,7 +4882,7 @@ function inventoryUI.render()
                                                     SlotId)
                                             end
                                         else
-                                            mq.cmdf("/echo Unknown bank slot ID: %d", BankSlotId)
+                                            printf("Unknown bank slot ID: %d", BankSlotId)
                                         end
                                     elseif mq and mq.cmdf then
                                         mq.cmdf('/shift /itemnotify "%s" leftmouseup', itemName)
@@ -4740,7 +4929,7 @@ function inventoryUI.render()
                                                 { json.encode(giveRequest), })
                                         end
                                         if mq and mq.cmdf then
-                                            mq.cmdf("/echo Requested %s to give %s to %s", item.peerName, itemName,
+                                            printf("Requested %s to give %s to %s", item.peerName, itemName,
                                                 inventoryUI.selectedPeer)
                                         end
                                     end
@@ -4768,13 +4957,13 @@ function inventoryUI.render()
                 ImGui.Separator()
                 if ImGui.Button("Refresh Bot List") then
                     bot_inventory.refreshBotList()
-                    mq.cmd("/echo Refreshing bot list...")
+                    print("Refreshing bot list...")
                 end
                 ImGui.SameLine()
                 if ImGui.Button("Clear Bot Data") then
                     bot_inventory.bot_inventories = {}
                     bot_inventory.cached_bot_list = {}
-                    mq.cmd("/echo Cleared all bot inventory data")
+                    print("Cleared all bot inventory data")
                 end
                 ImGui.Spacing()
                 local availableBots = bot_inventory.getAllBots()
@@ -4809,7 +4998,7 @@ function inventoryUI.render()
                             ImGui.TableNextColumn()
                             if ImGui.Button("Refresh##" .. botName) then
                                 bot_inventory.requestBotInventory(botName)
-                                mq.cmdf("/echo Requesting inventory for bot: %s", botName)
+                                printf("Requesting inventory for bot: %s", botName)
                             end
                             if hasData then
                                 ImGui.SameLine()
@@ -4866,7 +5055,7 @@ function inventoryUI.render()
                 ImGui.SameLine()
                 if ImGui.Button("Request All Inventories") then
                     inventory_actor.request_all_inventories()
-                    mq.cmd("/echo Requested inventory updates from all peers")
+                    print("Requested inventory updates from all peers")
                 end
             else
                 ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0)
@@ -4963,7 +5152,7 @@ function inventoryUI.render()
                             ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.8, 1.0, 1.0)
                             if ImGui.Selectable(nameToShow .. "##peer_" .. peerName) then
                                 inventory_actor.send_inventory_command(peerName, "foreground", {})
-                                mq.cmdf("/echo Bringing %s to the foreground...", peerName)
+                                printf("Bringing %s to the foreground...", peerName)
                             end
                             ImGui.PopStyleColor()
                             if ImGui.IsItemHovered() then
@@ -5053,7 +5242,7 @@ function inventoryUI.render()
                             if ImGui.Button("Refresh##" .. peerName) then
                                 inventory_actor.send_inventory_command(peerName, "echo",
                                     { "Requesting inventory refresh", })
-                                mq.cmdf("/echo Sent refresh request to %s", peerName)
+                                printf("Sent refresh request to %s", peerName)
                             end
                         elseif not status.connected and status.hasInventory then
                             ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0)
@@ -5541,7 +5730,7 @@ function renderItemExchange()
                     inventory_actor.send_inventory_command(inventoryUI.selectedGiveSource, "proxy_give",
                         { json.encode(peerRequest), })
 
-                    mq.cmdf("/echo Requesting %s to give %s to %s",
+                    printf("Requesting %s to give %s to %s",
                         inventoryUI.selectedGiveSource,
                         inventoryUI.selectedGiveItem,
                         inventoryUI.selectedGiveTarget)
@@ -5582,11 +5771,11 @@ local helpInfo = {
 }
 
 local function displayHelp()
-    mq.cmd("/echo === Inventory Script Help ===")
+    print("=== Inventory Script Help ===")
     for _, info in ipairs(helpInfo) do
-        mq.cmdf("/echo %s: %s", info.binding, info.description)
+        printf("%s: %s", info.binding, info.description)
     end
-    mq.cmd("/echo ============================")
+    print("============================")
 end
 
 mq.bind("/ezinventory_help", function()
@@ -5713,11 +5902,14 @@ local function main()
         updatePeerList()
 
         inventory_actor.process_pending_requests()
+        
+        -- Auto-exchange is now handled directly after successful trades
+        
         if #inventory_actor.deferred_tasks > 0 then
             local task = table.remove(inventory_actor.deferred_tasks, 1)
             local ok, err = pcall(task)
             if not ok then
-                mq.cmdf("/echo [EZInventory ERROR] Deferred task failed: %s", tostring(err))
+                printf("[EZInventory ERROR] Deferred task failed: %s", tostring(err))
             end
         end
         mq.delay(100)
