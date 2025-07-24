@@ -215,6 +215,7 @@ local inventoryUI = {
     enableStatsFiltering          = true,
     autoRefreshInventory          = true,
     statsLoadingMode              = "selective",
+    equipmentComparisonCache      = { lastUpdateTime = 0, data = nil },
 }
 for k, v in pairs(Settings) do
     inventoryUI[k] = v
@@ -1386,8 +1387,18 @@ function showEquipmentComparison(item)
 end
 
 function generateEquipmentComparison(compareItem, slotID)
-    local results = {}
+    local CACHE_DURATION = 15 -- seconds
+    local now = os.time()
     slotID = slotID or compareItem.slotid
+    local cache = inventoryUI.equipmentComparisonCache
+
+    if cache and cache.data and (now - (cache.lastUpdateTime or 0) < CACHE_DURATION) and
+       cache.compareItemID == (compareItem and compareItem.id) and cache.slotID == slotID then
+        inventoryUI.equipmentComparison.results = cache.data
+        return
+    end
+
+    local results = {}
     
     -- Get stats from the comparison item
     local compareStats = {
@@ -1489,6 +1500,12 @@ function generateEquipmentComparison(compareItem, slotID)
     end)
     
     inventoryUI.equipmentComparison.results = results
+    inventoryUI.equipmentComparisonCache = {
+        lastUpdateTime = now,
+        data = results,
+        compareItemID = compareItem and compareItem.id,
+        slotID = slotID
+    }
 end
 
 function renderEquipmentComparison()
@@ -1505,7 +1522,12 @@ function renderEquipmentComparison()
     ImGui.SetNextWindowSize(800, 400, ImGuiCond.FirstUseEver)
     local windowTitle = string.format("Equipment Comparison: %s", comparison.compareItem.name or "Unknown Item")
     
-    if ImGui.Begin(windowTitle, true) then
+    local is_open, was_not_collapsed = ImGui.Begin(windowTitle, true)
+    if not is_open then
+        inventoryUI.equipmentComparison.visible = false
+    end
+
+    if was_not_collapsed then
         -- Show slot selection if needed
         if comparison.showSlotSelection then
             ImGui.Text("Select slot to compare against:")
@@ -1759,11 +1781,8 @@ function renderEquipmentComparison()
                 inventoryUI.equipmentComparison.visible = false
             end
         end
-        
-        ImGui.End()
-    else
-        inventoryUI.equipmentComparison.visible = false
     end
+    ImGui.End()
 end
 
 local itemSuggestionsCache = {
