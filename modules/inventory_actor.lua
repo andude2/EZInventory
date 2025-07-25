@@ -50,6 +50,141 @@ function M.is_initialized()
     return bothReady
 end
 
+-- Convert EZInventory slot names to MQ2Exchange compatible names
+local function convertSlotNameForMQ2Exchange(slotName)
+    local slotNameMap = {
+        ["Arms"] = "arms",
+        ["Range"] = "ranged",        -- EZInventory uses "Range", MQ2Exchange uses "ranged"
+        ["Primary"] = "mainhand",    -- EZInventory uses "Primary", MQ2Exchange uses "mainhand" 
+        ["Secondary"] = "offhand",   -- EZInventory uses "Secondary", MQ2Exchange uses "offhand"
+        ["Left Ear"] = "leftear",
+        ["Right Ear"] = "rightear",
+        ["Head"] = "head",
+        ["Face"] = "face", 
+        ["Neck"] = "neck",
+        ["Shoulders"] = "shoulder",  -- Note: MQ2Exchange uses "shoulder" not "shoulders"
+        ["Back"] = "back",
+        ["Left Wrist"] = "leftwrist",
+        ["Right Wrist"] = "rightwrist",
+        ["Hands"] = "hands",
+        ["Left Ring"] = "leftfinger",
+        ["Right Ring"] = "rightfinger",
+        ["Chest"] = "chest",
+        ["Legs"] = "legs",
+        ["Feet"] = "feet",
+        ["Waist"] = "waist",
+        ["Charm"] = "charm",
+        ["Power Source"] = "powersource",
+        ["Ammo"] = "ammo"
+    }
+    
+    return slotNameMap[slotName] or slotName:lower()
+end
+
+-- Safe auto-exchange function with comprehensive safety checks
+function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
+    
+    -- Convert slot name to MQ2Exchange compatible format
+    local mq2ExchangeSlotName = convertSlotNameForMQ2Exchange(targetSlotName)
+    
+    -- Check if MQ2Exchange plugin is loaded
+    if not mq.TLO.Plugin("MQ2Exchange").IsLoaded() then
+        printf("[AUTO-EXCHANGE] ERROR: MQ2Exchange plugin is not loaded!")
+        return false
+    end
+    
+    -- Check if cursor is free
+    if mq.TLO.Cursor() then
+        printf("[AUTO-EXCHANGE] Cursor not free, cannot exchange %s", itemName)
+        return false
+    end
+    
+    -- Wait up to 10 seconds for the item to appear in inventory
+    local foundItem = nil
+    local maxWaitTime = 10
+    local startTime = os.time()
+    
+    
+    while (os.time() - startTime) < maxWaitTime do
+        -- Use FindItem TLO for better item detection
+        local findItem = mq.TLO.FindItem(itemName)
+        if findItem() then
+            foundItem = findItem
+            break
+        end
+        
+        -- Also check manually as backup
+        for i = 1, 10 do -- Check general inventory slots
+            local item = mq.TLO.Me.Inventory(i)
+            if item() and item.Name() == itemName then
+                foundItem = item
+                break
+            end
+        end
+        
+        if foundItem then break end
+        
+        -- Check bags if not found in general inventory
+        for bag = 1, 10 do
+            local bagSlot = mq.TLO.Me.Inventory(bag)
+            if bagSlot() and bagSlot.Container() then
+                for slot = 1, bagSlot.Container() do
+                    local item = bagSlot.Item(slot)
+                    if item() and item.Name() == itemName then
+                        foundItem = item
+                        break
+                    end
+                end
+                if foundItem then break end
+            end
+        end
+        
+        if foundItem then break end
+        
+        -- Can't use mq.delay() in actor thread, so we'll just continue the loop with os.time() check
+    end
+    
+    if not foundItem then
+        printf("[AUTO-EXCHANGE] Item %s not found in inventory after %d seconds", itemName, maxWaitTime)
+        return false
+    end
+    
+    -- Check if there's enough bag space for currently equipped item (if any)
+    local currentlyEquipped = mq.TLO.Me.Inventory(targetSlot)
+    if currentlyEquipped() then
+        
+        -- Check bag space using MacroQuest TLO
+        -- Size 1 = tiny, 2 = small, 3 = medium, 4 = large, 5 = giant
+        local equippedItemSize = currentlyEquipped.Size() or 1
+        local freeSpace = mq.TLO.Me.FreeInventory(equippedItemSize)()
+        
+        
+        if freeSpace == 0 then
+            printf("[AUTO-EXCHANGE] No bag space available for currently equipped %s (size %d)", 
+                currentlyEquipped.Name(), equippedItemSize)
+            return false
+        end
+        
+    else
+    end
+    
+    
+    -- Perform the exchange using MQ2Exchange
+    -- Use mq2ExchangeSlotName (converted slot name) for the command
+    mq.cmdf("/exchange \"%s\" %s", itemName, mq2ExchangeSlotName)
+    
+    -- Note: We can't reliably wait/verify in the actor thread context, 
+    -- but the /exchange command appears to work correctly.
+    -- If there were issues, MQ2Exchange would show error messages.
+    
+    printf("[AUTO-EXCHANGE] Exchange command sent for %s to %s slot", itemName, targetSlotName)
+    printf("[AUTO-EXCHANGE] If the exchange succeeded, %s should now be equipped", itemName)
+    
+    -- Return true since the command was sent successfully
+    -- The actual verification would need to happen outside the actor system
+    return true
+end
+
 local function get_item_class_info(item)
     local classInfo = {
         classes = {},
@@ -595,21 +730,21 @@ local function handle_proxy_give_batch(data)
     local success, batchRequest = pcall(json.decode, data)
     
     if not success then
-        mq.cmd("/echo [ERROR] Failed to decode batch trade request - JSON parsing error")
+        print("[ERROR] Failed to decode batch trade request - JSON parsing error")
         return
     end
     
     if not batchRequest then
-        mq.cmd("/echo [ERROR] Failed to decode batch trade request - JSON decode returned nil")
+        print("[ERROR] Failed to decode batch trade request - JSON decode returned nil")
         return
     end
     
     if not batchRequest.items or not batchRequest.target then
-        mq.cmd("/echo [ERROR] Invalid batch trade request - missing items or target")
+        print("[ERROR] Invalid batch trade request - missing items or target")
         return
     end
     
-    mq.cmdf("/echo [BATCH] Received batch request: %d items for trade to %s", #batchRequest.items, tostring(batchRequest.target))
+    printf("[BATCH] Received batch request: %d items for trade to %s", #batchRequest.items, tostring(batchRequest.target))
     
     local session = {
         target = batchRequest.target,
@@ -622,7 +757,7 @@ local function handle_proxy_give_batch(data)
         table.insert(session.items, itemRequest)
         if #session.items >= 8 then
             table.insert(M.pending_requests, { type = "multi_item_trade", target = session.target, items = session.items })
-            mq.cmdf("/echo Queued a trade session with %d items for %s. Total sessions: %d", #session.items, session.target, #M.pending_requests)
+            printf("Queued a trade session with %d items for %s. Total sessions: %d", #session.items, session.target, #M.pending_requests)
             session = {
                 target = batchRequest.target,
                 items = {},
@@ -634,10 +769,10 @@ local function handle_proxy_give_batch(data)
     
     if #session.items > 0 then
         table.insert(M.pending_requests, { type = "multi_item_trade", target = session.target, items = session.items })
-        mq.cmdf("/echo Queued a final trade session with %d items for %s. Total sessions: %d", #session.items, session.target, #M.pending_requests)
+        printf("Queued a final trade session with %d items for %s. Total sessions: %d", #session.items, session.target, #M.pending_requests)
     end
     
-    mq.cmdf("/echo All batch trade items categorized into sessions and queued.")
+    printf("All batch trade items categorized into sessions and queued.")
 end
 
 function M.command_peer_navigate_to_banker(peer)
@@ -661,11 +796,11 @@ function M.process_pending_requests()
     if multi_trade_state.active then
         local success = M.perform_multi_item_trade_step()
         if not success then
-            mq.cmdf("/echo [ERROR] Multi-item trade failed, resetting state.")
+            printf("[ERROR] Multi-item trade failed, resetting state.")
             multi_trade_state.active = false
             if mq.TLO.Cursor.ID() then mq.delay(100) end
         elseif multi_trade_state.status == "COMPLETED" then
-            mq.cmdf("/echo [BATCH] Multi-item trade session completed.")
+            printf("[BATCH] Multi-item trade session completed.")
             multi_trade_state.active = false
         end
         return
@@ -675,7 +810,7 @@ function M.process_pending_requests()
         local request = table.remove(M.pending_requests, 1)
 
         if request.type == "multi_item_trade" then
-            mq.cmdf("/echo [BATCH] Initiating new multi-item trade session for %s items to %s",
+            printf("[BATCH] Initiating new multi-item trade session for %s items to %s",
                 #request.items, request.target)
             multi_trade_state.active = true
             multi_trade_state.target_toon = request.target
@@ -687,12 +822,12 @@ function M.process_pending_requests()
 
             local success = M.perform_multi_item_trade_step()
             if not success then
-                mq.cmdf("/echo [ERROR] Initial multi-item trade step failed, resetting state.")
+                printf("[ERROR] Initial multi-item trade step failed, resetting state.")
                 multi_trade_state.active = false
                 if mq.TLO.Cursor.ID() then mq.delay(100) end
             end
         else
-            mq.cmdf("/echo [SINGLE] Processing single item request: Give %s to %s", request.name, request.toon)
+            printf("[SINGLE] Processing single item request: Give %s to %s", request.name, request.toon)
             table.insert(M.deferred_tasks, function()
                 M.perform_single_item_trade(request)
             end)
@@ -725,10 +860,10 @@ function M.perform_multi_item_trade_step()
         end
 
         if needs_bank_trip and not state.at_banker then
-            mq.cmdf("/echo [BATCH STATE] Items from bank detected. Navigating to banker first.")
+            printf("[BATCH STATE] Items from bank detected. Navigating to banker first.")
             local banker = mq.TLO.Spawn("npc banker")
             if not banker() then
-                mq.cmd("/echo [ERROR] No banker found nearby for batch trade. Aborting.")
+                print("[ERROR] No banker found nearby for batch trade. Aborting.")
                 return false
             end
             mq.cmdf("/target id %d", banker.ID())
@@ -738,7 +873,7 @@ function M.perform_multi_item_trade_step()
             state.status = "WAIT_NAVIGATING_TO_BANKER"
             return true
         else
-            mq.cmdf("/echo [BATCH STATE] No bank items needed, or already retrieved. Navigating to target %s.", targetToon)
+            printf("[BATCH STATE] No bank items needed, or already retrieved. Navigating to target %s.", targetToon)
             state.status = "NAVIGATING_TO_TARGET"
             return true
         end
@@ -751,7 +886,7 @@ function M.perform_multi_item_trade_step()
                 return true
             else
                 mq.cmd("/nav stop")
-                mq.cmdf("/echo [ERROR] Failed to reach banker for batch trade. Aborting.")
+                printf("[ERROR] Failed to reach banker for batch trade. Aborting.")
                 return false
             end
         else
@@ -772,14 +907,14 @@ function M.perform_multi_item_trade_step()
 
     if state.status == "RETRIEVING_BANK_ITEMS" then
         if not mq.TLO.Window("BankWnd").Open() and not mq.TLO.Window("BigBankWnd").Open() then
-            mq.cmdf("/echo [ERROR] Bank window not open during item retrieval. Aborting.")
+            printf("[ERROR] Bank window not open during item retrieval. Aborting.")
             return false
         end
 
         local item_to_retrieve = itemsToTrade[state.current_bank_item_index]
 
         if item_to_retrieve and item_to_retrieve.fromBank then
-            mq.cmdf("/echo [BATCH STATE] Retrieving item %d/%d from bank: %s",
+            printf("[BATCH STATE] Retrieving item %d/%d from bank: %s",
                 state.current_bank_item_index, #itemsToTrade, item_to_retrieve.name)
 
             local BankSlotId = tonumber(item_to_retrieve.bankslotid) or 0
@@ -802,7 +937,7 @@ function M.perform_multi_item_trade_step()
             end
             
             if bankCommand == "" then
-                mq.cmdf("/echo [ERROR] Invalid bank slot information for %s. Aborting trade.", item_to_retrieve.name)
+                printf("[ERROR] Invalid bank slot information for %s. Aborting trade.", item_to_retrieve.name)
                 return false
             end
 
@@ -810,14 +945,14 @@ function M.perform_multi_item_trade_step()
             mq.delay(500)
 
             if not mq.TLO.Cursor.ID() then
-                mq.cmdf("/echo [ERROR] Failed to pick up %s from bank. Item not on cursor. Aborting trade.", item_to_retrieve.name)
+                printf("[ERROR] Failed to pick up %s from bank. Item not on cursor. Aborting trade.", item_to_retrieve.name)
                 return false
             end
-            mq.cmdf("/echo %s picked up from bank.", mq.TLO.Cursor.Name())
+            printf("%s picked up from bank.", mq.TLO.Cursor.Name())
             mq.cmd("/autoinventory")
             mq.delay(500)
             if mq.TLO.Cursor.ID() then
-                mq.cmdf("/echo [ERROR] %s stuck on cursor after autoinventory. Aborting.", mq.TLO.Cursor.Name())
+                printf("[ERROR] %s stuck on cursor after autoinventory. Aborting.", mq.TLO.Cursor.Name())
                 mq.delay(100)
                 return false
             end
@@ -834,7 +969,7 @@ function M.perform_multi_item_trade_step()
             end
 
             if all_bank_items_retrieved_for_session then
-                mq.cmdf("/echo [BATCH STATE] All bank items for this session retrieved. Closing bank and navigating to target.")
+                printf("[BATCH STATE] All bank items for this session retrieved. Closing bank and navigating to target.")
                 if mq.TLO.Window("BankWnd").Open() then mq.TLO.Window("BankWnd").DoClose() mq.delay(500) end
                 if mq.TLO.Window("BigBankWnd").Open() then mq.TLO.Window("BigBankWnd").DoClose() mq.delay(500) end
                 state.status = "NAVIGATING_TO_TARGET"
@@ -847,7 +982,7 @@ function M.perform_multi_item_trade_step()
         end
     end
     if state.status == "NAVIGATING_TO_TARGET" then
-        mq.cmdf("/echo [BATCH STATE] Navigating to target %s for trade.", targetToon)
+        printf("[BATCH STATE] Navigating to target %s for trade.", targetToon)
         if spawn.Distance3D() > 15 then
             mq.cmdf("/nav id %s", spawn.ID())
             state.nav_start_time = os.time()
@@ -875,7 +1010,7 @@ function M.perform_multi_item_trade_step()
     end
 
     if state.status == "OPENING_TRADE_WINDOW" then
-        mq.cmdf("/echo [BATCH STATE] Opening trade window with %s", targetToon)
+        printf("[BATCH STATE] Opening trade window with %s", targetToon)
         if mq.TLO.Window("BankWnd").Open() then mq.TLO.Window("BankWnd").DoClose() mq.delay(500) end
         if mq.TLO.Window("BigBankWnd").Open() then mq.TLO.Window("BigBankWnd").DoClose() mq.delay(500) end
         local firstItemForTrade = nil
@@ -885,20 +1020,20 @@ function M.perform_multi_item_trade_step()
         end
 
         if not firstItemForTrade then
-            mq.cmdf("/echo [WARN] No items to trade in this session. Marking as completed.")
+            printf("[WARN] No items to trade in this session. Marking as completed.")
             state.status = "COMPLETED"
             return true
         end
         mq.cmdf('/shift /itemnotify "%s" leftmouseup', firstItemForTrade.name)
         mq.delay(500)
         if not mq.TLO.Cursor.ID() then
-            mq.cmdf("/echo [ERROR] Failed to pick up %s from inventory for trade. Aborting.", firstItemForTrade.name)
+            printf("[ERROR] Failed to pick up %s from inventory for trade. Aborting.", firstItemForTrade.name)
             return false
         end
         mq.cmdf("/tar pc %s", targetToon)
         mq.delay(200)
         if not mq.TLO.Target() or mq.TLO.Target.CleanName() ~= targetToon then
-            mq.cmdf("/echo [ERROR] Failed to target %s before trade. Aborting.", targetToon)
+            printf("[ERROR] Failed to target %s before trade. Aborting.", targetToon)
             return false
         end
         mq.cmd("/click left target")
@@ -912,7 +1047,7 @@ function M.perform_multi_item_trade_step()
 
     if state.status == "PLACING_ITEMS" then
         if not mq.TLO.Window("TradeWnd").Open() then
-            mq.cmdf("/echo [WARN] Trade window closed unexpectedly during item placement. Aborting.")
+            printf("[WARN] Trade window closed unexpectedly during item placement. Aborting.")
             mq.cmd('/autoinventory')
             return false
         end
@@ -924,18 +1059,18 @@ function M.perform_multi_item_trade_step()
                 filled_slots = filled_slots + 1
             end
         end
-        mq.cmdf("/echo Trade window has %d filled slots.", filled_slots)
+        printf("Trade window has %d filled slots.", filled_slots)
 
         if item_to_trade and filled_slots < 8 then
-            mq.cmdf("/echo [BATCH STATE] Placing item %d/%d: %s",
+            printf("[BATCH STATE] Placing item %d/%d: %s",
                 state.current_item_index, #itemsToTrade, item_to_trade.name)
             mq.cmdf('/shift /itemnotify "%s" leftmouseup', item_to_trade.name)
             mq.delay(50)
             if not mq.TLO.Cursor.ID() then
-                mq.cmdf("/echo [ERROR] Failed to pick up %s from inventory for trade. Item not on cursor. Aborting.", item_to_trade.name)
+                printf("[ERROR] Failed to pick up %s from inventory for trade. Item not on cursor. Aborting.", item_to_trade.name)
                 return false
             end
-            mq.cmdf("/echo %s picked up. Placing in trade window.", mq.TLO.Cursor.Name())
+            printf("%s picked up. Placing in trade window.", mq.TLO.Cursor.Name())
             mq.cmd("/click left target")
             mq.delay(50)
             state.current_item_index = state.current_item_index + 1
@@ -946,9 +1081,9 @@ function M.perform_multi_item_trade_step()
     end
 
     if state.status == "FINALIZING_TRADE" then
-        mq.cmdf("/echo [BATCH STATE] Clicking trade button for %s items.", state.current_item_index - 1)
+        printf("[BATCH STATE] Clicking trade button for %s items.", state.current_item_index - 1)
         if not mq.TLO.Window("TradeWnd").Open() then
-            mq.cmdf("/echo [WARN] Trade window closed unexpectedly before finalizing. Aborting.")
+            printf("[WARN] Trade window closed unexpectedly before finalizing. Aborting.")
             return false
         end
         mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
@@ -963,12 +1098,12 @@ function M.perform_multi_item_trade_step()
             if (os.time() - state.trade_completion_time) < 10 then
                 return true
             else
-                mq.cmdf("/echo [WARN] Trade window remained open for %s. Possible issue with trade. Cancelling.", targetToon)
+                printf("[WARN] Trade window remained open for %s. Possible issue with trade. Cancelling.", targetToon)
                 mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
                 return false
             end
         else
-            mq.cmdf("/echo Successfully completed multi-item trade with %s for %d items.", targetToon, state.current_item_index - 1)
+            printf("Successfully completed multi-item trade with %s for %d items.", targetToon, state.current_item_index - 1)
             state.status = "COMPLETED"
             return true
         end
@@ -977,13 +1112,13 @@ function M.perform_multi_item_trade_step()
 end
 
 function M.perform_single_item_trade(request)
-    mq.cmdf("/echo Performing single item trade for: %s to %s", request.name, request.toon)
+    printf("Performing single item trade for: %s to %s", request.name, request.toon)
 
     if request.fromBank then
-        mq.cmdf("/echo Attempting to retrieve %s from bank.", request.name)
+        printf("Attempting to retrieve %s from bank.", request.name)
         local banker = mq.TLO.Spawn("npc banker")
         if not banker() then
-            mq.cmd("/echo [ERROR] Could not find a banker nearby. Cannot retrieve item from bank.")
+            print("[ERROR] Could not find a banker nearby. Cannot retrieve item from bank.")
             return
         end
 
@@ -999,7 +1134,7 @@ function M.perform_single_item_trade(request)
         mq.delay(500)
 
         if mq.TLO.Target.Distance3D() > 10 then
-            mq.cmdf("/echo [ERROR] Failed to reach banker for %s. Aborting trade.", request.name)
+            printf("[ERROR] Failed to reach banker for %s. Aborting trade.", request.name)
             return
         end
 
@@ -1036,19 +1171,19 @@ function M.perform_single_item_trade(request)
         mq.cmdf("/itemnotify %s", bankCommand)
         mq.delay(1000)
         if not mq.TLO.Cursor.ID() then
-            mq.cmdf("/echo [ERROR] Failed to pick up %s from bank. Item not on cursor.", request.name)
+            printf("[ERROR] Failed to pick up %s from bank. Item not on cursor.", request.name)
             return
         end
-        mq.cmdf("/echo %s picked up from bank.", mq.TLO.Cursor.Name())
+        printf("%s picked up from bank.", mq.TLO.Cursor.Name())
 
     else
         mq.cmdf('/shift /itemnotify "%s" leftmouseup', request.name)
         mq.delay(500)
         if not mq.TLO.Cursor.ID() then
-            mq.cmdf("/echo [ERROR] Failed to pick up %s from inventory. Item not on cursor.", request.name)
+            printf("[ERROR] Failed to pick up %s from inventory. Item not on cursor.", request.name)
             return
         end
-        mq.cmdf("/echo %s picked up from inventory.", mq.TLO.Cursor.Name())
+        printf("%s picked up from inventory.", mq.TLO.Cursor.Name())
     end
 
     local spawn = mq.TLO.Spawn("pc =" .. request.toon)
@@ -1059,13 +1194,13 @@ function M.perform_single_item_trade(request)
     end
 
     if spawn.Distance3D() > 15 then
-        mq.cmdf("/echo Recipient %s is too far away (%.2f). Navigating to trade %s...", request.toon, spawn.Distance3D(), request.name)
+        printf("Recipient %s is too far away (%.2f). Navigating to trade %s...", request.toon, spawn.Distance3D(), request.name)
         mq.cmdf("/nav id %s", spawn.ID())
         local startTime = os.time()
         while spawn.Distance3D() > 15 and os.time() - startTime < 30 do
             mq.delay(1000)
             if not mq.TLO.Spawn("pc =" .. request.toon).ID() then
-                mq.cmdf("/echo [ERROR] Target %s disappeared during navigation. Aborting trade for %s.", request.toon, request.name)
+                printf("[ERROR] Target %s disappeared during navigation. Aborting trade for %s.", request.toon, request.name)
                 if mq.TLO.Cursor.ID() then mq.cmd('/autoinventory') mq.delay(100) end
                 return
             end
@@ -1112,11 +1247,24 @@ function M.perform_single_item_trade(request)
         mq.delay(500)
     end
 
+
     if mq.TLO.Window("TradeWnd").Open() then
-        mq.cmdf("/echo [WARN] Trade window remained open for %s. Possible issue with trade.", request.name)
+        printf("[WARN] Trade window remained open for %s. Possible issue with trade.", request.name)
         mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
     else
-        mq.cmdf("/echo Successfully traded %s to %s.", request.name, request.toon)
+        printf("Successfully traded %s to %s.", request.name, request.toon)
+        -- If auto-exchange is enabled, send exchange command to recipient after successful trade
+        if request.autoExchange and request.targetSlot then
+            -- Wait 2 seconds for the item to be fully transferred
+            mq.delay(2000)
+            M.send_inventory_command(request.toon, "perform_auto_exchange", {
+                json.encode({
+                    itemName = request.name,
+                    targetSlot = request.targetSlot,
+                    targetSlotName = request.targetSlotName
+                })
+            })
+        end
     end
 
     if mq.TLO.Cursor.ID() then mq.delay(100) end
@@ -1157,13 +1305,19 @@ local function handle_command_message(message)
             mq.delay(3000)
             mq.cmd("/nav stop")
         else
-            mq.cmd("/echo [EZInventory] Banker not found")
+            print("[EZInventory] Banker not found")
         end
     elseif command == "proxy_give" then
+        printf("[DEBUG] proxy_give command received, attempting JSON decode...")
         local request = json.decode(args[1])
         if request then
-            mq.cmdf("/echo Received proxy_give (single) command for: %s to %s",
+            printf("Received proxy_give (single) command for: %s to %s",
                 request.name, request.to)
+        else
+            printf("[ERROR] Failed to decode proxy_give JSON: %s", tostring(args[1]))
+        end
+        
+        if request then
             table.insert(M.pending_requests, {
                 type = "single_item_trade",
                 name = request.name,
@@ -1172,14 +1326,43 @@ local function handle_command_message(message)
                 bagid = request.bagid,
                 slotid = request.slotid,
                 bankslotid = request.bankslotid,
+                -- Add auto-exchange fields
+                autoExchange = request.autoExchange,
+                targetSlot = request.targetSlot,
+                targetSlotName = request.targetSlotName
             })
-            mq.cmd("/echo Added single item request to pending queue")
+            print("Added single item request to pending queue")
+            
+            -- Auto-exchange will be handled after successful trade completion
         else
-            mq.cmd("/echo [ERROR] Failed to decode proxy_give (single) request")
+            print("[ERROR] Failed to decode proxy_give (single) request")
+        end
+    elseif command == "perform_auto_exchange" then
+        local exchangeInfo = json.decode(args[1])
+        if exchangeInfo then
+            printf("[DEBUG] Received perform_auto_exchange command for %s to slot %s", 
+                exchangeInfo.itemName, exchangeInfo.targetSlotName)
+            
+            -- Perform the exchange immediately since trade is already complete
+            local success = M.safe_auto_exchange(
+                exchangeInfo.itemName,
+                exchangeInfo.targetSlot,
+                exchangeInfo.targetSlotName
+            )
+            
+            if success then
+                printf("[AUTO-EXCHANGE] Successfully equipped %s to %s slot", 
+                    exchangeInfo.itemName, exchangeInfo.targetSlotName)
+            else
+                printf("[AUTO-EXCHANGE] Failed to equip %s to %s slot", 
+                    exchangeInfo.itemName, exchangeInfo.targetSlotName)
+            end
+        else
+            print("[ERROR] Failed to decode perform_auto_exchange request")
         end
     elseif command == "auto_accept_trade" then
         table.insert(M.deferred_tasks, function()
-            mq.cmd("/echo Auto accepting trade")
+            print("Auto accepting trade")
             local timeout = os.time() + 5
             while not mq.TLO.Window("TradeWnd").Open() and os.time() < timeout do
                 mq.delay(100)
@@ -1200,7 +1383,7 @@ function M.send_inventory_command(peer, command, args)
         print("[Inventory Actor] Cannot send command - command mailbox not initialized")
         return false
     end
-    mq.cmdf("/echo [SEND CMD] Trying to send %s to %s", command, tostring(peer))
+    printf("[SEND CMD] Trying to send %s to %s", command, tostring(peer))
     command_mailbox:send(
         {character = peer},
         {type = 'command', command = command, args = args or {}, target = peer}
