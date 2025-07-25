@@ -212,6 +212,40 @@ local function get_item_class_info(item)
     return classInfo
 end
 
+local function get_item_race_info(item)
+    local raceString = ""
+    
+    if item and item() then
+        local numRaces = item.Races()
+        if numRaces then
+            if numRaces >= 15 then  -- All races in EverQuest
+                raceString = "ALL"
+            else
+                local raceMap = {
+                    ["Human"] = "HUM", ["Barbarian"] = "BAR", ["Erudite"] = "ERU",
+                    ["Wood Elf"] = "ELF", ["High Elf"] = "HIE", ["Dark Elf"] = "DEF",
+                    ["Half Elf"] = "HEL", ["Dwarf"] = "DWF", ["Troll"] = "TRL",
+                    ["Ogre"] = "OGR", ["Halfling"] = "HFL", ["Gnome"] = "GNM",
+                    ["Iksar"] = "IKS", ["Vah Shir"] = "VAH", ["Froglok"] = "FRG",
+                    ["Drakkin"] = "DRK"
+                }
+                
+                local raceCodes = {}
+                for i = 1, numRaces do
+                    local raceName = item.Race(i)()
+                    if raceName then
+                        local raceCode = raceMap[raceName] or raceName
+                        table.insert(raceCodes, raceCode)
+                    end
+                end
+                raceString = table.concat(raceCodes, " ")
+            end
+        end
+    end
+    
+    return raceString
+end
+
 local function get_valid_slots(item)
     local slots = {}
     local wornSlots = item.WornSlots() or 0
@@ -287,6 +321,9 @@ local function get_basic_item_info(item, include_extended_stats)
     basic.allClasses = classInfo.allClasses
     basic.classes = classInfo.classes
     basic.slots = get_valid_slots(item)
+    
+    -- Add race information
+    basic.races = get_item_race_info(item)
     
     return basic
 end

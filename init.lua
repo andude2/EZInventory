@@ -2024,6 +2024,84 @@ function renderItemSuggestions()
                         includeItem = false
                     end
 
+                    -- Additional class/race filtering for target character
+                    if includeItem then
+                        local targetClass = "UNK"
+                        local targetRace = "UNK"
+                        
+                        -- Get target character's class and race
+                        local function getRaceCode(raceName)
+                            local raceMap = {
+                                ["Human"] = "HUM", ["Barbarian"] = "BAR", ["Erudite"] = "ERU",
+                                ["Wood Elf"] = "ELF", ["High Elf"] = "HIE", ["Dark Elf"] = "DEF",
+                                ["Half Elf"] = "HEL", ["Dwarf"] = "DWF", ["Troll"] = "TRL",
+                                ["Ogre"] = "OGR", ["Halfling"] = "HFL", ["Gnome"] = "GNM",
+                                ["Iksar"] = "IKS", ["Vah Shir"] = "VAH", ["Froglok"] = "FRG",
+                                ["Drakkin"] = "DRK"
+                            }
+                            return raceMap[raceName] or raceName or "UNK"
+                        end
+                        
+                        if inventoryUI.itemSuggestionsTarget == mq.TLO.Me.CleanName() then
+                            targetClass = mq.TLO.Me.Class() or "UNK"
+                            local raceObj = mq.TLO.Me.Race
+                            local raceName = tostring(raceObj) or "UNK"
+                            targetRace = getRaceCode(raceName)
+                        else
+                            local spawn = mq.TLO.Spawn("pc = " .. inventoryUI.itemSuggestionsTarget)
+                            if spawn() then
+                                targetClass = spawn.Class() or "UNK"
+                                local raceObj = spawn.Race
+                                local raceName = tostring(raceObj) or "UNK"
+                                targetRace = getRaceCode(raceName)
+                            else
+                                -- Fallback to peer inventory data
+                                for peerID, invData in pairs(inventory_actor.peer_inventories or {}) do
+                                    if invData.name == inventoryUI.itemSuggestionsTarget then
+                                        targetClass = invData.class or "UNK"
+                                        -- Note: race not stored in peer data, will remain "UNK"
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        
+                       
+                        -- Class filtering
+                        if targetClass ~= "UNK" and availableItem.item then
+                            local canUseClass = false
+                            if availableItem.item.allClasses then
+                                canUseClass = true
+                            elseif availableItem.item.classes and #availableItem.item.classes > 0 then
+                                for _, allowedClass in ipairs(availableItem.item.classes) do
+                                    if allowedClass == targetClass then
+                                        canUseClass = true
+                                        break
+                                    end
+                                end
+                            else
+                                -- Fallback: assume usable if no class restrictions found
+                                canUseClass = true
+                            end
+                            
+                            if not canUseClass then
+                                includeItem = false
+                            end
+                        end
+                        
+                        -- Race filtering
+                        if includeItem and targetRace ~= "UNK" and availableItem.item then
+                            local races = availableItem.item.races
+                            if races and type(races) == "string" and races ~= "" then
+                                if races == "ALL" then
+                                    -- all good
+                                elseif not races:find(targetRace) then
+                                    includeItem = false
+                                end
+                            end
+                        end
+                    end
+
                     if includeItem then
                         table.insert(newFilteredItems, availableItem)
                     end
@@ -3078,6 +3156,15 @@ function inventoryUI.render()
                     if ImGui.Selectable("  " .. peer.name, isSelected) then
                         inventoryUI.selectedPeer = peer.name
                         loadInventoryData(peer)
+                        
+                        -- If there's a selected slot, refresh available items for the new character
+                        if inventoryUI.selectedSlotID and inventoryUI.showItemSuggestions then
+                            inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(
+                                peer.name, inventoryUI.selectedSlotID)
+                            inventoryUI.filteredItemsCache.lastFilterKey = ""  -- Invalidate cache
+                            inventoryUI.itemSuggestionsTarget = peer.name
+                            inventoryUI.itemSuggestionsSlotName = inventoryUI.selectedSlotName or "Unknown Slot"
+                        end
                     end
                     if isSelected then
                         ImGui.SetItemDefaultFocus()
@@ -3672,8 +3759,11 @@ function inventoryUI.render()
                                                     end
                                                     if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
                                                         inventoryUI.itemSuggestionsTarget = result.peerName
-                                                        inventoryUI.itemSuggestionsSlotID = result.item.slotid
+                                                        inventoryUI.itemSuggestionsSlot = result.item.slotid
                                                         inventoryUI.showItemSuggestions = true
+                                                        inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(result.peerName, result.item.slotid)
+                                                        inventoryUI.filteredItemsCache.lastFilterKey = ""  -- Invalidate cache
+
                                                     end
                                                 end
 
