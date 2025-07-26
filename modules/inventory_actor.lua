@@ -121,6 +121,7 @@ local function get_basic_item_info(item, include_extended_stats)
     basic.icon = item.Icon() or 0
     basic.itemlink = item.ItemLink("CLICKABLE")() or ""
     basic.nodrop = item.NoDrop() and 1 or 0
+    basic.tradeskills = item.Tradeskills() and 1 or 0
     basic.qty = item.Stack() or 1
     
     local augments = scan_augment_links(item)
