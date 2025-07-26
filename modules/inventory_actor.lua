@@ -212,6 +212,15 @@ local function get_item_class_info(item)
     return classInfo
 end
 
+local raceMap = {
+    ["Human"] = "HUM", ["Barbarian"] = "BAR", ["Erudite"] = "ERU",
+    ["Wood Elf"] = "ELF", ["High Elf"] = "HIE", ["Dark Elf"] = "DEF",
+    ["Half Elf"] = "HEL", ["Dwarf"] = "DWF", ["Troll"] = "TRL",
+    ["Ogre"] = "OGR", ["Halfling"] = "HFL", ["Gnome"] = "GNM",
+    ["Iksar"] = "IKS", ["Vah Shir"] = "VAH", ["Froglok"] = "FRG",
+    ["Drakkin"] = "DRK"
+}
+
 local function get_item_race_info(item)
     local raceString = ""
     
@@ -221,14 +230,7 @@ local function get_item_race_info(item)
             if numRaces >= 15 then  -- All races in EverQuest
                 raceString = "ALL"
             else
-                local raceMap = {
-                    ["Human"] = "HUM", ["Barbarian"] = "BAR", ["Erudite"] = "ERU",
-                    ["Wood Elf"] = "ELF", ["High Elf"] = "HIE", ["Dark Elf"] = "DEF",
-                    ["Half Elf"] = "HEL", ["Dwarf"] = "DWF", ["Troll"] = "TRL",
-                    ["Ogre"] = "OGR", ["Halfling"] = "HFL", ["Gnome"] = "GNM",
-                    ["Iksar"] = "IKS", ["Vah Shir"] = "VAH", ["Froglok"] = "FRG",
-                    ["Drakkin"] = "DRK"
-                }
+                
                 
                 local raceCodes = {}
                 for i = 1, numRaces do

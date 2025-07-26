@@ -1775,6 +1775,15 @@ local itemSuggestionsCache = {
     lastSlotID = nil
 }
 
+local raceMap = {
+    ["Human"] = "HUM", ["Barbarian"] = "BAR", ["Erudite"] = "ERU",
+    ["Wood Elf"] = "ELF", ["High Elf"] = "HIE", ["Dark Elf"] = "DEF",
+    ["Half Elf"] = "HEL", ["Dwarf"] = "DWF", ["Troll"] = "TRL",
+    ["Ogre"] = "OGR", ["Halfling"] = "HFL", ["Gnome"] = "GNM",
+    ["Iksar"] = "IKS", ["Vah Shir"] = "VAH", ["Froglok"] = "FRG",
+    ["Drakkin"] = "DRK"
+}
+
 function renderItemSuggestions()
     if not inventoryUI.showItemSuggestions then return end
     
@@ -2031,14 +2040,7 @@ function renderItemSuggestions()
                         
                         -- Get target character's class and race
                         local function getRaceCode(raceName)
-                            local raceMap = {
-                                ["Human"] = "HUM", ["Barbarian"] = "BAR", ["Erudite"] = "ERU",
-                                ["Wood Elf"] = "ELF", ["High Elf"] = "HIE", ["Dark Elf"] = "DEF",
-                                ["Half Elf"] = "HEL", ["Dwarf"] = "DWF", ["Troll"] = "TRL",
-                                ["Ogre"] = "OGR", ["Halfling"] = "HFL", ["Gnome"] = "GNM",
-                                ["Iksar"] = "IKS", ["Vah Shir"] = "VAH", ["Froglok"] = "FRG",
-                                ["Drakkin"] = "DRK"
-                            }
+                            
                             return raceMap[raceName] or raceName or "UNK"
                         end
                         
