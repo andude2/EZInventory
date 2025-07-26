@@ -116,8 +116,14 @@ function Suggestions.getAvailableItemsForSlot(targetCharacter, slotID)
         inventory_actor.request_all_inventories()
     end
 
-    local spawn = mq.TLO.Spawn("pc = " .. targetCharacter)
+    local spawn = nil
     local class = "UNK"
+    -- unified spawn handling?
+    if targetCharacter == mq.TLO.Me.CleanName() then
+        spawn = mq.TLO.Me 
+    else
+        spawn = mq.TLO.Spawn("pc = " .. targetCharacter)
+    end
 
     if spawn() then
         class = spawn.Class() or "UNK"
@@ -128,7 +134,7 @@ function Suggestions.getAvailableItemsForSlot(targetCharacter, slotID)
                 break
             end
         end
-
+        -- this should now not trigger...
         if class == "UNK" then
             if targetCharacter == mq.TLO.Me.CleanName() then
                 class = mq.TLO.Me.Class() or "UNK"
@@ -161,18 +167,11 @@ function Suggestions.getAvailableItemsForSlot(targetCharacter, slotID)
                 iterable_container = container
             end
         end
-
         for _, item in ipairs(iterable_container or {}) do
             containerItems = containerItems + 1
             debugStats.totalItems = debugStats.totalItems + 1
             
-            -- NEW LOGIC: Only filter no drop items if they're from OTHER players
-            local isFromOtherPlayer = sourceName ~= mq.TLO.Me.CleanName()
-            local shouldSkipNoDrop = item.nodrop == 1 and isFromOtherPlayer
-            
-            if shouldSkipNoDrop then
-                debugStats.noDropItems = debugStats.noDropItems + 1
-            elseif not isItemUsableInSlot(item, slotID, class) then
+            if not isItemUsableInSlot(item, slotID, class) then
                 debugStats.slotFilteredItems = debugStats.slotFilteredItems + 1
             else
                 debugStats.validItems = debugStats.validItems + 1
@@ -211,10 +210,7 @@ function Suggestions.getAvailableItemsForSlot(targetCharacter, slotID)
         end
     end
 
-    table.sort(results, function(a, b)
-        return (a.name or ""):lower() < (b.name or ""):lower()
-    end)
-
+    -- Sorting is now handled in the cache layer for performance
     return results
 end
 
