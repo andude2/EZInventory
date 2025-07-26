@@ -3812,11 +3812,11 @@ function inventoryUI.render()
                                                     if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
                                                         inventoryUI.itemSuggestionsTarget = result.peerName
                                                         inventoryUI.itemSuggestionsSlot = result.item.slotid
+                                                        inventoryUI.itemSuggestionsSlotName = getSlotNameFromID(result.item.slotid) or
+                                                        tostring(result.item.slotid)
                                                         inventoryUI.showItemSuggestions = true
-                                                        inventoryUI.availableItems = Suggestions
-                                                        .getAvailableItemsForSlot(result.peerName, result.item.slotid)
-                                                        inventoryUI.filteredItemsCache.lastFilterKey =
-                                                        ""                                                -- Invalidate cache
+                                                        inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(result.peerName, result.item.slotid)
+                                                        inventoryUI.filteredItemsCache.lastFilterKey = ""                                                -- Invalidate cache
                                                     end
                                                 end
 
