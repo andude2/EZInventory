@@ -480,6 +480,7 @@ local function draw_empty_slot_cbb(cell_id)
                         bagid = pack_number,
                         slotid = slotIndex,
                         nodrop = cursorItemTLO.NoDrop() and 1 or 0,
+                        tradeskills = cursorItemTLO.Tradeskills() and 1 or 0,
                     }
 
                     if not inventoryUI.inventoryData.bags[pack_number] then
@@ -1070,8 +1071,11 @@ local itemGroups = {
     Scrolls = { "Scroll", "Spell" }
 }
 
-local function itemMatchesGroup(itemType, selectedGroup)
+local function itemMatchesGroup(itemType, selectedGroup, item)
     if selectedGroup == "All" then return true end
+    if selectedGroup == "Tradeskills" then
+        return item and item.tradeskills == 1
+    end
     local groupList = itemGroups[selectedGroup]
     if not groupList then return false end
     for _, groupType in ipairs(groupList) do
@@ -2828,6 +2832,10 @@ function renderMultiTradePanel()
                             ImGui.SameLine()
                             ImGui.TextColored(1, 0, 0, 1, "(No Drop)")
                         end
+                        if item.tradeskills == 1 then
+                            ImGui.SameLine()
+                            ImGui.TextColored(0, 0.8, 1, 1, "(Tradeskills)")
+                        end
 
                         ImGui.TableNextColumn()
                         ImGui.Text(itemSource)
@@ -4401,6 +4409,7 @@ function inventoryUI.render()
             -- Initialize new filter states
             inventoryUI.filterNoDrop = inventoryUI.filterNoDrop or false
             inventoryUI.itemTypeFilter = inventoryUI.itemTypeFilter or "All"
+            inventoryUI.excludeItemTypes = inventoryUI.excludeItemTypes or {}
             inventoryUI.minValueFilter = tonumber(inventoryUI.minValueFilter) or 0
             inventoryUI.maxValueFilter = tonumber(inventoryUI.maxValueFilter) or 999999999
             inventoryUI.minTributeFilter = tonumber(inventoryUI.minTributeFilter) or 0
@@ -4417,10 +4426,12 @@ function inventoryUI.render()
 
             -- Track filter state for page reset
             inventoryUI.pcPrevFilterState = inventoryUI.pcPrevFilterState or ""
-            local currentFilterState = string.format("%s_%s_%s_%s_%s_%d_%d_%d_%s_%s",
+            local excludeItemTypesStr = table.concat(inventoryUI.excludeItemTypes or {}, ",")
+            local currentFilterState = string.format("%s_%s_%s_%s_%s_%s_%d_%d_%d_%s_%s",
                 inventoryUI.sourceFilter,
                 tostring(inventoryUI.filterNoDrop),
                 inventoryUI.itemTypeFilter,
+                excludeItemTypesStr,
                 inventoryUI.classFilter,
                 inventoryUI.raceFilter,
                 inventoryUI.minValueFilter,
@@ -4490,8 +4501,17 @@ function inventoryUI.render()
 
                     -- Item Type filter
                     local itemType = item.itemtype or item.type or ""
-                    if not itemMatchesGroup(itemType, inventoryUI.itemTypeFilter) then
+                    if not itemMatchesGroup(itemType, inventoryUI.itemTypeFilter, item) then
                         return false
+                    end
+                    
+                    -- Exclude Item Types filter
+                    if inventoryUI.excludeItemTypes and #inventoryUI.excludeItemTypes > 0 then
+                        for _, excludeType in ipairs(inventoryUI.excludeItemTypes) do
+                            if itemMatchesGroup(itemType, excludeType, item) then
+                                return false
+                            end
+                        end
                     end
 
                     -- Class filter
@@ -4651,7 +4671,7 @@ function inventoryUI.render()
                 ImGui.SameLine(340)
                 ImGui.SetNextItemWidth(120)
                 if ImGui.BeginCombo("##ItemTypeFilter", inventoryUI.itemTypeFilter) then
-                    local itemGroupOptions = { "All", "Weapon", "Armor", "Jewelry", "Consumable", "Scrolls" }
+                    local itemGroupOptions = { "All", "Weapon", "Armor", "Jewelry", "Consumable", "Scrolls", "Tradeskills" }
                     for _, group in ipairs(itemGroupOptions) do
                         local selected = (inventoryUI.itemTypeFilter == group)
                         if ImGui.Selectable(group, selected) then
@@ -4667,6 +4687,40 @@ function inventoryUI.render()
                         ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.84, 0.0, 1.0) -- Gold RGBA
                         ImGui.Text("Item Types: " .. table.concat(groupList, ", "))
                         ImGui.PopStyleColor()
+                    end
+                end
+                
+                -- Exclude checkboxes on same row
+                ImGui.SameLine(500)
+                ImGui.Text("Exclude:")
+                
+                local excludeTypes = { "Weapon", "Armor", "Jewelry", "Consumable", "Scrolls", "Tradeskills" }
+                for i, excludeType in ipairs(excludeTypes) do
+                    ImGui.SameLine()
+                    
+                    -- Check if this type is currently excluded
+                    local isExcluded = false
+                    for _, excludedType in ipairs(inventoryUI.excludeItemTypes) do
+                        if excludedType == excludeType then
+                            isExcluded = true
+                            break
+                        end
+                    end
+                    
+                    local newValue, changed = ImGui.Checkbox(excludeType, isExcluded)
+                    if changed then
+                        if newValue then
+                            -- Add to exclude list
+                            table.insert(inventoryUI.excludeItemTypes, excludeType)
+                        else
+                            -- Remove from exclude list
+                            for j = #inventoryUI.excludeItemTypes, 1, -1 do
+                                if inventoryUI.excludeItemTypes[j] == excludeType then
+                                    table.remove(inventoryUI.excludeItemTypes, j)
+                                    break
+                                end
+                            end
+                        end
                     end
                 end
 
@@ -4769,6 +4823,7 @@ function inventoryUI.render()
                     inventoryUI.sourceFilter = "All"
                     inventoryUI.filterNoDrop = false
                     inventoryUI.itemTypeFilter = "All"
+                    inventoryUI.excludeItemTypes = {}
                     inventoryUI.classFilter = "All"
                     inventoryUI.raceFilter = "All"
                     inventoryUI.minValueFilter = 0
