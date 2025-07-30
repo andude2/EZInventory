@@ -1,3 +1,5 @@
 .claude/settings.local.json
 .claude
 .vscode
+/modules/inventory_actor.lua.backup
+init.lua.backup
