@@ -85,6 +85,7 @@ local Defaults = {
     showEQPath                 = true,
     showScriptPath             = true,
     showDetailedStats          = false,
+    showOnlyDifferences        = false,
     autoExchangeEnabled        = true,
 }
 
@@ -2255,6 +2256,16 @@ function renderItemSuggestions()
                 mq.pickle(SettingsFile, Settings)
             end
 
+            -- OnlyDiff checkbox (only show when detailed stats are enabled)
+            if Settings.showDetailedStats then
+                ImGui.SameLine()
+                local showOnlyDifferences, onlyDiffChanged = ImGui.Checkbox("OnlyDiff", Settings.showOnlyDifferences)
+                if onlyDiffChanged then
+                    Settings.showOnlyDifferences = showOnlyDifferences
+                    mq.pickle(SettingsFile, Settings)
+                end
+            end
+
             ImGui.SameLine()
             local autoExchangeEnabled, autoExchangeChanged = ImGui.Checkbox("Auto Exchange", Settings
             .autoExchangeEnabled)
@@ -2272,7 +2283,7 @@ function renderItemSuggestions()
             if ImGui.BeginTable("AvailableItemsTable", numColumns, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.ScrollY, 0, calculatedTableHeight) then
                 ImGui.TableSetupColumn("Select", ImGuiTableColumnFlags.WidthFixed, 50)
                 ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 40)
-                ImGui.TableSetupColumn("Item Name", ImGuiTableColumnFlags.WidthStretch)
+                ImGui.TableSetupColumn("Item Name", ImGuiTableColumnFlags.WidthStretch, 150)
                 ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 100)
                 ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthFixed, 100)
 
@@ -2285,7 +2296,7 @@ function renderItemSuggestions()
                     ImGui.TableSetupColumn("Combat", ImGuiTableColumnFlags.WidthFixed, 80)
                 end
 
-                ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 80)
+                ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthStretch, 80)
 
                 ImGui.TableHeadersRow()
 
@@ -2368,67 +2379,164 @@ function renderItemSuggestions()
 
                     -- Add detailed stat columns if enabled
                     if Settings.showDetailedStats then
+                        -- Get currently equipped item stats for comparison (if OnlyDiff is enabled)
+                        local equippedHP = (currentlyEquipped and currentlyEquipped.hp) or 0
+                        local equippedMana = (currentlyEquipped and currentlyEquipped.mana) or 0
+                        local equippedAC = (currentlyEquipped and currentlyEquipped.ac) or 0
+                        local equippedStr = (currentlyEquipped and currentlyEquipped.str) or 0
+                        local equippedAgi = (currentlyEquipped and currentlyEquipped.agi) or 0
+
                         -- HP Column
                         ImGui.TableNextColumn()
                         local hp = availableItem.item.hp or 0
-                        if hp > 0 then
-                            ImGui.Text(tostring(hp))
+                        if Settings.showOnlyDifferences then
+                            local diff = hp - equippedHP
+                            if diff ~= 0 then
+                                if diff > 0 then
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0) -- Green for positive
+                                    ImGui.Text("+" .. tostring(diff))
+                                else
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0) -- Red for negative
+                                    ImGui.Text(tostring(diff))
+                                end
+                                ImGui.PopStyleColor()
+                            else
+                                ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                                ImGui.Text("-")
+                                ImGui.PopStyleColor()
+                            end
                         else
-                            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
-                            ImGui.Text("-")
-                            ImGui.PopStyleColor()
+                            if hp > 0 then
+                                ImGui.Text(tostring(hp))
+                            else
+                                ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                                ImGui.Text("-")
+                                ImGui.PopStyleColor()
+                            end
                         end
 
                         -- MANA Column
                         ImGui.TableNextColumn()
                         local mana = availableItem.item.mana or 0
-                        if mana > 0 then
-                            ImGui.Text(tostring(mana))
+                        if Settings.showOnlyDifferences then
+                            local diff = mana - equippedMana
+                            if diff ~= 0 then
+                                if diff > 0 then
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0) -- Green for positive
+                                    ImGui.Text("+" .. tostring(diff))
+                                else
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0) -- Red for negative
+                                    ImGui.Text(tostring(diff))
+                                end
+                                ImGui.PopStyleColor()
+                            else
+                                ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                                ImGui.Text("-")
+                                ImGui.PopStyleColor()
+                            end
                         else
-                            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
-                            ImGui.Text("-")
-                            ImGui.PopStyleColor()
+                            if mana > 0 then
+                                ImGui.Text(tostring(mana))
+                            else
+                                ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                                ImGui.Text("-")
+                                ImGui.PopStyleColor()
+                            end
                         end
 
                         -- AC Column
                         ImGui.TableNextColumn()
                         local ac = availableItem.item.ac or 0
-                        if ac > 0 then
-                            ImGui.Text(tostring(ac))
+                        if Settings.showOnlyDifferences then
+                            local diff = ac - equippedAC
+                            if diff ~= 0 then
+                                if diff > 0 then
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0) -- Green for positive
+                                    ImGui.Text("+" .. tostring(diff))
+                                else
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0) -- Red for negative
+                                    ImGui.Text(tostring(diff))
+                                end
+                                ImGui.PopStyleColor()
+                            else
+                                ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                                ImGui.Text("-")
+                                ImGui.PopStyleColor()
+                            end
                         else
-                            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
-                            ImGui.Text("-")
-                            ImGui.PopStyleColor()
+                            if ac > 0 then
+                                ImGui.Text(tostring(ac))
+                            else
+                                ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                                ImGui.Text("-")
+                                ImGui.PopStyleColor()
+                            end
                         end
 
                         -- STR Column
                         ImGui.TableNextColumn()
                         local str = availableItem.item.str or 0
-                        if str > 0 then
-                            ImGui.Text("+" .. tostring(str))
-                        elseif str < 0 then
-                            ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
-                            ImGui.Text(tostring(str))
-                            ImGui.PopStyleColor()
+                        if Settings.showOnlyDifferences then
+                            local diff = str - equippedStr
+                            if diff ~= 0 then
+                                if diff > 0 then
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0) -- Green for positive
+                                    ImGui.Text("+" .. tostring(diff))
+                                else
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0) -- Red for negative
+                                    ImGui.Text(tostring(diff))
+                                end
+                                ImGui.PopStyleColor()
+                            else
+                                ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                                ImGui.Text("-")
+                                ImGui.PopStyleColor()
+                            end
                         else
-                            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
-                            ImGui.Text("-")
-                            ImGui.PopStyleColor()
+                            if str > 0 then
+                                ImGui.Text("+" .. tostring(str))
+                            elseif str < 0 then
+                                ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
+                                ImGui.Text(tostring(str))
+                                ImGui.PopStyleColor()
+                            else
+                                ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                                ImGui.Text("-")
+                                ImGui.PopStyleColor()
+                            end
                         end
 
                         -- AGI Column
                         ImGui.TableNextColumn()
                         local agi = availableItem.item.agi or 0
-                        if agi > 0 then
-                            ImGui.Text("+" .. tostring(agi))
-                        elseif agi < 0 then
-                            ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
-                            ImGui.Text(tostring(agi))
-                            ImGui.PopStyleColor()
+                        if Settings.showOnlyDifferences then
+                            local diff = agi - equippedAgi
+                            if diff ~= 0 then
+                                if diff > 0 then
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0) -- Green for positive
+                                    ImGui.Text("+" .. tostring(diff))
+                                else
+                                    ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0) -- Red for negative
+                                    ImGui.Text(tostring(diff))
+                                end
+                                ImGui.PopStyleColor()
+                            else
+                                ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                                ImGui.Text("-")
+                                ImGui.PopStyleColor()
+                            end
                         else
-                            ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
-                            ImGui.Text("-")
-                            ImGui.PopStyleColor()
+                            if agi > 0 then
+                                ImGui.Text("+" .. tostring(agi))
+                            elseif agi < 0 then
+                                ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.3, 0.3, 1.0)
+                                ImGui.Text(tostring(agi))
+                                ImGui.PopStyleColor()
+                            else
+                                ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0)
+                                ImGui.Text("-")
+                                ImGui.PopStyleColor()
+                            end
                         end
 
                         -- Combat Column (simplified - could show ATK, haste, etc.)
@@ -2599,7 +2707,7 @@ function renderItemSuggestions()
                 local equippedItem = inventoryUI.detailedEquippedStats or {}
                 local function showStatComparisonColumn(statList, selectedItem, equippedItem)
                     if ImGui.BeginTable("StatColumn", 2, ImGuiTableFlags.SizingFixedFit) then
-                        ImGui.TableSetupColumn("Stat", ImGuiTableColumnFlags.WidthFixed, 100)
+                        ImGui.TableSetupColumn("Stat", ImGuiTableColumnFlags.WidthFixed, 60)
                         ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthFixed, 50)
 
                         for _, stat in ipairs(statList) do
