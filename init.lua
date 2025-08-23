@@ -45,6 +45,7 @@ local lastCacheTime       = 0
 local lastPathRequestTime = 0
 local json                = require("dkjson")
 local Suggestions         = require("EZInventory.modules.suggestions")
+local _ = require("EZInventory.modules.compare_ui") -- Register compare UI and /ezcompare
 local bot_inventory       = nil
 local isEMU               = mq.TLO.MacroQuest.BuildName() == "Emu"
 
@@ -77,11 +78,11 @@ local Defaults = {
     comparisonShowFocusEffects = false,
     comparisonShowMod2s        = false,
     comparisonShowClickies     = false,
-    loadBasicStats             = true,
+    loadBasicStats             = false,
     loadDetailedStats          = false,
     enableStatsFiltering       = true,
     autoRefreshInventory       = true,
-    statsLoadingMode           = "selective",
+    statsLoadingMode           = "minimal",
     showEQPath                 = true,
     showScriptPath             = true,
     showDetailedStats          = false,
@@ -153,6 +154,10 @@ function UpdateInventoryActorConfig()
 end
 
 LoadSettings()
+-- Force minimal data loading for the main EZInventory UI
+Settings.loadBasicStats = false
+Settings.loadDetailedStats = false
+Settings.statsLoadingMode = "minimal"
 UpdateInventoryActorConfig()
 
 ---@tag InventoryUI

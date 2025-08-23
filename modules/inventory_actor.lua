@@ -338,10 +338,6 @@ local function get_detailed_item_stats(item)
         return stats
     end
 
-    if not M.config.loadDetailedStats then
-        return stats
-    end
-
     local function safe_get(func, default)
         default = default or 0
         local success, result = pcall(func)
@@ -484,7 +480,8 @@ function M.gather_inventory()
     for slot = 0, 22 do
         local item = mq.TLO.Me.Inventory(slot)
         if item() then
-            local entry = get_basic_item_info(item)
+            -- Always gather minimal data for the main inventory snapshot
+            local entry = get_basic_item_info(item, false)
             entry.slotid = slot
             table.insert(data.equipped, entry)
         end
@@ -498,7 +495,8 @@ function M.gather_inventory()
             for i = 1, pack.Container() do
                 local item = pack.Item(i)
                 if item() then
-                    local entry = get_basic_item_info(item)
+                    -- Always gather minimal data for the main inventory snapshot
+                    local entry = get_basic_item_info(item, false)
                     entry.bagid = bagid
                     entry.slotid = i
                     entry.bagname = pack.Name()
@@ -512,7 +510,8 @@ function M.gather_inventory()
     for bankSlot = 1, 24 do
         local item = mq.TLO.Me.Bank(bankSlot)
         if item.ID() then
-            local entry = get_basic_item_info(item)
+            -- Always gather minimal data for the main inventory snapshot
+            local entry = get_basic_item_info(item, false)
             entry.bankslotid = bankSlot
             entry.slotid = -1
             table.insert(data.bank, entry)
@@ -521,7 +520,8 @@ function M.gather_inventory()
                 for i = 1, item.Container() do
                     local sub = item.Item(i)
                     if sub.ID() then  
-                        local subEntry = get_basic_item_info(sub)
+                        -- Always gather minimal data for the main inventory snapshot
+                        local subEntry = get_basic_item_info(sub, false)
                         subEntry.bankslotid = bankSlot
                         subEntry.slotid = i
                         subEntry.bagname = item.Name()
