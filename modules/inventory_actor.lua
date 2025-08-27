@@ -24,6 +24,8 @@ M.MSG_TYPE = {
     PATH_RESPONSE   = "path_response",  -- Response with EverQuest path
     SCRIPT_PATH_REQUEST  = "script_path_request",   -- Request script path from peers
     SCRIPT_PATH_RESPONSE = "script_path_response",  -- Response with script path
+    COLLECTIBLES_REQUEST  = "collectibles_request",   -- Request collectibles from peers
+    COLLECTIBLES_RESPONSE = "collectibles_response",  -- Response with collectibles data
 }
 
 M.peer_inventories = {}
@@ -668,6 +670,28 @@ local function message_handler(message)
             local normalizedPeerName = normalizeCharacterName(content.peerName)
             M.peer_script_paths[normalizedPeerName] = content.scriptPath
         end
+        
+    elseif content.type == M.MSG_TYPE.COLLECTIBLES_REQUEST then
+        -- Respond with our collectibles
+        local collectibles = M.gather_collectibles()
+        if actor_mailbox then
+            actor_mailbox:send(
+                { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
+                { 
+                    type = M.MSG_TYPE.COLLECTIBLES_RESPONSE, 
+                    peerName = normalizeCharacterName(mq.TLO.Me.CleanName()),
+                    collectibles = collectibles
+                }
+            )
+        end
+        
+    elseif content.type == M.MSG_TYPE.COLLECTIBLES_RESPONSE then
+        -- Store the received collectibles and trigger callback
+        if content.peerName and content.collectibles then
+            if M.collectibles_callback then
+                M.collectibles_callback(content.peerName, content.collectibles)
+            end
+        end
     end
 end
 
@@ -764,6 +788,110 @@ end
 
 function M.get_peer_script_paths()
     return M.peer_script_paths or {}
+end
+
+-- Gather collectibles from current character's inventory
+function M.gather_collectibles()
+    local collectibles = {}
+    
+    -- Scan equipped slots (0-22)
+    for slot = 0, 22 do
+        local item = mq.TLO.Me.Inventory(slot)
+        if item() and item.Collectible() then
+            local collectItem = {
+                name = item.Name() or "Unknown",
+                id = item.ID() or 0,
+                icon = item.Icon() or 0,
+                qty = item.Stack() or 1,
+                bagid = -1,  -- Equipped slot
+                slotid = slot,
+                collectible = true
+            }
+            table.insert(collectibles, collectItem)
+        end
+    end
+    
+    -- Scan inventory bags (slots 23-34)
+    for invSlot = 23, 34 do
+        local pack = mq.TLO.Me.Inventory(invSlot)
+        if pack() and pack.Container() > 0 then
+            local bagid = invSlot - 22
+            for i = 1, pack.Container() do
+                local item = pack.Item(i)
+                if item() and item.Collectible() then
+                    local collectItem = {
+                        name = item.Name() or "Unknown",
+                        id = item.ID() or 0,
+                        icon = item.Icon() or 0,
+                        qty = item.Stack() or 1,
+                        bagid = bagid,
+                        slotid = i,
+                        bagname = pack.Name(),
+                        collectible = true
+                    }
+                    table.insert(collectibles, collectItem)
+                end
+            end
+        end
+    end
+    
+    -- Scan bank items
+    for bankSlot = 1, 24 do
+        local item = mq.TLO.Me.Bank(bankSlot)
+        if item() and item.Collectible() then
+            local collectItem = {
+                name = item.Name() or "Unknown",
+                id = item.ID() or 0,
+                icon = item.Icon() or 0,
+                qty = item.Stack() or 1,
+                bagid = -1,
+                slotid = bankSlot,
+                bankslotid = bankSlot,
+                collectible = true
+            }
+            table.insert(collectibles, collectItem)
+        end
+        
+        -- Scan bank bags
+        if item.Container() and item.Container() > 0 then
+            for i = 1, item.Container() do
+                local subItem = item.Item(i)
+                if subItem() and subItem.Collectible() then
+                    local collectItem = {
+                        name = subItem.Name() or "Unknown",
+                        id = subItem.ID() or 0,
+                        icon = subItem.Icon() or 0,
+                        qty = subItem.Stack() or 1,
+                        bagid = -1,
+                        slotid = i,
+                        bankslotid = bankSlot,
+                        bagname = item.Name(),
+                        collectible = true
+                    }
+                    table.insert(collectibles, collectItem)
+                end
+            end
+        end
+    end
+    
+    return collectibles
+end
+
+-- Request collectibles from all peers
+function M.request_peer_collectibles(callback)
+    if not actor_mailbox then
+        print("[Inventory Actor] Cannot request collectibles - actor system not initialized")
+        return false
+    end
+    
+    -- Store the callback for when responses arrive
+    M.collectibles_callback = callback
+    
+    actor_mailbox:send(
+        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
+        { type = M.MSG_TYPE.COLLECTIBLES_REQUEST }
+    )
+    return true
 end
 
 local function handle_proxy_give_batch(data)

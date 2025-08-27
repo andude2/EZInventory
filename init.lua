@@ -45,6 +45,7 @@ local lastCacheTime       = 0
 local lastPathRequestTime = 0
 local json                = require("dkjson")
 local Suggestions         = require("EZInventory.modules.suggestions")
+local Collectibles        = require("EZInventory.modules.collectibles")
 local bot_inventory       = nil
 local isEMU               = mq.TLO.MacroQuest.BuildName() == "Emu"
 
@@ -3350,9 +3351,29 @@ function inventoryUI.render()
         local cursorPosX = ImGui.GetCursorPosX()
         local iconSpacing = 10
         local iconSize = 22
-        local totalIconWidth = (iconSize + iconSpacing) * 5 + 75
+        local totalIconWidth = (iconSize + iconSpacing) * 6 + 75  -- Increased for collectibles button
         local rightAlignX = ImGui.GetWindowWidth() - totalIconWidth - 10
         ImGui.SameLine(rightAlignX)
+        
+        -- Collectibles button
+        local collectIcon = icons.FA_STAR or "C"
+        local collectColor = ImVec4(0.8, 0.6, 0.2, 1.0)
+        local collectHoverColor = ImVec4(1.0, 0.8, 0.4, 1.0)
+        local collectActiveColor = ImVec4(0.6, 0.4, 0.1, 1.0)
+        ImGui.PushStyleColor(ImGuiCol.Button, collectColor)
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, collectHoverColor)
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, collectActiveColor)
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
+        if ImGui.Button(collectIcon, iconSize, iconSize) then
+            Collectibles.toggle()
+        end
+        if ImGui.IsItemHovered() then
+            ImGui.SetTooltip("Show/Hide Collectibles")
+        end
+        ImGui.PopStyleVar()
+        ImGui.PopStyleColor(3)
+        
+        ImGui.SameLine(0, iconSpacing)
         local floatIcon = inventoryUI.showToggleButton and icons.FA_EYE or icons.FA_EYE_SLASH
         local eyeColor = inventoryUI.showToggleButton and ImVec4(0.2, 0.6, 0.8, 1.0) or ImVec4(0.6, 0.6, 0.6, 1.0)
         local eyeHoverColor = inventoryUI.showToggleButton and ImVec4(0.4, 0.8, 1.0, 1.0) or ImVec4(0.8, 0.8, 0.8, 1.0)
@@ -6175,6 +6196,9 @@ mq.imgui.init("InventoryWindow", function()
     if inventoryUI.visible then
         inventoryUI.render()
     end
+    
+    -- Draw collectibles UI
+    Collectibles.draw()
 end)
 
 local helpInfo = {
@@ -6267,6 +6291,9 @@ local function main()
             print("\ag[EZInventory] Bot inventory system initialized\ax")
         end
     end
+    
+    -- Initialize collectibles module
+    Collectibles.init()
 
     UpdateInventoryActorConfig()
 
