@@ -1,6 +1,6 @@
 -- ezinventory.lua
 -- developed by psatty82
--- updated 07/30/2025
+-- updated 09/01/2025
 local mq    = require("mq")
 local ImGui = require("ImGui")
 local icons = require("mq.icons")
@@ -9,17 +9,13 @@ local Files = require("mq.Utils")
 local function getModuleName()
     local info = debug.getinfo(1, "S")
     if info and info.source then
-        local scriptPath = info.source:sub(2) -- Remove @ prefix
-
-        -- If this is init.lua, try to get the directory name instead
+        local scriptPath = info.source:sub(2)
         if scriptPath:match("init%.lua$") then
             local directory = scriptPath:match("([^/\\]+)[/\\]init%.lua$")
             if directory then
                 return directory
             end
         end
-
-        -- Otherwise get the filename without extension
         local filename = scriptPath:match("([^/\\]+)%.lua$")
         if filename and filename ~= "init" then
             return filename
@@ -4811,6 +4807,7 @@ function inventoryUI.render()
                     end
                     ImGui.EndCombo()
                 end
+                -- Show helper text to the right of the Item Type selector
                 if inventoryUI.itemTypeFilter and inventoryUI.itemTypeFilter ~= "All" then
                     local groupList = itemGroups[inventoryUI.itemTypeFilter]
                     if groupList then
@@ -4819,43 +4816,16 @@ function inventoryUI.render()
                         ImGui.Text("Item Types: " .. table.concat(groupList, ", "))
                         ImGui.PopStyleColor()
                     end
-                end
-                
-                -- Exclude checkboxes on same row
-                ImGui.SameLine(500)
-                ImGui.Text("Exclude:")
-                
-                local excludeTypes = { "Weapon", "Armor", "Jewelry", "Consumable", "Scrolls", "Tradeskills" }
-                for i, excludeType in ipairs(excludeTypes) do
+                else
+                    -- All items selected: show clear explanatory text
                     ImGui.SameLine()
-                    
-                    -- Check if this type is currently excluded
-                    local isExcluded = false
-                    for _, excludedType in ipairs(inventoryUI.excludeItemTypes) do
-                        if excludedType == excludeType then
-                            isExcluded = true
-                            break
-                        end
-                    end
-                    
-                    local newValue, changed = ImGui.Checkbox(excludeType, isExcluded)
-                    if changed then
-                        if newValue then
-                            -- Add to exclude list
-                            table.insert(inventoryUI.excludeItemTypes, excludeType)
-                        else
-                            -- Remove from exclude list
-                            for j = #inventoryUI.excludeItemTypes, 1, -1 do
-                                if inventoryUI.excludeItemTypes[j] == excludeType then
-                                    table.remove(inventoryUI.excludeItemTypes, j)
-                                    break
-                                end
-                            end
-                        end
-                    end
+                    ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.84, 0.0, 1.0)
+                    ImGui.Text("Displaying All Items of All Types")
+                    ImGui.PopStyleColor()
                 end
+                -- Exclude item type checkboxes removed from Row 1 (moved to Row 2 dropdown)
 
-                -- Row 2: Class, Race, Sort
+                -- Row 2: Class, Race, Exclude Types, Sort
                 ImGui.Text("Class:")
                 ImGui.SameLine(100)
                 ImGui.SetNextItemWidth(120)
@@ -4891,9 +4861,65 @@ function inventoryUI.render()
                     ImGui.EndCombo()
                 end
 
+                -- Exclude Types dropdown
                 ImGui.SameLine(500)
+                ImGui.Text("Exclude:")
+                ImGui.SameLine(580)
+                ImGui.SetNextItemWidth(180)
+                do
+                    local excludeTypes = { "Weapon", "Armor", "Jewelry", "Consumable", "Scrolls", "Tradeskills" }
+                    -- Build preview text from currently excluded types
+                    local selectedNames = {}
+                    for _, t in ipairs(excludeTypes) do
+                        for _, ex in ipairs(inventoryUI.excludeItemTypes) do
+                            if ex == t then table.insert(selectedNames, t) break end
+                        end
+                    end
+                    local previewText = (#selectedNames > 0) and table.concat(selectedNames, ", ") or "None"
+
+                    if ImGui.BeginCombo("##ExcludeTypes", previewText) then
+                        for _, t in ipairs(excludeTypes) do
+                            local isExcluded = false
+                            for _, ex in ipairs(inventoryUI.excludeItemTypes) do
+                                if ex == t then isExcluded = true break end
+                            end
+                            local newValue, changed = ImGui.Checkbox(t, isExcluded)
+                            if changed then
+                                if newValue then
+                                    -- Add if not already present
+                                    local exists = false
+                                    for _, ex in ipairs(inventoryUI.excludeItemTypes) do
+                                        if ex == t then exists = true break end
+                                    end
+                                    if not exists then table.insert(inventoryUI.excludeItemTypes, t) end
+                                else
+                                    -- Remove from list
+                                    for j = #inventoryUI.excludeItemTypes, 1, -1 do
+                                        if inventoryUI.excludeItemTypes[j] == t then
+                                            table.remove(inventoryUI.excludeItemTypes, j)
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        ImGui.Separator()
+                        if ImGui.Button("Clear All") then
+                            inventoryUI.excludeItemTypes = {}
+                        end
+                        ImGui.SameLine()
+                        if ImGui.Button("Select All") then
+                            inventoryUI.excludeItemTypes = {}
+                            for _, t in ipairs(excludeTypes) do table.insert(inventoryUI.excludeItemTypes, t) end
+                        end
+                        ImGui.EndCombo()
+                    end
+                end
+
+                -- Sort controls
+                ImGui.SameLine(780)
                 ImGui.Text("Sort by:")
-                ImGui.SameLine(575)
+                ImGui.SameLine(855)
                 ImGui.SetNextItemWidth(120)
                 if ImGui.BeginCombo("##SortColumn", inventoryUI.sortColumn) then
                     local sortOptions = {
