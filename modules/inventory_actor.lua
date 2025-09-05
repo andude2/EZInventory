@@ -1,37 +1,42 @@
-local mq        = require 'mq'
-local actors    = require('actors')
-local json      = require('dkjson')
-local M         = {}
+local mq              = require 'mq'
+local actors          = require('actors')
+local json            = require('dkjson')
+local M               = {}
+local Banking         = require("EZInventory.modules.banking")
 
-M.pending_requests = {}
-M.deferred_tasks = {}
+M.pending_requests    = {}
+M.deferred_tasks      = {}
 
 -- Add configuration for stats loading
-M.config = {
+M.config              = {
     loadBasicStats = true,
     loadDetailedStats = false,
     enableStatsFiltering = true,
 }
 
-M.MSG_TYPE = {
-    UPDATE          = "inventory_update",
-    REQUEST         = "inventory_request",
-    RESPONSE        = "inventory_response",
-    STATS_REQUEST   = "stats_request",
-    STATS_RESPONSE  = "stats_response",
-    CONFIG_UPDATE   = "config_update", -- New message type for config updates
-    PATH_REQUEST    = "path_request",   -- Request EverQuest path from peers
-    PATH_RESPONSE   = "path_response",  -- Response with EverQuest path
-    SCRIPT_PATH_REQUEST  = "script_path_request",   -- Request script path from peers
-    SCRIPT_PATH_RESPONSE = "script_path_response",  -- Response with script path
-    COLLECTIBLES_REQUEST  = "collectibles_request",   -- Request collectibles from peers
-    COLLECTIBLES_RESPONSE = "collectibles_response",  -- Response with collectibles data
+M.MSG_TYPE            = {
+    UPDATE                = "inventory_update",
+    REQUEST               = "inventory_request",
+    RESPONSE              = "inventory_response",
+    STATS_REQUEST         = "stats_request",
+    STATS_RESPONSE        = "stats_response",
+    CONFIG_UPDATE         = "config_update",         -- New message type for config updates
+    PATH_REQUEST          = "path_request",          -- Request EverQuest path from peers
+    PATH_RESPONSE         = "path_response",         -- Response with EverQuest path
+    SCRIPT_PATH_REQUEST   = "script_path_request",   -- Request script path from peers
+    SCRIPT_PATH_RESPONSE  = "script_path_response",  -- Response with script path
+    COLLECTIBLES_REQUEST  = "collectibles_request",  -- Request collectibles from peers
+    COLLECTIBLES_RESPONSE = "collectibles_response", -- Response with collectibles data
+    BANK_FLAG_UPDATE      = "bank_flag_update",      -- Apply a bank flag on the receiver
+    BANK_FLAGS_REQUEST    = "bank_flags_request",    -- Ask peer for its bank flags
+    BANK_FLAGS_RESPONSE   = "bank_flags_response",   -- Peer replies with its bank flags
 }
 
-M.peer_inventories = {}
+M.peer_inventories    = {}
+M.peer_bank_flags     = {}
 
-local actor_mailbox     = nil
-local command_mailbox   = nil
+local actor_mailbox   = nil
+local command_mailbox = nil
 
 -- Add function to update configuration
 function M.update_config(new_config)
@@ -56,15 +61,15 @@ end
 local function convertSlotNameForMQ2Exchange(slotName)
     local slotNameMap = {
         ["Arms"] = "arms",
-        ["Range"] = "ranged",        -- EZInventory uses "Range", MQ2Exchange uses "ranged"
-        ["Primary"] = "mainhand",    -- EZInventory uses "Primary", MQ2Exchange uses "mainhand" 
-        ["Secondary"] = "offhand",   -- EZInventory uses "Secondary", MQ2Exchange uses "offhand"
+        ["Range"] = "ranged",      -- EZInventory uses "Range", MQ2Exchange uses "ranged"
+        ["Primary"] = "mainhand",  -- EZInventory uses "Primary", MQ2Exchange uses "mainhand"
+        ["Secondary"] = "offhand", -- EZInventory uses "Secondary", MQ2Exchange uses "offhand"
         ["Left Ear"] = "leftear",
         ["Right Ear"] = "rightear",
         ["Head"] = "head",
-        ["Face"] = "face", 
+        ["Face"] = "face",
         ["Neck"] = "neck",
-        ["Shoulders"] = "shoulder",  -- Note: MQ2Exchange uses "shoulder" not "shoulders"
+        ["Shoulders"] = "shoulder", -- Note: MQ2Exchange uses "shoulder" not "shoulders"
         ["Back"] = "back",
         ["Left Wrist"] = "leftwrist",
         ["Right Wrist"] = "rightwrist",
@@ -79,34 +84,33 @@ local function convertSlotNameForMQ2Exchange(slotName)
         ["Power Source"] = "powersource",
         ["Ammo"] = "ammo"
     }
-    
+
     return slotNameMap[slotName] or slotName:lower()
 end
 
 -- Safe auto-exchange function with comprehensive safety checks
 function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
-    
     -- Convert slot name to MQ2Exchange compatible format
     local mq2ExchangeSlotName = convertSlotNameForMQ2Exchange(targetSlotName)
-    
+
     -- Check if MQ2Exchange plugin is loaded
     if not mq.TLO.Plugin("MQ2Exchange").IsLoaded() then
         printf("[AUTO-EXCHANGE] ERROR: MQ2Exchange plugin is not loaded!")
         return false
     end
-    
+
     -- Check if cursor is free
     if mq.TLO.Cursor() then
         printf("[AUTO-EXCHANGE] Cursor not free, cannot exchange %s", itemName)
         return false
     end
-    
+
     -- Wait up to 10 seconds for the item to appear in inventory
     local foundItem = nil
     local maxWaitTime = 10
     local startTime = os.time()
-    
-    
+
+
     while (os.time() - startTime) < maxWaitTime do
         -- Use FindItem TLO for better item detection
         local findItem = mq.TLO.FindItem(itemName)
@@ -114,7 +118,7 @@ function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
             foundItem = findItem
             break
         end
-        
+
         -- Also check manually as backup
         for i = 1, 10 do -- Check general inventory slots
             local item = mq.TLO.Me.Inventory(i)
@@ -123,9 +127,9 @@ function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
                 break
             end
         end
-        
+
         if foundItem then break end
-        
+
         -- Check bags if not found in general inventory
         for bag = 1, 10 do
             local bagSlot = mq.TLO.Me.Inventory(bag)
@@ -140,48 +144,46 @@ function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
                 if foundItem then break end
             end
         end
-        
+
         if foundItem then break end
-        
+
         -- Can't use mq.delay() in actor thread, so we'll just continue the loop with os.time() check
     end
-    
+
     if not foundItem then
         printf("[AUTO-EXCHANGE] Item %s not found in inventory after %d seconds", itemName, maxWaitTime)
         return false
     end
-    
+
     -- Check if there's enough bag space for currently equipped item (if any)
     local currentlyEquipped = mq.TLO.Me.Inventory(targetSlot)
     if currentlyEquipped() then
-        
         -- Check bag space using MacroQuest TLO
         -- Size 1 = tiny, 2 = small, 3 = medium, 4 = large, 5 = giant
         local equippedItemSize = currentlyEquipped.Size() or 1
         local freeSpace = mq.TLO.Me.FreeInventory(equippedItemSize)()
-        
-        
+
+
         if freeSpace == 0 then
-            printf("[AUTO-EXCHANGE] No bag space available for currently equipped %s (size %d)", 
+            printf("[AUTO-EXCHANGE] No bag space available for currently equipped %s (size %d)",
                 currentlyEquipped.Name(), equippedItemSize)
             return false
         end
-        
     else
     end
-    
-    
+
+
     -- Perform the exchange using MQ2Exchange
     -- Use mq2ExchangeSlotName (converted slot name) for the command
     mq.cmdf("/exchange \"%s\" %s", itemName, mq2ExchangeSlotName)
-    
-    -- Note: We can't reliably wait/verify in the actor thread context, 
+
+    -- Note: We can't reliably wait/verify in the actor thread context,
     -- but the /exchange command appears to work correctly.
     -- If there were issues, MQ2Exchange would show error messages.
-    
+
     printf("[AUTO-EXCHANGE] Exchange command sent for %s to %s slot", itemName, targetSlotName)
     printf("[AUTO-EXCHANGE] If the exchange succeeded, %s should now be equipped", itemName)
-    
+
     -- Return true since the command was sent successfully
     -- The actual verification would need to happen outside the actor system
     return true
@@ -193,7 +195,7 @@ local function get_item_class_info(item)
         classCount = 0,
         allClasses = false
     }
-    
+
     if item and item() then
         local numClasses = item.Classes()
         if numClasses then
@@ -210,30 +212,38 @@ local function get_item_class_info(item)
             end
         end
     end
-    
+
     return classInfo
 end
 
 local raceMap = {
-    ["Human"] = "HUM", ["Barbarian"] = "BAR", ["Erudite"] = "ERU",
-    ["Wood Elf"] = "ELF", ["High Elf"] = "HIE", ["Dark Elf"] = "DEF",
-    ["Half Elf"] = "HEL", ["Dwarf"] = "DWF", ["Troll"] = "TRL",
-    ["Ogre"] = "OGR", ["Halfling"] = "HFL", ["Gnome"] = "GNM",
-    ["Iksar"] = "IKS", ["Vah Shir"] = "VAH", ["Froglok"] = "FRG",
+    ["Human"] = "HUM",
+    ["Barbarian"] = "BAR",
+    ["Erudite"] = "ERU",
+    ["Wood Elf"] = "ELF",
+    ["High Elf"] = "HIE",
+    ["Dark Elf"] = "DEF",
+    ["Half Elf"] = "HEL",
+    ["Dwarf"] = "DWF",
+    ["Troll"] = "TRL",
+    ["Ogre"] = "OGR",
+    ["Halfling"] = "HFL",
+    ["Gnome"] = "GNM",
+    ["Iksar"] = "IKS",
+    ["Vah Shir"] = "VAH",
+    ["Froglok"] = "FRG",
     ["Drakkin"] = "DRK"
 }
 
 local function get_item_race_info(item)
     local raceString = ""
-    
+
     if item and item() then
         local numRaces = item.Races()
         if numRaces then
-            if numRaces >= 15 then  -- All races in EverQuest
+            if numRaces >= 15 then -- All races in EverQuest
                 raceString = "ALL"
             else
-                
-                
                 local raceCodes = {}
                 for i = 1, numRaces do
                     local raceName = item.Race(i)()
@@ -246,7 +256,7 @@ local function get_item_race_info(item)
             end
         end
     end
-    
+
     return raceString
 end
 
@@ -275,7 +285,7 @@ end
 
 local function get_basic_item_info(item, include_extended_stats)
     local basic = {}
-    
+
     if not item or not item() then
         return basic
     end
@@ -296,16 +306,16 @@ local function get_basic_item_info(item, include_extended_stats)
     basic.nodrop = item.NoDrop() and 1 or 0
     basic.tradeskills = item.Tradeskills() and 1 or 0
     basic.qty = item.Stack() or 1
-    
+
     local augments = scan_augment_links(item)
-    for k, v in pairs(augments) do 
-        basic[k] = v 
+    for k, v in pairs(augments) do
+        basic[k] = v
     end
 
     if include_extended_stats == nil then
         include_extended_stats = M.config.loadBasicStats
     end
-    
+
     if include_extended_stats then
         basic.ac = item.AC() or ""
         basic.hp = item.HP() or ""
@@ -326,16 +336,16 @@ local function get_basic_item_info(item, include_extended_stats)
     basic.allClasses = classInfo.allClasses
     basic.classes = classInfo.classes
     basic.slots = get_valid_slots(item)
-    
+
     -- Add race information
     basic.races = get_item_race_info(item)
-    
+
     return basic
 end
 
 local function get_detailed_item_stats(item)
     local stats = {}
-    
+
     if not item or not item() then
         return stats
     end
@@ -403,13 +413,13 @@ local function get_detailed_item_stats(item)
     stats.spellDamage = safe_get(function() return item.SpellDamage() end)
     stats.requiredLevel = safe_get(function() return item.RequiredLevel() end)
     stats.recommendedLevel = safe_get(function() return item.RecommendedLevel() end)
-    
+
     return stats
 end
 
 function M.get_item_detailed_stats(itemName, location, slotInfo)
     print(string.format("[Inventory Actor] Getting detailed stats for %s in %s", itemName, location))
-    
+
     local function findAndGetStats(item)
         if item() and item.Name() == itemName then
             local basic = get_basic_item_info(item, true)
@@ -417,7 +427,7 @@ function M.get_item_detailed_stats(itemName, location, slotInfo)
             for k, v in pairs(stats) do
                 basic[k] = v
             end
-            
+
             return basic
         end
         return nil
@@ -455,7 +465,7 @@ function M.get_item_detailed_stats(itemName, location, slotInfo)
             end
         end
     end
-    
+
     return nil
 end
 
@@ -522,7 +532,7 @@ function M.gather_inventory()
             if item.Container() and item.Container() > 0 then
                 for i = 1, item.Container() do
                     local sub = item.Item(i)
-                    if sub.ID() then  
+                    if sub.ID() then
                         local subEntry = get_basic_item_info(sub)
                         subEntry.bankslotid = bankSlot
                         subEntry.slotid = i
@@ -533,7 +543,7 @@ function M.gather_inventory()
             end
         end
     end
-    
+
     return data
 end
 
@@ -543,7 +553,7 @@ local function message_handler(message)
         print('\ay[Inventory Actor] Received invalid message\ax')
         return
     end
-    
+
     if content.type == M.MSG_TYPE.UPDATE then
         if content.data and content.data.name and content.data.server then
             -- Filter out corpse inventories to prevent duplicates
@@ -558,7 +568,6 @@ local function message_handler(message)
                 --print(string.format("[Inventory Actor] Skipping corpse inventory for %s", content.data.name))
             end
         end
-        
     elseif content.type == M.MSG_TYPE.REQUEST then
         local myInventory = M.gather_inventory()
         if actor_mailbox then
@@ -568,7 +577,6 @@ local function message_handler(message)
                 { type = M.MSG_TYPE.RESPONSE, data = myInventory }
             )
         end
-        
     elseif content.type == M.MSG_TYPE.RESPONSE then
         if content.data and content.data.name and content.data.server then
             -- Filter out corpse inventories to prevent duplicates
@@ -582,25 +590,23 @@ local function message_handler(message)
                 --print(string.format("[Inventory Actor] Skipping corpse inventory for %s", content.data.name))
             end
         end
-        
     elseif content.type == M.MSG_TYPE.CONFIG_UPDATE then
         if content.config then
             M.update_config(content.config)
         end
-        
     elseif content.type == M.MSG_TYPE.STATS_REQUEST then
         local itemName = content.itemName
         local location = content.location
         local slotInfo = content.slotInfo
         local requestId = content.requestId
-        
+
         local detailedStats = M.get_item_detailed_stats(itemName, location, slotInfo)
-        
+
         if actor_mailbox then
             actor_mailbox:send(
                 { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
-                { 
-                    type = M.MSG_TYPE.STATS_RESPONSE, 
+                {
+                    type = M.MSG_TYPE.STATS_RESPONSE,
                     requestId = requestId,
                     itemName = itemName,
                     location = location,
@@ -613,21 +619,19 @@ local function message_handler(message)
             M.stats_callbacks[content.requestId](content.stats)
             M.stats_callbacks[content.requestId] = nil
         end
-        
     elseif content.type == M.MSG_TYPE.PATH_REQUEST then
         -- Respond with our EverQuest path
         local eqPath = mq.TLO.EverQuest.Path() or "Unknown"
         if actor_mailbox then
             actor_mailbox:send(
                 { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
-                { 
-                    type = M.MSG_TYPE.PATH_RESPONSE, 
+                {
+                    type = M.MSG_TYPE.PATH_RESPONSE,
                     peerName = normalizeCharacterName(mq.TLO.Me.CleanName()),
                     path = eqPath
                 }
             )
         end
-        
     elseif content.type == M.MSG_TYPE.PATH_RESPONSE then
         -- Store the received path information
         if content.peerName and content.path then
@@ -636,13 +640,12 @@ local function message_handler(message)
             local normalizedPeerName = normalizeCharacterName(content.peerName)
             M.peer_paths[normalizedPeerName] = content.path
         end
-        
     elseif content.type == M.MSG_TYPE.SCRIPT_PATH_REQUEST then
         -- Respond with our script path (relative to EQ installation)
         local eqPath = mq.TLO.EverQuest.Path() or ""
         local scriptPath = debug.getinfo(1, "S").source:sub(2) -- Remove @ prefix
         local relativePath = "Unknown"
-        
+
         if eqPath ~= "" and scriptPath:find(eqPath, 1, true) == 1 then
             relativePath = scriptPath:sub(#eqPath + 1):gsub("\\", "/")
             if relativePath:sub(1, 1) == "/" then
@@ -651,18 +654,17 @@ local function message_handler(message)
         else
             relativePath = scriptPath:gsub("\\", "/")
         end
-        
+
         if actor_mailbox then
             actor_mailbox:send(
                 { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
-                { 
-                    type = M.MSG_TYPE.SCRIPT_PATH_RESPONSE, 
+                {
+                    type = M.MSG_TYPE.SCRIPT_PATH_RESPONSE,
                     peerName = normalizeCharacterName(mq.TLO.Me.CleanName()),
                     scriptPath = relativePath
                 }
             )
         end
-        
     elseif content.type == M.MSG_TYPE.SCRIPT_PATH_RESPONSE then
         -- Store the received script path information
         if content.peerName and content.scriptPath then
@@ -670,27 +672,66 @@ local function message_handler(message)
             local normalizedPeerName = normalizeCharacterName(content.peerName)
             M.peer_script_paths[normalizedPeerName] = content.scriptPath
         end
-        
     elseif content.type == M.MSG_TYPE.COLLECTIBLES_REQUEST then
         -- Respond with our collectibles
         local collectibles = M.gather_collectibles()
         if actor_mailbox then
             actor_mailbox:send(
                 { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
-                { 
-                    type = M.MSG_TYPE.COLLECTIBLES_RESPONSE, 
+                {
+                    type = M.MSG_TYPE.COLLECTIBLES_RESPONSE,
                     peerName = normalizeCharacterName(mq.TLO.Me.CleanName()),
                     collectibles = collectibles
                 }
             )
         end
-        
     elseif content.type == M.MSG_TYPE.COLLECTIBLES_RESPONSE then
         -- Store the received collectibles and trigger callback
         if content.peerName and content.collectibles then
             if M.collectibles_callback then
                 M.collectibles_callback(content.peerName, content.collectibles)
             end
+        end
+    elseif content.type == M.MSG_TYPE.BANK_FLAG_UPDATE then
+        -- Apply a bank flag change locally on this client
+        local itemID = content.itemID
+        local flagged = content.flagged
+        if itemID and (flagged ~= nil) then
+            local ok, err
+            if _G.EZINV_APPLY_BANK_FLAG then
+                ok, err = pcall(_G.EZINV_APPLY_BANK_FLAG, tonumber(itemID), flagged)
+                if not ok then
+                    print(string.format("[EZInventory] Failed to apply bank flag: %s", tostring(err)))
+                else
+                    printf("[EZInventory] Applied bank flag locally: itemID=%s flagged=%s", tostring(itemID),
+                        tostring(flagged))
+                end
+            else
+                -- Fallback: best-effort notify if hook not present
+                print("[EZInventory] BANK_FLAG_UPDATE received but no handler available")
+            end
+        end
+    elseif content.type == M.MSG_TYPE.BANK_FLAGS_REQUEST then
+        -- Respond with our bank flags (for this toon)
+        local flags = {}
+        if _G.EZINV_GET_BANK_FLAGS then
+            local ok, result = pcall(_G.EZINV_GET_BANK_FLAGS)
+            if ok and type(result) == 'table' then flags = result end
+        end
+        if actor_mailbox then
+            actor_mailbox:send(
+                { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
+                {
+                    type = M.MSG_TYPE.BANK_FLAGS_RESPONSE,
+                    peerName = normalizeCharacterName(mq.TLO.Me.CleanName()),
+                    flags = flags,
+                }
+            )
+        end
+    elseif content.type == M.MSG_TYPE.BANK_FLAGS_RESPONSE then
+        if content.peerName and type(content.flags) == 'table' then
+            local name = normalizeCharacterName(content.peerName)
+            M.peer_bank_flags[name] = content.flags
         end
     end
 end
@@ -700,7 +741,7 @@ function M.broadcast_config_update()
         print("[Inventory Actor] Cannot broadcast config - actor system not initialized")
         return false
     end
-    
+
     actor_mailbox:send(
         { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
         { type = M.MSG_TYPE.CONFIG_UPDATE, config = M.config }
@@ -714,21 +755,21 @@ function M.request_item_stats(peerName, itemName, location, slotInfo, callback)
         --print("[Inventory Actor] Cannot request stats - actor system not initialized")
         return false
     end
-    
+
     local requestId = string.format("%s_%s_%d", peerName, itemName, os.time())
     M.stats_callbacks[requestId] = callback
-    
+
     actor_mailbox:send(
         { character = peerName },
-        { 
-            type = M.MSG_TYPE.STATS_REQUEST, 
+        {
+            type = M.MSG_TYPE.STATS_REQUEST,
             itemName = itemName,
             location = location,
             slotInfo = slotInfo,
             requestId = requestId
         }
     )
-    
+
     return true
 end
 
@@ -737,7 +778,7 @@ function M.publish_inventory()
         print("[Inventory Actor] Cannot publish inventory - actor system not initialized")
         return false
     end
-    
+
     local inventoryData = M.gather_inventory()
     actor_mailbox:send(
         { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
@@ -786,14 +827,61 @@ function M.request_all_script_paths()
     return true
 end
 
+function M.request_inventory_for(peerName)
+    if not actor_mailbox then
+        print("[Inventory Actor] Cannot request inventory - actor system not initialized")
+        return false
+    end
+    if not peerName or peerName == '' then return false end
+    actor_mailbox:send(
+        { character = peerName },
+        { type = M.MSG_TYPE.REQUEST }
+    )
+    return true
+end
+
 function M.get_peer_script_paths()
     return M.peer_script_paths or {}
+end
+
+function M.request_all_bank_flags()
+    if not actor_mailbox then
+        return false
+    end
+    actor_mailbox:send(
+        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
+        { type = M.MSG_TYPE.BANK_FLAGS_REQUEST }
+    )
+    return true
+end
+
+function M.get_peer_bank_flags()
+    return M.peer_bank_flags or {}
+end
+
+function M.send_bank_flag_update(peerName, itemID, flagged)
+    if not actor_mailbox then
+        return false
+    end
+    if not peerName or not itemID then return false end
+    -- Log for visibility
+    printf("[EZInventory] Sending bank flag update to %s: itemID=%s flagged=%s", tostring(peerName), tostring(itemID),
+        tostring(flagged))
+    actor_mailbox:send(
+        { character = peerName },
+        {
+            type = M.MSG_TYPE.BANK_FLAG_UPDATE,
+            itemID = tonumber(itemID),
+            flagged = not not flagged,
+        }
+    )
+    return true
 end
 
 -- Gather collectibles from current character's inventory
 function M.gather_collectibles()
     local collectibles = {}
-    
+
     -- Scan equipped slots (0-22)
     for slot = 0, 22 do
         local item = mq.TLO.Me.Inventory(slot)
@@ -803,14 +891,14 @@ function M.gather_collectibles()
                 id = item.ID() or 0,
                 icon = item.Icon() or 0,
                 qty = item.Stack() or 1,
-                bagid = -1,  -- Equipped slot
+                bagid = -1, -- Equipped slot
                 slotid = slot,
                 collectible = true
             }
             table.insert(collectibles, collectItem)
         end
     end
-    
+
     -- Scan inventory bags (slots 23-34)
     for invSlot = 23, 34 do
         local pack = mq.TLO.Me.Inventory(invSlot)
@@ -834,7 +922,7 @@ function M.gather_collectibles()
             end
         end
     end
-    
+
     -- Scan bank items
     for bankSlot = 1, 24 do
         local item = mq.TLO.Me.Bank(bankSlot)
@@ -851,7 +939,7 @@ function M.gather_collectibles()
             }
             table.insert(collectibles, collectItem)
         end
-        
+
         -- Scan bank bags
         if item.Container() and item.Container() > 0 then
             for i = 1, item.Container() do
@@ -873,7 +961,7 @@ function M.gather_collectibles()
             end
         end
     end
-    
+
     return collectibles
 end
 
@@ -883,10 +971,10 @@ function M.request_peer_collectibles(callback)
         print("[Inventory Actor] Cannot request collectibles - actor system not initialized")
         return false
     end
-    
+
     -- Store the callback for when responses arrive
     M.collectibles_callback = callback
-    
+
     actor_mailbox:send(
         { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
         { type = M.MSG_TYPE.COLLECTIBLES_REQUEST }
@@ -896,36 +984,38 @@ end
 
 local function handle_proxy_give_batch(data)
     local success, batchRequest = pcall(json.decode, data)
-    
+
     if not success then
         print("[ERROR] Failed to decode batch trade request - JSON parsing error")
         return
     end
-    
+
     if not batchRequest then
         print("[ERROR] Failed to decode batch trade request - JSON decode returned nil")
         return
     end
-    
+
     if not batchRequest.items or not batchRequest.target then
         print("[ERROR] Invalid batch trade request - missing items or target")
         return
     end
-    
+
     printf("[BATCH] Received batch request: %d items for trade to %s", #batchRequest.items, tostring(batchRequest.target))
-    
+
     local session = {
         target = batchRequest.target,
         items = {},
         source = mq.TLO.Me.CleanName(),
         status = "INITIATING"
     }
-    
+
     for i, itemRequest in ipairs(batchRequest.items) do
         table.insert(session.items, itemRequest)
         if #session.items >= 8 then
-            table.insert(M.pending_requests, { type = "multi_item_trade", target = session.target, items = session.items })
-            printf("Queued a trade session with %d items for %s. Total sessions: %d", #session.items, session.target, #M.pending_requests)
+            table.insert(M.pending_requests,
+                { type = "multi_item_trade", target = session.target, items = session.items })
+            printf("Queued a trade session with %d items for %s. Total sessions: %d", #session.items, session.target,
+                #M.pending_requests)
             session = {
                 target = batchRequest.target,
                 items = {},
@@ -934,12 +1024,13 @@ local function handle_proxy_give_batch(data)
             }
         end
     end
-    
+
     if #session.items > 0 then
         table.insert(M.pending_requests, { type = "multi_item_trade", target = session.target, items = session.items })
-        printf("Queued a final trade session with %d items for %s. Total sessions: %d", #session.items, session.target, #M.pending_requests)
+        printf("Queued a final trade session with %d items for %s. Total sessions: %d", #session.items, session.target,
+            #M.pending_requests)
     end
-    
+
     printf("All batch trade items categorized into sessions and queued.")
 end
 
@@ -1062,10 +1153,6 @@ function M.perform_multi_item_trade_step()
             mq.delay(500)
             mq.cmd("/click right target")
             mq.delay(1000)
-            if not mq.TLO.Window("BankWnd").Open() and not mq.TLO.Window("BigBankWnd").Open() then
-                mq.cmd("/bank")
-                mq.delay(1000)
-            end
             state.at_banker = true
             state.status = "RETRIEVING_BANK_ITEMS"
             state.current_bank_item_index = 1
@@ -1103,17 +1190,18 @@ function M.perform_multi_item_trade_step()
                     bankCommand = string.format("in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
                 end
             end
-            
+
             if bankCommand == "" then
                 printf("[ERROR] Invalid bank slot information for %s. Aborting trade.", item_to_retrieve.name)
                 return false
             end
 
-            mq.cmdf("/shift /itemnotify %s", bankCommand)
+            mq.cmdf("/nomodkey /shift /itemnotify %s", bankCommand)
             mq.delay(500)
 
             if not mq.TLO.Cursor.ID() then
-                printf("[ERROR] Failed to pick up %s from bank. Item not on cursor. Aborting trade.", item_to_retrieve.name)
+                printf("[ERROR] Failed to pick up %s from bank. Item not on cursor. Aborting trade.",
+                    item_to_retrieve.name)
                 return false
             end
             printf("%s picked up from bank.", mq.TLO.Cursor.Name())
@@ -1138,8 +1226,14 @@ function M.perform_multi_item_trade_step()
 
             if all_bank_items_retrieved_for_session then
                 printf("[BATCH STATE] All bank items for this session retrieved. Closing bank and navigating to target.")
-                if mq.TLO.Window("BankWnd").Open() then mq.TLO.Window("BankWnd").DoClose() mq.delay(500) end
-                if mq.TLO.Window("BigBankWnd").Open() then mq.TLO.Window("BigBankWnd").DoClose() mq.delay(500) end
+                if mq.TLO.Window("BankWnd").Open() then
+                    mq.TLO.Window("BankWnd").DoClose()
+                    mq.delay(500)
+                end
+                if mq.TLO.Window("BigBankWnd").Open() then
+                    mq.TLO.Window("BigBankWnd").DoClose()
+                    mq.delay(500)
+                end
                 state.status = "NAVIGATING_TO_TARGET"
                 state.nav_start_time = 0
                 return true
@@ -1179,8 +1273,14 @@ function M.perform_multi_item_trade_step()
 
     if state.status == "OPENING_TRADE_WINDOW" then
         printf("[BATCH STATE] Opening trade window with %s", targetToon)
-        if mq.TLO.Window("BankWnd").Open() then mq.TLO.Window("BankWnd").DoClose() mq.delay(500) end
-        if mq.TLO.Window("BigBankWnd").Open() then mq.TLO.Window("BigBankWnd").DoClose() mq.delay(500) end
+        if mq.TLO.Window("BankWnd").Open() then
+            mq.TLO.Window("BankWnd").DoClose()
+            mq.delay(500)
+        end
+        if mq.TLO.Window("BigBankWnd").Open() then
+            mq.TLO.Window("BigBankWnd").DoClose()
+            mq.delay(500)
+        end
         local firstItemForTrade = nil
         for i = 1, #itemsToTrade do
             firstItemForTrade = itemsToTrade[i]
@@ -1207,7 +1307,7 @@ function M.perform_multi_item_trade_step()
         mq.cmd("/click left target")
         mq.delay(500)
         state.current_item_index = state.current_item_index + 1
-        
+
         mq.delay(5)
         state.status = "PLACING_ITEMS"
         return true
@@ -1235,7 +1335,8 @@ function M.perform_multi_item_trade_step()
             mq.cmdf('/shift /itemnotify "%s" leftmouseup', item_to_trade.name)
             mq.delay(50)
             if not mq.TLO.Cursor.ID() then
-                printf("[ERROR] Failed to pick up %s from inventory for trade. Item not on cursor. Aborting.", item_to_trade.name)
+                printf("[ERROR] Failed to pick up %s from inventory for trade. Item not on cursor. Aborting.",
+                    item_to_trade.name)
                 return false
             end
             printf("%s picked up. Placing in trade window.", mq.TLO.Cursor.Name())
@@ -1271,7 +1372,8 @@ function M.perform_multi_item_trade_step()
                 return false
             end
         else
-            printf("Successfully completed multi-item trade with %s for %d items.", targetToon, state.current_item_index - 1)
+            printf("Successfully completed multi-item trade with %s for %d items.", targetToon,
+                state.current_item_index - 1)
             state.status = "COMPLETED"
             return true
         end
@@ -1343,7 +1445,6 @@ function M.perform_single_item_trade(request)
             return
         end
         printf("%s picked up from bank.", mq.TLO.Cursor.Name())
-
     else
         mq.cmdf('/shift /itemnotify "%s" leftmouseup', request.name)
         mq.delay(500)
@@ -1357,19 +1458,27 @@ function M.perform_single_item_trade(request)
     local spawn = mq.TLO.Spawn("pc =" .. request.toon)
     if not spawn or not spawn() then
         mq.cmdf("/popcustom 5 %s not found in the zone! Aborting trade for %s.", request.toon, request.name)
-        if mq.TLO.Cursor.ID() then mq.cmd('/autoinventory') mq.delay(100) end
+        if mq.TLO.Cursor.ID() then
+            mq.cmd('/autoinventory')
+            mq.delay(100)
+        end
         return
     end
 
     if spawn.Distance3D() > 15 then
-        printf("Recipient %s is too far away (%.2f). Navigating to trade %s...", request.toon, spawn.Distance3D(), request.name)
+        printf("Recipient %s is too far away (%.2f). Navigating to trade %s...", request.toon, spawn.Distance3D(),
+            request.name)
         mq.cmdf("/nav id %s", spawn.ID())
         local startTime = os.time()
         while spawn.Distance3D() > 15 and os.time() - startTime < 30 do
             mq.delay(1000)
             if not mq.TLO.Spawn("pc =" .. request.toon).ID() then
-                printf("[ERROR] Target %s disappeared during navigation. Aborting trade for %s.", request.toon, request.name)
-                if mq.TLO.Cursor.ID() then mq.cmd('/autoinventory') mq.delay(100) end
+                printf("[ERROR] Target %s disappeared during navigation. Aborting trade for %s.", request.toon,
+                    request.name)
+                if mq.TLO.Cursor.ID() then
+                    mq.cmd('/autoinventory')
+                    mq.delay(100)
+                end
                 return
             end
         end
@@ -1377,13 +1486,22 @@ function M.perform_single_item_trade(request)
 
         if spawn.Distance3D() > 15 then
             mq.cmdf("/popcustom 5 Could not reach %s to give %s. Aborting trade.", request.toon, request.name)
-            if mq.TLO.Cursor.ID() then mq.cmd('/autoinventory') mq.delay(100) end
+            if mq.TLO.Cursor.ID() then
+                mq.cmd('/autoinventory')
+                mq.delay(100)
+            end
             return
         end
     end
 
-    if mq.TLO.Window("BankWnd").Open() then mq.TLO.Window("BankWnd").DoClose() mq.delay(500) end
-    if mq.TLO.Window("BigBankWnd").Open() then mq.TLO.Window("BigBankWnd").DoClose() mq.delay(500) end
+    if mq.TLO.Window("BankWnd").Open() then
+        mq.TLO.Window("BankWnd").DoClose()
+        mq.delay(500)
+    end
+    if mq.TLO.Window("BigBankWnd").Open() then
+        mq.TLO.Window("BigBankWnd").DoClose()
+        mq.delay(500)
+    end
 
     mq.cmdf("/tar pc %s", request.toon)
     mq.delay(500)
@@ -1396,7 +1514,10 @@ function M.perform_single_item_trade(request)
 
     if not mq.TLO.Window("TradeWnd").Open() then
         mq.cmdf("/popcustom 5 Trade window failed to open with %s for %s. Aborting trade.", request.toon, request.name)
-        if mq.TLO.Cursor.ID() then mq.cmd('/autoinventory') mq.delay(100) end
+        if mq.TLO.Cursor.ID() then
+            mq.cmd('/autoinventory')
+            mq.delay(100)
+        end
         return
     end
 
@@ -1484,7 +1605,7 @@ local function handle_command_message(message)
         else
             printf("[ERROR] Failed to decode proxy_give JSON: %s", tostring(args[1]))
         end
-        
+
         if request then
             table.insert(M.pending_requests, {
                 type = "single_item_trade",
@@ -1500,7 +1621,7 @@ local function handle_command_message(message)
                 targetSlotName = request.targetSlotName
             })
             print("Added single item request to pending queue")
-            
+
             -- Auto-exchange will be handled after successful trade completion
         else
             print("[ERROR] Failed to decode proxy_give (single) request")
@@ -1508,21 +1629,21 @@ local function handle_command_message(message)
     elseif command == "perform_auto_exchange" then
         local exchangeInfo = json.decode(args[1])
         if exchangeInfo then
-            printf("[DEBUG] Received perform_auto_exchange command for %s to slot %s", 
+            printf("[DEBUG] Received perform_auto_exchange command for %s to slot %s",
                 exchangeInfo.itemName, exchangeInfo.targetSlotName)
-            
+
             -- Perform the exchange immediately since trade is already complete
             local success = M.safe_auto_exchange(
                 exchangeInfo.itemName,
                 exchangeInfo.targetSlot,
                 exchangeInfo.targetSlotName
             )
-            
+
             if success then
-                printf("[AUTO-EXCHANGE] Successfully equipped %s to %s slot", 
+                printf("[AUTO-EXCHANGE] Successfully equipped %s to %s slot",
                     exchangeInfo.itemName, exchangeInfo.targetSlotName)
             else
-                printf("[AUTO-EXCHANGE] Failed to equip %s to %s slot", 
+                printf("[AUTO-EXCHANGE] Failed to equip %s to %s slot",
                     exchangeInfo.itemName, exchangeInfo.targetSlotName)
             end
         else
@@ -1541,30 +1662,111 @@ local function handle_command_message(message)
                 mq.cmd("/popcustom 5 TradeWnd did not open for auto-accept")
             end
         end)
+    elseif command == "auto_bank_sequence" then
+        -- Navigate to nearest banker, open the bank window, then start auto-banking
+        table.insert(M.deferred_tasks, function()
+            print("[EZInventory] Auto-bank sequence starting")
+            local banker = mq.TLO.Spawn("npc banker")
+            if not banker() then
+                print("[EZInventory] No banker found nearby.")
+                return
+            end
+            mq.cmdf("/target id %d", banker.ID())
+            mq.delay(200)
+            mq.cmdf("/nav id %d", banker.ID())
+            local startTime = os.time()
+            while mq.TLO.Target() and mq.TLO.Target.ID() and mq.TLO.Target.Distance3D() > 12 and (os.time() - startTime) < 25 do
+                mq.delay(200)
+            end
+            mq.cmd("/nav stop")
+            mq.delay(250)
+            if not mq.TLO.Target.ID() or mq.TLO.Target.Distance3D() > 15 then
+                print("[EZInventory] Could not reach banker in time.")
+                return
+            end
+            mq.cmd("/click right target")
+            mq.delay(800)
+            if not (mq.TLO.Window("BankWnd").Open() or mq.TLO.Window("BigBankWnd").Open()) then
+                mq.cmd("/bank")
+                mq.delay(800)
+            end
+            if not (mq.TLO.Window("BankWnd").Open() or mq.TLO.Window("BigBankWnd").Open()) then
+                print("[EZInventory] Bank window did not open.")
+                return
+            end
+            -- Kick off banking; actual progression runs via Banking.update() in the UI loop
+            Banking.start()
+            print("[EZInventory] Auto-bank started")
+        end)
+    elseif command == "destroy_item" then
+        -- args[1] should be JSON: { name=string?, bagid=int?, slotid=int? }
+        local req = json.decode(args[1] or "") or {}
+        table.insert(M.deferred_tasks, function()
+            local function CursorHasItem()
+                return mq.TLO.Cursor() ~= nil and (mq.TLO.Cursor.ID() or 0) > 0
+            end
+            if CursorHasItem() then
+                mq.cmd('/autoinventory')
+                mq.delay(200)
+                if CursorHasItem() then
+                    print('[EZInventory] Cannot destroy: cursor occupied')
+                    return
+                end
+            end
+            local cmd
+            local bagid = tonumber(req.bagid or -1)
+            local slotid = tonumber(req.slotid or -1)
+            if bagid and bagid > 0 and slotid and slotid > 0 then
+                cmd = string.format('/shift /itemnotify in pack%d %d leftmouseup', bagid, slotid)
+            elseif req.name and req.name ~= '' then
+                cmd = string.format('/shift /itemnotify "%s" leftmouseup', req.name)
+            end
+            if not cmd then
+                print('[EZInventory] Missing item location for destroy request')
+                return
+            end
+            mq.cmd(cmd)
+            local start = os.time()
+            while not CursorHasItem() and (os.time() - start) < 3 do mq.delay(50) end
+            if not CursorHasItem() then
+                print('[EZInventory] Failed to pick item onto cursor for destroy')
+                return
+            end
+            mq.cmd('/destroy')
+            mq.delay(150)
+            if mq.TLO.Window('DestroyItemWnd').Open() then
+                mq.cmd('/notify DestroyItemWnd DIW_Yes_Button leftmouseup')
+            end
+            mq.delay(200)
+            if CursorHasItem() then
+                -- Attempt one more autoinventory to clear if destroy failed
+                mq.cmd('/autoinventory')
+            end
+        end)
     else
         print(string.format("[EZInventory] Unknown command: %s", tostring(command)))
     end
 end
 
 function M.send_inventory_command(peer, command, args)
-    if not command_mailbox then 
+    if not command_mailbox then
         print("[Inventory Actor] Cannot send command - command mailbox not initialized")
         return false
     end
     printf("[SEND CMD] Trying to send %s to %s", command, tostring(peer))
     command_mailbox:send(
-        {character = peer},
-        {type = 'command', command = command, args = args or {}, target = peer}
+        { character = peer },
+        { type = 'command', command = command, args = args or {}, target = peer }
     )
     return true
 end
 
 function M.broadcast_inventory_command(command, args)
-    if not command_mailbox then 
+    if not command_mailbox then
         print("[Inventory Actor] Cannot broadcast command - command mailbox not initialized")
         return false
     end
-    
+
     for peerID, _ in pairs(M.peer_inventories) do
         local name = peerID:match("_(.+)$")
         local myNormalizedName = normalizeCharacterName(mq.TLO.Me.CleanName())
@@ -1585,7 +1787,7 @@ function M.init()
 
     -- Get module name from global (should be set by main script)
     local module_name = _G.EZINV_MODULE or "ezinventory"
-    
+
     -- Ensure it's lowercase for consistency
     module_name = module_name:lower()
     _G.EZINV_MODULE = module_name
