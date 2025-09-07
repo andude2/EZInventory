@@ -470,16 +470,36 @@ function M.get_item_detailed_stats(itemName, location, slotInfo)
 end
 
 -- Helper function to normalize character names to Title Case
+-- Remove corpse suffixes and normalize to Title Case first name
+local function sanitizeCharacterName(name)
+    if not name or name == "" then return name end
+    local cleaned = name
+    -- Strip common corpse suffix formats (e.g., "Soandso's corpse", "Soandso`s Corpse", possibly with digits)
+    cleaned = cleaned:gsub("%s*[%`’']s [Cc]orpse%d*$", "")
+    -- Trim whitespace
+    cleaned = cleaned:match("^%s*(.-)%s*$") or cleaned
+    return cleaned
+end
+
+local function isCorpseName(name)
+    if not name or name == "" then return false end
+    return name:match("[%`’']s [Cc]orpse%d*$") ~= nil
+end
+
 local function normalizeCharacterName(name)
-    if name and #name > 0 then
-        return name:sub(1, 1):upper() .. name:sub(2):lower()
+    if not name or name == "" then return name end
+    -- Ensure we don't propagate corpse names into IDs/peers
+    local cleaned = sanitizeCharacterName(name)
+    if cleaned and #cleaned > 0 then
+        return cleaned:sub(1, 1):upper() .. cleaned:sub(2):lower()
     end
-    return name
+    return cleaned
 end
 
 function M.gather_inventory()
     local data = {
-        name = normalizeCharacterName(mq.TLO.Me.Name()),
+        -- Use CleanName and sanitize to avoid publishing corpse names
+        name = normalizeCharacterName(mq.TLO.Me.CleanName()),
         server = mq.TLO.MacroQuest.Server(),
         class = mq.TLO.Me.Class(),
         equipped = {},
@@ -556,16 +576,20 @@ local function message_handler(message)
 
     if content.type == M.MSG_TYPE.UPDATE then
         if content.data and content.data.name and content.data.server then
-            -- Filter out corpse inventories to prevent duplicates
-            if not string.match(content.data.name, "_corpse$") then
-                local normalizedName = normalizeCharacterName(content.data.name)
+            -- Sanitize and normalize incoming names to avoid tracking corpse entries
+            local normalizedName = normalizeCharacterName(content.data.name)
+            if normalizedName and normalizedName ~= "" then
+                -- Cleanup any stale corpse entries for this peer/server
+                for key, inv in pairs(M.peer_inventories) do
+                    if inv and inv.server == content.data.server and inv.name and isCorpseName(inv.name) then
+                        if normalizeCharacterName(inv.name) == normalizedName then
+                            M.peer_inventories[key] = nil
+                        end
+                    end
+                end
                 local peerId = content.data.server .. "_" .. normalizedName
-                -- Update the data name to normalized version
                 content.data.name = normalizedName
                 M.peer_inventories[peerId] = content.data
-                --print(string.format("[Inventory Actor] Updated inventory for %s/%s", content.data.name, content.data.server))
-            else
-                --print(string.format("[Inventory Actor] Skipping corpse inventory for %s", content.data.name))
             end
         end
     elseif content.type == M.MSG_TYPE.REQUEST then
@@ -579,15 +603,20 @@ local function message_handler(message)
         end
     elseif content.type == M.MSG_TYPE.RESPONSE then
         if content.data and content.data.name and content.data.server then
-            -- Filter out corpse inventories to prevent duplicates
-            if not string.match(content.data.name, "_corpse$") then
-                local normalizedName = normalizeCharacterName(content.data.name)
+            -- Sanitize and normalize incoming names to avoid tracking corpse entries
+            local normalizedName = normalizeCharacterName(content.data.name)
+            if normalizedName and normalizedName ~= "" then
+                -- Cleanup any stale corpse entries for this peer/server
+                for key, inv in pairs(M.peer_inventories) do
+                    if inv and inv.server == content.data.server and inv.name and isCorpseName(inv.name) then
+                        if normalizeCharacterName(inv.name) == normalizedName then
+                            M.peer_inventories[key] = nil
+                        end
+                    end
+                end
                 local peerId = content.data.server .. "_" .. normalizedName
-                -- Update the data name to normalized version
                 content.data.name = normalizedName
                 M.peer_inventories[peerId] = content.data
-            else
-                --print(string.format("[Inventory Actor] Skipping corpse inventory for %s", content.data.name))
             end
         end
     elseif content.type == M.MSG_TYPE.CONFIG_UPDATE then
@@ -779,11 +808,27 @@ function M.publish_inventory()
         return false
     end
 
+    -- Do not publish while hovering (to avoid corpse identity/data)
+    if mq and mq.TLO and mq.TLO.Me and mq.TLO.Me.Hovering and mq.TLO.Me.Hovering() then
+        -- Optional: debug message; keep it low-noise
+        -- print("[Inventory Actor] Skipping publish while hovering (corpse)")
+        return false
+    end
+
     local inventoryData = M.gather_inventory()
     actor_mailbox:send(
         { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
         { type = M.MSG_TYPE.UPDATE, data = inventoryData }
     )
+    return true
+end
+
+-- Clear peer data caches so a refresh can rebuild from current sources
+function M.clear_peer_data()
+    M.peer_inventories = {}
+    M.peer_bank_flags = {}
+    M.peer_paths = {}
+    M.peer_script_paths = {}
     return true
 end
 

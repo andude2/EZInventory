@@ -157,10 +157,23 @@ LoadSettings()
 UpdateInventoryActorConfig()
 
 ---@tag InventoryUI
+-- Early helper: minimal extract/normalize for initial selectedPeer
+local function _ezinv_extractCharacterNameEarly(name)
+    if not name or name == "" then return name end
+    local charName = name
+    if charName:find("_") then
+        local last = nil
+        for part in charName:gmatch("[^_]+") do last = part end
+        charName = last or charName
+    end
+    charName = charName:gsub("%s*[%`’']s [Cc]orpse%d*$", "")
+    return charName:sub(1,1):upper() .. charName:sub(2):lower()
+end
+
 local inventoryUI = {
     visible                       = true,
     showToggleButton              = true,
-    selectedPeer                  = mq.TLO.Me.Name(),
+    selectedPeer                  = _ezinv_extractCharacterNameEarly(mq.TLO.Me.CleanName()),
     peers                         = {},
     inventoryData                 = { equipped = {}, bags = {}, bank = {}, },
     expandBags                    = false,
@@ -345,8 +358,10 @@ local function extractCharacterName(dannetPeerName)
         charName = parts[#parts] or dannetPeerName
     end
 
-    -- Always normalize to Title Case
+    -- Strip corpse suffix if present (e.g., "Soandso's corpse", "Soandso`s Corpse", possibly with digits)
     if charName and #charName > 0 then
+        charName = charName:gsub("%s*[%`’']s [Cc]orpse%d*$", "")
+        -- Always normalize to Title Case
         return charName:sub(1, 1):upper() .. charName:sub(2):lower()
     end
 
@@ -6221,6 +6236,11 @@ function inventoryUI.render()
                 if ImGui.Button("Refresh Inventory", 120, 0) then
                     inventoryUI.isLoadingData = true
                     table.insert(inventory_actor.deferred_tasks, function()
+                        -- Clear caches so we rebuild fresh data on refresh
+                        if inventory_actor.clear_peer_data then inventory_actor.clear_peer_data() end
+                        peerCache = {}
+                        inventoryUI._selfCache = { data = nil, time = 0 }
+                        -- Publish (will be skipped if hovering) and then request
                         inventory_actor.publish_inventory()
                         inventory_actor.request_all_inventories()
                         inventoryUI.isLoadingData = false
@@ -6661,8 +6681,10 @@ local function main()
 
         local currentTime = os.time()
         if currentTime - inventoryUI.lastPublishTime > inventoryUI.PUBLISH_INTERVAL then
-            inventory_actor.publish_inventory()
-            inventoryUI.lastPublishTime = currentTime
+            local ok = inventory_actor.publish_inventory()
+            if ok then
+                inventoryUI.lastPublishTime = currentTime
+            end
         end
 
         updatePeerList()
