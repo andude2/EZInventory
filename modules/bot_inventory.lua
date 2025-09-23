@@ -22,10 +22,47 @@ function BotInventory.parseItemLinkData(itemLinkString)
     local links = mq.ExtractLinks(itemLinkString)
     for _, link in ipairs(links) do
         if link.type == mq.LinkTypes.Item then
-            local item = mq.ParseItemLink(link.link)
+            local parsed = mq.ParseItemLink(link.link)
+            -- Best-effort extraction: different client builds may expose
+            -- lowercase or uppercase keys for stats. Fall back to 0.
+            local ac, hp, mana = 0, 0, 0
+            if parsed then
+                -- First, try fields directly present on parsed
+                ac   = (parsed.ac or parsed.AC or 0)
+                hp   = (parsed.hp or parsed.HP or 0)
+                mana = (parsed.mana or parsed.Mana or parsed.MANA or 0)
+                -- If not present, try Item TLO via ID or name
+                if (ac == 0 and hp == 0 and mana == 0) and mq and mq.TLO and mq.TLO.Item then
+                    local itemTLO
+                    if parsed.itemID then
+                        itemTLO = mq.TLO.Item(parsed.itemID)
+                    end
+                    if (not itemTLO or not itemTLO() or itemTLO.ID() == 0) and link.text then
+                        itemTLO = mq.TLO.Item("=" .. link.text)
+                    end
+                    if itemTLO and itemTLO() then
+                        ac = tonumber(itemTLO.AC() or 0) or 0
+                        hp = tonumber(itemTLO.HP() or 0) or 0
+                        mana = tonumber(itemTLO.Mana() or 0) or 0
+                    end
+                end
+            end
+            local iconID = 0
+            if parsed then
+                iconID = tonumber(parsed.iconID or parsed.IconID or parsed.icon or parsed.Icon or 0) or 0
+                if iconID == 0 and link.icon then
+                    iconID = tonumber(link.icon) or 0
+                end
+            end
+
             return {
-                itemID = item.itemID,
-                linkData = link
+                itemID  = parsed and parsed.itemID or nil,
+                iconID  = iconID,
+                icon    = iconID,
+                linkData = link,
+                ac = tonumber(ac) or 0,
+                hp = tonumber(hp) or 0,
+                mana = tonumber(mana) or 0,
             }
         end
     end
@@ -76,8 +113,12 @@ local function displayBotInventory(line, slotNum, slotName)
             itemlink = line,
             rawline = line,
             itemID = parsedItem and parsedItem.itemID or nil,
+            icon = (parsedItem and (parsedItem.iconID or parsedItem.icon or 0)) or 0,
             stackSize = parsedItem and parsedItem.stackSize or nil,
             charges = parsedItem and parsedItem.charges or nil,
+            ac = parsedItem and parsedItem.ac or 0,
+            hp = parsedItem and parsedItem.hp or 0,
+            mana = parsedItem and parsedItem.mana or 0,
             qty = 1,
             nodrop = 1
         }
