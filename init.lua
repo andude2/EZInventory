@@ -45,6 +45,7 @@ local Collectibles        = require("EZInventory.modules.collectibles")
 local Banking             = require("EZInventory.modules.banking")
 local Bindings            = require("EZInventory.modules.bindings")
 local Util                = require("EZInventory.modules.util")
+local Theme               = require("EZInventory.modules.theme")
 local Modals              = require("EZInventory.UI.modals")
 local EquippedTab         = require("EZInventory.UI.equipped_tab")
 local BagsTab             = require("EZInventory.UI.bags_tab")
@@ -2782,6 +2783,9 @@ function inventoryUI.render()
         windowFlags = windowFlags + ImGuiWindowFlags.NoMove + ImGuiWindowFlags.NoResize
     end
 
+    -- Scoped theme: apply before Begin so it affects this window only
+    local __theme_vars_pushed = Theme.push_ezinventory_theme(ImGui)
+
     local open, show = ImGui.Begin("Inventory Window##EzInventory", true, windowFlags)
     if not open then
         inventoryUI.visible = false
@@ -3132,6 +3136,8 @@ function inventoryUI.render()
         end
 
         ImGui.End()
+        -- Pop themed style vars immediately after closing the main window so other windows remain unaffected
+        Theme.pop_ezinventory_theme(ImGui, __theme_vars_pushed)
         Util.renderContextMenu()
         renderMultiSelectIndicator()
         Util.renderMultiTradePanel()
@@ -3264,20 +3270,6 @@ Util.setup({
     drawItemIcon = drawItemIcon,
 })
 
--- Apply a global rounded-corner style once
-if not inventoryUI._styleApplied then
-    local style = ImGui.GetStyle()
-    style.WindowRounding = 7.0
-    style.ChildRounding = 6.0
-    style.FrameRounding = 6.0
-    style.GrabRounding = 5.0
-    style.TabRounding = 6.0
-    style.PopupRounding = 6.0
-    style.ScrollbarRounding = 9.0
-    style.WindowBorderSize = 1.0
-    style.FrameBorderSize = 1.0
-    inventoryUI._styleApplied = true
-end
 
 mq.imgui.init("InventoryWindow", function()
     if inventoryUI.showToggleButton then
