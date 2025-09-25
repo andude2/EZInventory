@@ -38,7 +38,7 @@ local function isItemUsableInSlot(item, slotID, targetClass)
         return false
     else
         if slotID == 22 and (item.type and tostring(item.type):lower():find("ammo")) then
-            return true 
+            return true
         end
         return false
     end
@@ -62,7 +62,7 @@ end
 function Suggestions.requestDetailedStats(peerName, itemName, location, callback)
     local cacheKey = string.format("%s_%s_%s_%d", peerName, itemName, location, os.time())
     local shortCacheKey = string.format("%s_%s_%s", peerName, itemName, location)
-    
+
     if Suggestions.detailed_stats_cache[shortCacheKey] then
         local cachedEntry = Suggestions.detailed_stats_cache[shortCacheKey]
         if os.time() - cachedEntry.timestamp < 30 then
@@ -120,7 +120,7 @@ function Suggestions.getAvailableItemsForSlot(targetCharacter, slotID)
     local class = "UNK"
     -- unified spawn handling?
     if targetCharacter == mq.TLO.Me.CleanName() then
-        spawn = mq.TLO.Me 
+        spawn = mq.TLO.Me
     else
         spawn = mq.TLO.Spawn("pc = " .. targetCharacter)
     end
@@ -170,7 +170,7 @@ function Suggestions.getAvailableItemsForSlot(targetCharacter, slotID)
         for _, item in ipairs(iterable_container or {}) do
             containerItems = containerItems + 1
             debugStats.totalItems = debugStats.totalItems + 1
-            
+
             if not isItemUsableInSlot(item, slotID, class) then
                 debugStats.slotFilteredItems = debugStats.slotFilteredItems + 1
             else

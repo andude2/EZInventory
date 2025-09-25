@@ -23,10 +23,10 @@ end
 -- Load collectible items on demand by checking live inventory
 function Collectibles.loadCollectibleItems()
     if Collectibles.isLoading then return end
-    
+
     Collectibles.isLoading = true
     Collectibles.items = {}
-    
+
     -- Scan equipped slots (0-22)
     for slot = 0, 22 do
         local item = mq.TLO.Me.Inventory(slot)
@@ -36,14 +36,14 @@ function Collectibles.loadCollectibleItems()
                 id = item.ID() or 0,
                 icon = item.Icon() or 0,
                 qty = item.Stack() or 1,
-                bagid = -1,  -- Equipped slot
+                bagid = -1, -- Equipped slot
                 slotid = slot,
                 collectible = true
             }
             table.insert(Collectibles.items, collectItem)
         end
     end
-    
+
     -- Scan inventory bags (slots 23-34)
     for invSlot = 23, 34 do
         local pack = mq.TLO.Me.Inventory(invSlot)
@@ -67,7 +67,7 @@ function Collectibles.loadCollectibleItems()
             end
         end
     end
-    
+
     -- Scan bank items
     for bankSlot = 1, 24 do
         local item = mq.TLO.Me.Bank(bankSlot)
@@ -84,7 +84,7 @@ function Collectibles.loadCollectibleItems()
             }
             table.insert(Collectibles.items, collectItem)
         end
-        
+
         -- Scan bank bags
         if item.Container() and item.Container() > 0 then
             for i = 1, item.Container() do
@@ -106,7 +106,7 @@ function Collectibles.loadCollectibleItems()
             end
         end
     end
-    
+
     Collectibles.isLoading = false
 end
 
@@ -126,7 +126,7 @@ end
 function Collectibles.requestPeerCollectibles()
     Collectibles.peerItems = {}
     Collectibles.responseCount = 0
-    
+
     -- Request from all connected peers
     inventory_actor.request_peer_collectibles(Collectibles.onPeerCollectiblesReceived)
 end
@@ -134,7 +134,7 @@ end
 -- Show/hide the collectibles UI
 function Collectibles.toggle()
     Collectibles.visible = not Collectibles.visible
-    
+
     -- Load items when UI is first opened
     if Collectibles.visible then
         Collectibles.loadCollectibleItems()
@@ -145,32 +145,32 @@ end
 -- Draw the collectibles UI
 function Collectibles.draw()
     if not Collectibles.visible then return end
-    
+
     local windowFlags = bit32.bor(
         ImGuiWindowFlags.MenuBar
     )
-    
+
     ImGui.SetNextWindowSize(600, 400, ImGuiCond.FirstUseEver)
-    
+
     local visible, should_draw = ImGui.Begin("Collectibles##EZInventoryCollectibles", true, windowFlags)
     if not visible then
         Collectibles.visible = false
         ImGui.End()
         return
     end
-    
+
     if not should_draw then
         ImGui.End()
         return
     end
-    
+
     -- Menu bar
     if ImGui.BeginMenuBar() then
         if ImGui.Button("Refresh") then
             Collectibles.loadCollectibleItems()
             Collectibles.requestPeerCollectibles()
         end
-        
+
         ImGui.SameLine()
         local totalLocal = #Collectibles.items
         local totalPeers = 0
@@ -179,7 +179,7 @@ function Collectibles.draw()
             totalPeers = totalPeers + #items
             peerCount = peerCount + 1
         end
-        
+
         -- Check connected peers from inventory actor
         local connectedPeerCount = 0
         if inventory_actor.peer_inventories then
@@ -187,18 +187,19 @@ function Collectibles.draw()
                 connectedPeerCount = connectedPeerCount + 1
             end
         end
-        
-        ImGui.Text(string.format("Local: %d | Peers: %d/%d | Total: %d", totalLocal, peerCount, connectedPeerCount, totalLocal + totalPeers))
-        
+
+        ImGui.Text(string.format("Local: %d | Peers: %d/%d | Total: %d", totalLocal, peerCount, connectedPeerCount,
+            totalLocal + totalPeers))
+
         ImGui.EndMenuBar()
     end
-    
+
     -- Loading indicator
     if Collectibles.isLoading then
         local windowWidth = ImGui.GetWindowWidth()
         local availableHeight = ImGui.GetContentRegionAvail()
         ImGui.SetCursorPosY(ImGui.GetCursorPosY() + availableHeight * 0.4)
-        
+
         local loadingText = "Loading collectibles..."
         local textWidth = ImGui.CalcTextSize(loadingText)
         ImGui.SetCursorPosX((windowWidth - textWidth) * 0.5)
@@ -206,11 +207,11 @@ function Collectibles.draw()
         ImGui.End()
         return
     end
-    
+
     -- Create combined list with local and peer items
     local allItems = {}
     local localChar = mq.TLO.Me.CleanName() or "Local"
-    
+
     -- Add local items
     for _, item in ipairs(Collectibles.items) do
         local displayItem = {}
@@ -221,10 +222,10 @@ function Collectibles.draw()
         displayItem.isLocal = true
         table.insert(allItems, displayItem)
     end
-    
+
     -- Add peer items (exclude local character to avoid duplicates)
     for peerName, items in pairs(Collectibles.peerItems) do
-        if peerName ~= localChar then  -- Skip local character to avoid duplicates
+        if peerName ~= localChar then -- Skip local character to avoid duplicates
             for _, item in ipairs(items) do
                 local displayItem = {}
                 for k, v in pairs(item) do
@@ -236,7 +237,7 @@ function Collectibles.draw()
             end
         end
     end
-    
+
     -- Items table
     if #allItems > 0 then
         if ImGui.BeginTable("CollectiblesTable", 4, ImGuiTableFlags.Resizable + ImGuiTableFlags.Borders + ImGuiTableFlags.ScrollY + ImGuiTableFlags.Sortable) then
@@ -246,15 +247,15 @@ function Collectibles.draw()
             ImGui.TableSetupColumn("Quantity", ImGuiTableColumnFlags.WidthFixed, 80)
             ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 100)
             ImGui.TableHeadersRow()
-            
+
             -- Items
             for i, item in ipairs(allItems) do
                 ImGui.TableNextRow()
-                
+
                 -- Name
                 ImGui.TableNextColumn()
                 ImGui.Text(item.name or "Unknown")
-                
+
                 -- Character
                 ImGui.TableNextColumn()
                 if item.isLocal then
@@ -264,11 +265,11 @@ function Collectibles.draw()
                 else
                     ImGui.Text(item.character)
                 end
-                
+
                 -- Quantity
                 ImGui.TableNextColumn()
                 ImGui.Text(tostring(item.qty or 1))
-                
+
                 -- Action
                 ImGui.TableNextColumn()
                 if item.isLocal then
@@ -305,26 +306,27 @@ function Collectibles.draw()
                                 slotid = item.slotid,
                                 bankslotid = item.bankslotid,
                             }
-                            
-                            inventory_actor.send_inventory_command(item.character, "proxy_give", { json.encode(peerRequest) })
+
+                            inventory_actor.send_inventory_command(item.character, "proxy_give",
+                                { json.encode(peerRequest) })
                         end
                     end
                 end
             end
-            
+
             ImGui.EndTable()
         end
     else
         local windowWidth = ImGui.GetWindowWidth()
         local availableHeight = ImGui.GetContentRegionAvail()
         ImGui.SetCursorPosY(ImGui.GetCursorPosY() + availableHeight * 0.4)
-        
+
         local noItemsText = "No collectible items found"
         local textWidth = ImGui.CalcTextSize(noItemsText)
         ImGui.SetCursorPosX((windowWidth - textWidth) * 0.5)
         ImGui.Text(noItemsText)
     end
-    
+
     ImGui.End()
 end
 
