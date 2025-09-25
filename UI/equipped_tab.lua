@@ -22,61 +22,62 @@ function M.render(inventoryUI, env)
     if ImGui.BeginTabBar("EquippedViewTabs", ImGuiTabBarFlags.Reorderable) then
       if ImGui.BeginTabItem("Table View") then
         inventoryUI.equipView = "table"
-        if ImGui.BeginChild("EquippedScrollRegion", 0, 0) then
-          ImGui.Text("Show Columns:")
-          ImGui.SameLine()
-          inventoryUI.showAug1 = ImGui.Checkbox("Aug 1", inventoryUI.showAug1)
-          ImGui.SameLine()
-          inventoryUI.showAug2 = ImGui.Checkbox("Aug 2", inventoryUI.showAug2)
-          ImGui.SameLine()
-          inventoryUI.showAug3 = ImGui.Checkbox("Aug 3", inventoryUI.showAug3)
-          ImGui.SameLine()
-          inventoryUI.showAug4 = ImGui.Checkbox("Aug 4", inventoryUI.showAug4)
-          ImGui.SameLine()
-          inventoryUI.showAug5 = ImGui.Checkbox("Aug 5", inventoryUI.showAug5)
-          ImGui.SameLine()
-          inventoryUI.showAug6 = ImGui.Checkbox("Aug 6", inventoryUI.showAug6)
-          ImGui.SameLine()
-          inventoryUI.showAC = ImGui.Checkbox("AC", inventoryUI.showAC)
-          ImGui.SameLine()
-          inventoryUI.showHP = ImGui.Checkbox("HP", inventoryUI.showHP)
-          ImGui.SameLine()
-          inventoryUI.showMana = ImGui.Checkbox("Mana", inventoryUI.showMana)
-          ImGui.SameLine()
-          inventoryUI.showClicky = ImGui.Checkbox("Clicky", inventoryUI.showClicky)
+        ImGui.BeginChild("EquippedScrollRegion", 0, 0)
+        -- Content of child region
+        ImGui.Text("Show Columns:")
+        ImGui.SameLine()
+        inventoryUI.showAug1 = ImGui.Checkbox("Aug 1", inventoryUI.showAug1)
+        ImGui.SameLine()
+        inventoryUI.showAug2 = ImGui.Checkbox("Aug 2", inventoryUI.showAug2)
+        ImGui.SameLine()
+        inventoryUI.showAug3 = ImGui.Checkbox("Aug 3", inventoryUI.showAug3)
+        ImGui.SameLine()
+        inventoryUI.showAug4 = ImGui.Checkbox("Aug 4", inventoryUI.showAug4)
+        ImGui.SameLine()
+        inventoryUI.showAug5 = ImGui.Checkbox("Aug 5", inventoryUI.showAug5)
+        ImGui.SameLine()
+        inventoryUI.showAug6 = ImGui.Checkbox("Aug 6", inventoryUI.showAug6)
+        ImGui.SameLine()
+        inventoryUI.showAC = ImGui.Checkbox("AC", inventoryUI.showAC)
+        ImGui.SameLine()
+        inventoryUI.showHP = ImGui.Checkbox("HP", inventoryUI.showHP)
+        ImGui.SameLine()
+        inventoryUI.showMana = ImGui.Checkbox("Mana", inventoryUI.showMana)
+        ImGui.SameLine()
+        inventoryUI.showClicky = ImGui.Checkbox("Clicky", inventoryUI.showClicky)
 
-          local numColumns = 3
-          local visibleAugs = 0
-          local augVisibility = {
+        local numColumns = 3
+        local visibleAugs = 0
+        local augVisibility = {
             inventoryUI.showAug1,
             inventoryUI.showAug2,
             inventoryUI.showAug3,
             inventoryUI.showAug4,
             inventoryUI.showAug5,
             inventoryUI.showAug6,
-          }
-          for _, isVisible in ipairs(augVisibility) do
-            if isVisible then visibleAugs = visibleAugs + 1 end
-          end
-          numColumns = numColumns + visibleAugs
+        }
+        for _, isVisible in ipairs(augVisibility) do
+          if isVisible then visibleAugs = visibleAugs + 1 end
+        end
+        numColumns = numColumns + visibleAugs
 
-          local extraStats = {
+        local extraStats = {
             inventoryUI.showAC,
             inventoryUI.showHP,
             inventoryUI.showMana,
             inventoryUI.showClicky,
-          }
-          local visibleStats = 0
-          for _, isVisible in ipairs(extraStats) do
-            if isVisible then visibleStats = visibleStats + 1 end
-          end
-          numColumns = numColumns + visibleStats
+        }
+        local visibleStats = 0
+        for _, isVisible in ipairs(extraStats) do
+          if isVisible then visibleStats = visibleStats + 1 end
+        end
+        numColumns = numColumns + visibleStats
 
-          if inventoryUI.isLoadingData then
+        if inventoryUI.isLoadingData then
             renderLoadingScreen("Loading Inventory Data", "Scanning items",
               "This may take a moment for large inventories")
-          else
-            if ImGui.BeginTable("EquippedTableView", numColumns, bit32.bor(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.SizingStretchProp)) then
+        else
+          if ImGui.BeginTable("EquippedTableView", numColumns, bit32.bor(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.SizingStretchProp)) then
               ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthFixed, 100)
               ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 30)
               ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthFixed, 150)
@@ -161,12 +162,12 @@ function M.render(inventoryUI, env)
                 ImGui.PopID()
                 if not ok then printf("Error rendering item row: %s", err) end
               end
-              ImGui.EndTable()
-            end
+            ImGui.EndTable()
           end
-          ImGui.EndChild()
-          ImGui.EndTabItem()
         end
+        -- Always call EndChild after BeginChild
+        ImGui.EndChild()
+        ImGui.EndTabItem()
       end
 
       if not inventoryUI.isLoadingData then

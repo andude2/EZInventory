@@ -302,7 +302,8 @@ function M.renderMultiTradePanel()
     local selectedCount = M.getSelectedItemCount()
     ImGui.Text(string.format("Selected Items: %d", selectedCount))
     ImGui.Separator()
-    if ImGui.BeginChild("SelectedItemsList", 0, 250) then
+    local listDrawn = ImGui.BeginChild("SelectedItemsList", 0, 250)
+    if listDrawn then
       if selectedCount == 0 then
         ImGui.Text("No items selected")
       else
@@ -334,8 +335,8 @@ function M.renderMultiTradePanel()
           ImGui.EndTable()
         end
       end
-      ImGui.EndChild()
     end
+    ImGui.EndChild()
     ImGui.Separator()
     ImGui.Text("Trade To:")
     ImGui.SameLine()
