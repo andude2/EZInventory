@@ -3081,6 +3081,7 @@ function inventoryUI.render()
                     local envAll = {
                         ImGui = ImGui,
                         mq = mq,
+                        json = json,
                         Banking = Banking,
                         drawItemIcon = drawItemIcon,
                         inventory_actor = inventory_actor,

@@ -2,13 +2,14 @@ local M = {}
 
 -- All Characters - PC Tab
 -- env expects:
--- ImGui, mq, Banking, drawItemIcon, inventory_actor,
+-- ImGui, mq, json, Banking, drawItemIcon, inventory_actor,
 -- itemGroups, itemMatchesGroup, extractCharacterName,
 -- isItemBankFlagged, normalizeChar, Settings, searchText, showContextMenu,
 -- toggleItemSelection, drawSelectionIndicator
 function M.render(inventoryUI, env)
   local ImGui = env.ImGui
   local mq = env.mq
+  local json = env.json
   local Banking = env.Banking
   local drawItemIcon = env.drawItemIcon
   local inventory_actor = env.inventory_actor
