@@ -240,7 +240,7 @@ function M.render(inventoryUI, env)
                 local item_tlo = slot_tlo.Item(insideIndex)
                 local cell_id = string.format("bag_%d_slot_%d", pack_number, insideIndex)
                 local show_this_item = item_tlo.ID() and
-                (not env.searchText or env.searchText == "" or string.match(string.lower(item_tlo.Name()), string.lower(env.searchText)))
+                    (not env.searchText or env.searchText == "" or string.match(string.lower(item_tlo.Name()), string.lower(env.searchText)))
                 ImGui.PushID(cell_id)
                 if show_this_item then
                   drawLiveItemSlot(item_tlo, cell_id)

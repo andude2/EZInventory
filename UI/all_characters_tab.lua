@@ -4,7 +4,8 @@ local M = {}
 -- env expects:
 -- ImGui, mq, Banking, drawItemIcon, inventory_actor,
 -- itemGroups, itemMatchesGroup, extractCharacterName,
--- isItemBankFlagged, normalizeChar, Settings, searchText, showContextMenu
+-- isItemBankFlagged, normalizeChar, Settings, searchText, showContextMenu,
+-- toggleItemSelection, drawSelectionIndicator
 function M.render(inventoryUI, env)
   local ImGui = env.ImGui
   local mq = env.mq
@@ -19,6 +20,8 @@ function M.render(inventoryUI, env)
   local Settings = env.Settings or {}
   local searchText = env.searchText or ""
   local showContextMenu = env.showContextMenu
+  local toggleItemSelection = env.toggleItemSelection
+  local drawSelectionIndicator = env.drawSelectionIndicator
 
   if ImGui.BeginTabItem("All Characters") then
     -- Periodically refresh bank flags so we can mark flagged items in the list
@@ -151,10 +154,14 @@ function M.render(inventoryUI, env)
             end
           end
 
-          if inventoryUI.sourceFilter == "All" or inventoryUI.sourceFilter == "Equipped" then addItems(invData.equipped,
-              "Equipped") end
-          if inventoryUI.sourceFilter == "All" or inventoryUI.sourceFilter == "Inventory" then addItems(invData.bags,
-              "Inventory") end
+          if inventoryUI.sourceFilter == "All" or inventoryUI.sourceFilter == "Equipped" then
+            addItems(invData.equipped,
+              "Equipped")
+          end
+          if inventoryUI.sourceFilter == "All" or inventoryUI.sourceFilter == "Inventory" then
+            addItems(invData.bags,
+              "Inventory")
+          end
           if inventoryUI.sourceFilter == "All" or inventoryUI.sourceFilter == "Bank" then addItems(invData.bank, "Bank") end
         end
       end
@@ -189,6 +196,35 @@ function M.render(inventoryUI, env)
 
     local results = enhancedSearchAcrossPeers()
     local resultCount = #results
+
+    -- Multi-select mode indicator and controls
+    if inventoryUI.multiSelectMode then
+      local function getSelectedItemCount()
+        local cnt = 0
+        for _ in pairs(inventoryUI.selectedItems or {}) do cnt = cnt + 1 end
+        return cnt
+      end
+      local selectedCount = getSelectedItemCount()
+      ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
+      ImGui.Text(string.format("Multi-Select Mode: %d items selected", selectedCount))
+      ImGui.PopStyleColor()
+      ImGui.SameLine()
+      if ImGui.Button("Exit Multi-Select") then
+        inventoryUI.multiSelectMode = false
+        inventoryUI.selectedItems = {}
+      end
+      if selectedCount > 0 then
+        ImGui.SameLine()
+        if ImGui.Button("Show Trade Panel") then
+          inventoryUI.showMultiTradePanel = true
+        end
+        ImGui.SameLine()
+        if ImGui.Button("Clear Selection") then
+          inventoryUI.selectedItems = {}
+        end
+      end
+      ImGui.Separator()
+    end
 
     -- Filter Panel in collapsible header
     if ImGui.CollapsingHeader("Filters", ImGuiTreeNodeFlags.DefaultOpen) then
@@ -284,18 +320,22 @@ function M.render(inventoryUI, env)
         if ImGui.BeginCombo("##ExcludeTypes", preview) then
           for _, t in ipairs(excludeTypes) do
             local isExcluded = false
-            for _, ex in ipairs(inventoryUI.excludeItemTypes) do if ex == t then
+            for _, ex in ipairs(inventoryUI.excludeItemTypes) do
+              if ex == t then
                 isExcluded = true
                 break
-              end end
+              end
+            end
             local newValue, changed = ImGui.Checkbox(t, isExcluded)
             if changed then
               if newValue then
                 local exists = false
-                for _, ex in ipairs(inventoryUI.excludeItemTypes) do if ex == t then
+                for _, ex in ipairs(inventoryUI.excludeItemTypes) do
+                  if ex == t then
                     exists = true
                     break
-                  end end
+                  end
+                end
                 if not exists then table.insert(inventoryUI.excludeItemTypes, t) end
               else
                 for j = #inventoryUI.excludeItemTypes, 1, -1 do
@@ -487,7 +527,9 @@ function M.render(inventoryUI, env)
 
           -- Icon
           ImGui.TableNextColumn()
-          if item.icon and item.icon ~= 0 then drawItemIcon(item.icon) else
+          if item.icon and item.icon ~= 0 then
+            drawItemIcon(item.icon)
+          else
             ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0); ImGui.Text("N/A"); ImGui.PopStyleColor()
           end
 
@@ -515,11 +557,43 @@ function M.render(inventoryUI, env)
             end
           end
           ImGui.SameLine()
-          if ImGui.Selectable((item.name or "Unknown") .. "##name") then
-            if mq and mq.ExtractLinks and item.itemlink then
-              local links = mq.ExtractLinks(item.itemlink); if links and #links > 0 and mq.ExecuteTextLink then mq
-                    .ExecuteTextLink(links[1]) end
+          -- Create unique key for multi-select
+          local uniqueKey = string.format("%s_%s_%s_%s",
+            item.peerName or "unknown",
+            item.name or "unnamed",
+            item.source or "unknown",
+            item.slotid or "noslot")
+
+          -- Handle multi-select styling
+          local itemClicked = false
+          if inventoryUI.multiSelectMode and inventoryUI.selectedItems[uniqueKey] then
+            ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
+            itemClicked = ImGui.Selectable((item.name or "Unknown") .. "##name")
+            ImGui.PopStyleColor()
+          else
+            itemClicked = ImGui.Selectable((item.name or "Unknown") .. "##name")
+          end
+
+          -- Handle click based on mode
+          if itemClicked then
+            if inventoryUI.multiSelectMode then
+              if toggleItemSelection and type(toggleItemSelection) == "function" then
+                toggleItemSelection(item, uniqueKey, item.peerName)
+              end
+            else
+              -- Normal mode - examine item
+              if mq and mq.ExtractLinks and item.itemlink then
+                local links = mq.ExtractLinks(item.itemlink); if links and #links > 0 and mq.ExecuteTextLink then
+                  mq
+                      .ExecuteTextLink(links[1])
+                end
+              end
             end
+          end
+
+          -- Draw selection indicator in multi-select mode
+          if inventoryUI.multiSelectMode and drawSelectionIndicator then
+            drawSelectionIndicator(uniqueKey, ImGui.IsItemHovered())
           end
           -- Right-click context menu trigger on item name
           if ImGui.IsItemClicked(ImGuiMouseButton.Right) and showContextMenu then

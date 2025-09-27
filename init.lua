@@ -2777,7 +2777,7 @@ end
 --------------------------------------------------
 function inventoryUI.render()
     if not inventoryUI.visible then return end
-    
+
     local windowFlags = ImGuiWindowFlags.None
     if inventoryUI.windowLocked then
         windowFlags = windowFlags + ImGuiWindowFlags.NoMove + ImGuiWindowFlags.NoResize
@@ -2785,17 +2785,17 @@ function inventoryUI.render()
 
     -- Push theme
     local theme_count = Theme.push_ezinventory_theme(ImGui)
-    
+
     -- Begin window
     local open, show = ImGui.Begin("Inventory Window##EzInventory", true, windowFlags)
-    
+
     if not open then
         inventoryUI.visible = false
         ImGui.End()
         Theme.pop_ezinventory_theme(ImGui, theme_count)
         return
     end
-    
+
     if show then
         inventoryUI.selectedServer = inventoryUI.selectedServer or server
         ImGui.Text("Select Server:")
@@ -3023,126 +3023,128 @@ function inventoryUI.render()
         local avail = ImGui.GetContentRegionAvail()
         -- Begin the tabbed content child
         ImGui.BeginChild("TabbedContentRegion", 0, 0, ImGuiChildFlags.Border)
-            local tabBarBegan = ImGui.BeginTabBar("InventoryTabs", ImGuiTabBarFlags.Reorderable)
-            if tabBarBegan then
-                -- Wrap tab rendering to handle errors
-                local tab_success = pcall(function()
-                        EquippedTab.render(inventoryUI, {
-                            ImGui = ImGui,
-                            mq = mq,
-                            Suggestions = Suggestions,
-                            drawItemIcon = drawItemIcon,
-                            renderLoadingScreen = renderLoadingScreen,
-                            getSlotNameFromID = getSlotNameFromID,
-                            getEquippedSlotLayout = getEquippedSlotLayout,
-                            compareSlotAcrossPeers = compareSlotAcrossPeers,
-                            extractCharacterName = extractCharacterName,
-                            inventory_actor = inventory_actor,
-                            matchesSearch = matchesSearch,
-                        })
+        local tabBarBegan = ImGui.BeginTabBar("InventoryTabs", ImGuiTabBarFlags.Reorderable)
+        if tabBarBegan then
+            -- Wrap tab rendering to handle errors
+            local tab_success = pcall(function()
+                EquippedTab.render(inventoryUI, {
+                    ImGui = ImGui,
+                    mq = mq,
+                    Suggestions = Suggestions,
+                    drawItemIcon = drawItemIcon,
+                    renderLoadingScreen = renderLoadingScreen,
+                    getSlotNameFromID = getSlotNameFromID,
+                    getEquippedSlotLayout = getEquippedSlotLayout,
+                    compareSlotAcrossPeers = compareSlotAcrossPeers,
+                    extractCharacterName = extractCharacterName,
+                    inventory_actor = inventory_actor,
+                    matchesSearch = matchesSearch,
+                })
 
-                        -- Bags Section
-                        local BAG_ICON_SIZE = 32
-                        do
-                            local envBags = {
-                                ImGui = ImGui,
-                                mq = mq,
-                                drawItemIcon = drawItemIcon,
-                                matchesSearch = matchesSearch,
-                                toggleItemSelection = Util.toggleItemSelection,
-                                drawSelectionIndicator = drawSelectionIndicator,
-                                showContextMenu = Util.showContextMenu,
-                                extractCharacterName = extractCharacterName,
-                                drawLiveItemSlot = drawLiveItemSlot,
-                                drawEmptySlot = drawEmptySlot,
-                                drawItemSlot = drawItemSlot,
-                                BAG_CELL_SIZE = BAG_CELL_SIZE,
-                                BAG_MAX_SLOTS_PER_BAG = BAG_MAX_SLOTS_PER_BAG,
-                                showItemBackground = showItemBackground,
-                                searchText = searchText,
-                            }
-                            BagsTab.render(inventoryUI, envBags)
-                            showItemBackground = envBags.showItemBackground
-                        end
-
-                        -- Bank Items Section
-                        do
-                            local envBank = {
-                                ImGui = ImGui,
-                                mq = mq,
-                                drawItemIcon = drawItemIcon,
-                                matchesSearch = matchesSearch,
-                            }
-                            BankTab.render(inventoryUI, envBank)
-                        end
-
-                        -- All Bots Search Results Tab
-                        do
-                            local envAll = {
-                                ImGui = ImGui,
-                                mq = mq,
-                                Banking = Banking,
-                                drawItemIcon = drawItemIcon,
-                                inventory_actor = inventory_actor,
-                                itemGroups = itemGroups,
-                                itemMatchesGroup = itemMatchesGroup,
-                                extractCharacterName = extractCharacterName,
-                                isItemBankFlagged = isItemBankFlagged,
-                                normalizeChar = normalizeChar,
-                                Settings = Settings,
-                                searchText = searchText,
-                                showContextMenu = Util.showContextMenu,
-                            }
-                            AllCharsTab.render(inventoryUI, envAll)
-                        end
-
-                        -- Peer Connection Tab
-                        do
-                                local envPeer = {
-                                    ImGui = ImGui,
-                                    mq = mq,
-                                    inventory_actor = inventory_actor,
-                                    Settings = Settings,
-                                    SettingsFile = SettingsFile,
-                                    getPeerConnectionStatus = getPeerConnectionStatus,
-                                    requestPeerPaths = requestPeerPaths,
-                                    extractCharacterName = extractCharacterName,
-                                    sendLuaRunToPeer = sendLuaRunToPeer,
-                                    broadcastLuaRun = broadcastLuaRun,
-                                }
-                                PeerTab.render(inventoryUI, envPeer)
-                            end
-
-                            -- Performance and Settings Tab
-                            do
-                                local envPerf = {
-                                    ImGui = ImGui,
-                                    mq = mq,
-                                    Settings = Settings,
-                                    UpdateInventoryActorConfig = UpdateInventoryActorConfig,
-                                    SaveConfigWithStatsUpdate = SaveConfigWithStatsUpdate,
-                                    inventory_actor = inventory_actor,
-                                    OnStatsLoadingModeChanged = OnStatsLoadingModeChanged,
-                                }
-                                PerformanceTab.render(inventoryUI, envPerf)
-                            end
-                end) -- End of tab rendering pcall
-                
-                if not tab_success then
-                    -- Tab rendering failed, but we still need to close what we opened
-                    print("[EZInventory] Tab rendering interrupted")
+                -- Bags Section
+                local BAG_ICON_SIZE = 32
+                do
+                    local envBags = {
+                        ImGui = ImGui,
+                        mq = mq,
+                        drawItemIcon = drawItemIcon,
+                        matchesSearch = matchesSearch,
+                        toggleItemSelection = Util.toggleItemSelection,
+                        drawSelectionIndicator = drawSelectionIndicator,
+                        showContextMenu = Util.showContextMenu,
+                        extractCharacterName = extractCharacterName,
+                        drawLiveItemSlot = drawLiveItemSlot,
+                        drawEmptySlot = drawEmptySlot,
+                        drawItemSlot = drawItemSlot,
+                        BAG_CELL_SIZE = BAG_CELL_SIZE,
+                        BAG_MAX_SLOTS_PER_BAG = BAG_MAX_SLOTS_PER_BAG,
+                        showItemBackground = showItemBackground,
+                        searchText = searchText,
+                    }
+                    BagsTab.render(inventoryUI, envBags)
+                    showItemBackground = envBags.showItemBackground
                 end
+
+                -- Bank Items Section
+                do
+                    local envBank = {
+                        ImGui = ImGui,
+                        mq = mq,
+                        drawItemIcon = drawItemIcon,
+                        matchesSearch = matchesSearch,
+                    }
+                    BankTab.render(inventoryUI, envBank)
+                end
+
+                -- All Bots Search Results Tab
+                do
+                    local envAll = {
+                        ImGui = ImGui,
+                        mq = mq,
+                        Banking = Banking,
+                        drawItemIcon = drawItemIcon,
+                        inventory_actor = inventory_actor,
+                        itemGroups = itemGroups,
+                        itemMatchesGroup = itemMatchesGroup,
+                        extractCharacterName = extractCharacterName,
+                        isItemBankFlagged = isItemBankFlagged,
+                        normalizeChar = normalizeChar,
+                        Settings = Settings,
+                        searchText = searchText,
+                        showContextMenu = Util.showContextMenu,
+                        toggleItemSelection = Util.toggleItemSelection,
+                        drawSelectionIndicator = drawSelectionIndicator,
+                    }
+                    AllCharsTab.render(inventoryUI, envAll)
+                end
+
+                -- Peer Connection Tab
+                do
+                    local envPeer = {
+                        ImGui = ImGui,
+                        mq = mq,
+                        inventory_actor = inventory_actor,
+                        Settings = Settings,
+                        SettingsFile = SettingsFile,
+                        getPeerConnectionStatus = getPeerConnectionStatus,
+                        requestPeerPaths = requestPeerPaths,
+                        extractCharacterName = extractCharacterName,
+                        sendLuaRunToPeer = sendLuaRunToPeer,
+                        broadcastLuaRun = broadcastLuaRun,
+                    }
+                    PeerTab.render(inventoryUI, envPeer)
+                end
+
+                -- Performance and Settings Tab
+                do
+                    local envPerf = {
+                        ImGui = ImGui,
+                        mq = mq,
+                        Settings = Settings,
+                        UpdateInventoryActorConfig = UpdateInventoryActorConfig,
+                        SaveConfigWithStatsUpdate = SaveConfigWithStatsUpdate,
+                        inventory_actor = inventory_actor,
+                        OnStatsLoadingModeChanged = OnStatsLoadingModeChanged,
+                    }
+                    PerformanceTab.render(inventoryUI, envPerf)
+                end
+            end)     -- End of tab rendering pcall
+
+            if not tab_success then
+                -- Tab rendering failed, but we still need to close what we opened
+                print("[EZInventory] Tab rendering interrupted")
             end
-            -- End tab bar if it was begun
-            if tabBarBegan then
-                ImGui.EndTabBar()
-            end
+        end
+        -- End tab bar if it was begun
+        if tabBarBegan then
+            ImGui.EndTabBar()
+        end
         ImGui.EndChild()
     end
-    
+
     ImGui.End()
     Theme.pop_ezinventory_theme(ImGui, theme_count)
-    
+
     -- Render additional UI elements
     Util.renderContextMenu()
     renderMultiSelectIndicator()
@@ -3270,7 +3272,6 @@ Util.setup({
 })
 
 mq.imgui.init("InventoryWindow", function()
-
     -- Wrap everything to detect errors
     local success = pcall(function()
         if inventoryUI.showToggleButton then

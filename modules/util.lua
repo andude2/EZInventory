@@ -107,6 +107,7 @@ function M.renderContextMenu()
     if ImGui.MenuItem(inventoryUI.multiSelectMode and "Exit Multi-Select" or "Enter Multi-Select") then
       inventoryUI.multiSelectMode = not inventoryUI.multiSelectMode
       if not inventoryUI.multiSelectMode then M.clearItemSelection() end
+      inventoryUI.needsRefresh = true -- Force UI refresh
       M.hideContextMenu()
     end
 
@@ -256,7 +257,7 @@ function M.initiateMultiItemTrade(targetChar)
   end
   if not sourceChar then
     sourceChar = inventoryUI.contextMenu.source or inventoryUI.selectedPeer or
-    extractCharacterName(mq.TLO.Me.CleanName())
+        extractCharacterName(mq.TLO.Me.CleanName())
   end
   if #noDropItems > 0 then printf("Warning: %d selected items are No Drop and cannot be traded", #noDropItems) end
   if #tradableItems > 0 and sourceChar and targetChar then
@@ -341,8 +342,23 @@ function M.renderMultiTradePanel()
     ImGui.Text("Trade To:")
     ImGui.SameLine()
     if ImGui.BeginCombo("##MultiTradeTarget", inventoryUI.multiTradeTarget ~= "" and inventoryUI.multiTradeTarget or "Select Target") then
-      local peers = peerCache[inventoryUI.selectedServer] or {}
+      -- Build peer list from inventory_actor.peer_inventories
+      local peers = {}
+      if inventory_actor and inventory_actor.peer_inventories then
+        for _, invData in pairs(inventory_actor.peer_inventories) do
+          if invData.name then
+            table.insert(peers, {
+              name = invData.name,
+              server = invData.server
+            })
+          end
+        end
+      end
+
+      -- Sort peers by name
       table.sort(peers, function(a, b) return (a.name or ""):lower() < (b.name or ""):lower() end)
+
+      -- Show peers, excluding those that are sources of selected items
       for _, peer in ipairs(peers) do
         local isSourceChar = false
         for _, selectedData in pairs(inventoryUI.selectedItems) do
