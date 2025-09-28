@@ -189,6 +189,35 @@ function M.render(inventoryUI, env)
           end
           ImGui.Separator()
 
+          -- Map class (short codes like WAR or full names like Warrior) to armor type
+          local function getArmorTypeByClass(class)
+            if not class or class == "" then return "Unknown" end
+            local key = tostring(class):gsub("%s+", ""):lower()
+            local map = {
+              -- Plate
+              war = "Plate", warrior = "Plate",
+              clr = "Plate", cleric = "Plate",
+              pal = "Plate", paladin = "Plate",
+              shd = "Plate", shadowknight = "Plate",
+              brd = "Plate", bard = "Plate",
+              -- Chain
+              rng = "Chain", ranger = "Chain",
+              rog = "Chain", rogue = "Chain",
+              shm = "Chain", shaman = "Chain",
+              ber = "Chain", berserker = "Chain",
+              -- Cloth
+              nec = "Cloth", necromancer = "Cloth",
+              wiz = "Cloth", wizard = "Cloth",
+              mag = "Cloth", magician = "Cloth",
+              enc = "Cloth", enchanter = "Cloth",
+              -- Leather
+              dru = "Leather", druid = "Leather",
+              mnk = "Leather", monk = "Leather",
+              bst = "Leather", beastlord = "Leather",
+            }
+            return map[key] or "Unknown"
+          end
+
           local slotLayout = getEquippedSlotLayout()
           local equippedItems = {}
           for _, item in ipairs(inventoryUI.inventoryData.equipped) do
@@ -343,6 +372,45 @@ function M.render(inventoryUI, env)
                   table.insert(processedResults, { peerName = peerName, item = nil, slotid = currentSlotID })
                 end
               end
+
+              -- Apply class-based Armor Type filter to the character list
+              if inventoryUI.armorTypeFilter and inventoryUI.armorTypeFilter ~= "All" then
+                local filtered = {}
+                local peers = env.inventory_actor and env.inventory_actor.peer_inventories or {}
+                local mq = env.mq
+                local extractCharacterName = env.extractCharacterName
+                local myName = extractCharacterName(mq.TLO.Me.CleanName())
+
+                local function classForPeer(name)
+                  if not name or name == "" then return nil end
+                  -- 1) Prefer inventory cache
+                  for _, inv in pairs(peers) do
+                    if inv and inv.name == name and inv.class and tostring(inv.class) ~= "" then
+                      return inv.class
+                    end
+                  end
+                  -- 2) Fallback to live spawn in zone
+                  local spawn = mq.TLO.Spawn("pc = " .. name)
+                  if spawn() and spawn.Class() then
+                    return tostring(spawn.Class())
+                  end
+                  -- 3) If it's me, use Me.Class
+                  if name == myName and mq.TLO.Me.Class() then
+                    return tostring(mq.TLO.Me.Class())
+                  end
+                  return nil
+                end
+
+                for _, entry in ipairs(processedResults) do
+                  local cls = classForPeer(entry.peerName)
+                  local armor = getArmorTypeByClass(cls or "")
+                  if armor == inventoryUI.armorTypeFilter then
+                    table.insert(filtered, entry)
+                  end
+                end
+                processedResults = filtered
+              end
+
               table.sort(processedResults, function(a, b) return (a.peerName or "zzz") < (b.peerName or "zzz") end)
 
               local equippedResults, emptyResults = {}, {}
