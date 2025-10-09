@@ -43,6 +43,7 @@ local json                = require("dkjson")
 local Suggestions         = require("EZInventory.modules.suggestions")
 local Collectibles        = require("EZInventory.modules.collectibles")
 local Banking             = require("EZInventory.modules.banking")
+local AssignmentManager   = require("EZInventory.modules.assignment_manager")
 local Bindings            = require("EZInventory.modules.bindings")
 local Util                = require("EZInventory.modules.util")
 local Theme               = require("EZInventory.modules.theme")
@@ -51,6 +52,7 @@ local EquippedTab         = require("EZInventory.UI.equipped_tab")
 local BagsTab             = require("EZInventory.UI.bags_tab")
 local BankTab             = require("EZInventory.UI.bank_tab")
 local AllCharsTab         = require("EZInventory.UI.all_characters_tab")
+local AssignmentTab       = require("EZInventory.UI.assignment_tab")
 local PeerTab             = require("EZInventory.UI.peer_management_tab")
 local PerformanceTab      = require("EZInventory.UI.performance_tab")
 local isEMU               = mq.TLO.MacroQuest.BuildName() == "Emu"
@@ -92,6 +94,10 @@ local Defaults            = {
     autoExchangeEnabled        = true,
     bankFlags                  = {
         -- structure: [characterName] = { [itemID] = true }
+    },
+    characterAssignments       = {
+        -- structure: [itemID] = characterName
+        -- This stores which character each item should be given to
     },
 }
 
@@ -282,6 +288,15 @@ Banking.setup({
         inventoryUI.needsRefresh = true
     end,
 })
+
+AssignmentManager.setup({
+    inventory_actor = inventory_actor,
+    Settings = Settings,
+})
+
+-- Expose AssignmentManager globally for debugging
+_G.AssignmentManager = AssignmentManager
+printf("[EZInventory] AssignmentManager exposed globally: %s", tostring(_G.AssignmentManager ~= nil))
 
 local function broadcastLuaRun(connectionMethod)
     local command = "/lua run ezinventory"
@@ -530,6 +545,56 @@ _G.EZINV_GET_BANK_FLAGS = function()
         if v then copy[tonumber(k)] = true end
     end
     return copy
+end
+
+-- Character Assignment Functions
+local function isItemAssignedTo(itemID, charName)
+    if not itemID or itemID == 0 or not charName then return false end
+    local assignedTo = Settings.characterAssignments[itemID]
+    return assignedTo and normalizeChar(assignedTo) == normalizeChar(charName)
+end
+
+local function getItemAssignment(itemID)
+    if not itemID or itemID == 0 then return nil end
+    return Settings.characterAssignments[itemID]
+end
+
+local function setItemAssignment(itemID, charName)
+    if not itemID or itemID == 0 then return end
+    if charName and charName ~= "" then
+        Settings.characterAssignments[itemID] = normalizeChar(charName)
+    else
+        Settings.characterAssignments[itemID] = nil
+    end
+    mq.pickle(SettingsFile, Settings)
+    inventoryUI.needsRefresh = true
+    
+    -- Broadcast the assignment change to other clients
+    if inventory_actor and inventory_actor.broadcast_char_assignment_update then
+        inventory_actor.broadcast_char_assignment_update(itemID, charName)
+    end
+end
+
+local function clearItemAssignment(itemID)
+    setItemAssignment(itemID, nil)
+end
+
+-- Expose character assignment functions globally for UI and actor system
+_G.EZINV_IS_ITEM_ASSIGNED_TO = isItemAssignedTo
+_G.EZINV_GET_ITEM_ASSIGNMENT = getItemAssignment
+_G.EZINV_SET_ITEM_ASSIGNMENT = setItemAssignment
+_G.EZINV_CLEAR_ITEM_ASSIGNMENT = clearItemAssignment
+_G.EZINV_GET_ALL_ASSIGNMENTS = function()
+    return Settings.characterAssignments or {}
+end
+
+-- Helper function to get display text for item assignments
+local function getItemAssignmentDisplayText(itemID)
+    local assignment = getItemAssignment(itemID)
+    if assignment then
+        return string.format(" [%s]", assignment)
+    end
+    return ""
 end
 
 local function drawItemIcon(iconID, width, height)
@@ -2884,6 +2949,77 @@ function inventoryUI.render()
         if ImGui.Button("Give Item") then
             inventoryUI.showGiveItemPanel = not inventoryUI.showGiveItemPanel
         end
+        
+        -- Clean Up Inventory button
+        ImGui.SameLine()
+        local cleanupInProgress = (Banking and Banking.isBusy()) or (AssignmentManager and AssignmentManager.isBusy())
+        if cleanupInProgress then
+            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.8, 0.6, 0.2, 1.0))
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.8, 0.6, 0.2, 1.0))
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.8, 0.6, 0.2, 1.0))
+            ImGui.Button("Cleaning Up...")
+            ImGui.PopStyleColor(3)
+            if ImGui.IsItemHovered() then
+                ImGui.SetTooltip("Inventory cleanup in progress")
+            end
+        else
+            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.2, 0.6, 0.8, 1.0))
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.4, 0.8, 1.0, 1.0))
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.1, 0.4, 0.6, 1.0))
+            if ImGui.Button("Clean Up Inventory") then
+                printf("[EZInventory] Starting inventory cleanup...")
+                
+                local actionsStarted = 0
+                
+                -- First execute character assignments
+                local assignmentSuccess = AssignmentManager.executeAssignments()
+                if assignmentSuccess then
+                    printf("[EZInventory] Character assignments initiated")
+                    actionsStarted = actionsStarted + 1
+                end
+                
+                -- Check if we have bank-flagged items and try banking
+                local hasBankFlagged = false
+                local myName = extractCharacterName(mq.TLO.Me.CleanName())
+                if Settings.bankFlags and Settings.bankFlags[myName] then
+                    for itemID, flagged in pairs(Settings.bankFlags[myName]) do
+                        if flagged then
+                            hasBankFlagged = true
+                            break
+                        end
+                    end
+                end
+                
+                if hasBankFlagged then
+                    if Banking and Banking.start then
+                        local bankingStarted = Banking.start()
+                        if bankingStarted then
+                            printf("[EZInventory] Auto-banking initiated")
+                            actionsStarted = actionsStarted + 1
+                        else
+                            printf("[EZInventory] Banking failed to start - ensure you're near a banker with bank window open")
+                        end
+                    end
+                else
+                    printf("[EZInventory] No items flagged for banking")
+                end
+                
+                if actionsStarted == 0 then
+                    printf("[EZInventory] No cleanup actions needed - no character assignments or bank-flagged items found")
+                    printf("[EZInventory] To use cleanup: assign items to characters (right-click -> Assign To Character) or flag items for banking")
+                else
+                    printf("[EZInventory] Cleanup initiated with %d action(s)", actionsStarted)
+                end
+            end
+            ImGui.PopStyleColor(3)
+            if ImGui.IsItemHovered() then
+                ImGui.BeginTooltip()
+                ImGui.Text("Execute all character assignments and banking")
+                ImGui.Text("• Items assigned to characters will be traded")
+                ImGui.Text("• Items flagged for banking will be banked")
+                ImGui.EndTooltip()
+            end
+        end
         local cursorPosX = ImGui.GetCursorPosX()
         local iconSpacing = 10
         local iconSize = 22
@@ -3099,6 +3235,18 @@ function inventoryUI.render()
                     AllCharsTab.render(inventoryUI, envAll)
                 end
 
+                -- Assignment Management Tab
+                do
+                    local envAssignment = {
+                        ImGui = ImGui,
+                        mq = mq,
+                        AssignmentManager = AssignmentManager,
+                        inventory_actor = inventory_actor,
+                        extractCharacterName = extractCharacterName,
+                    }
+                    AssignmentTab.render(inventoryUI, envAssignment)
+                end
+
                 -- Peer Connection Tab
                 do
                     local envPeer = {
@@ -3283,6 +3431,7 @@ mq.imgui.init("InventoryWindow", function()
         end
         Collectibles.draw()
         Banking.update()
+        AssignmentManager.update()
     end)
 end)
 
@@ -3295,6 +3444,7 @@ Bindings.setup({
     UpdateInventoryActorConfig = UpdateInventoryActorConfig,
     OnStatsLoadingModeChanged = OnStatsLoadingModeChanged,
     Banking = Banking,
+    AssignmentManager = AssignmentManager,
 })
 
 local function main()
@@ -3400,6 +3550,15 @@ local function main()
         end
 
         inventory_actor.process_pending_requests()
+        
+        -- Request character assignments periodically
+        if inventory_actor and inventory_actor.request_all_char_assignments then
+            local now = os.time()
+            if not inventoryUI._lastAssignmentRequestTime or (now - inventoryUI._lastAssignmentRequestTime) > 60 then
+                inventory_actor.request_all_char_assignments()
+                inventoryUI._lastAssignmentRequestTime = now
+            end
+        end
 
         -- Auto-exchange is now handled directly after successful trades
 

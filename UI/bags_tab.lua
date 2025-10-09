@@ -124,13 +124,24 @@ function M.render(inventoryUI, env)
                   ImGui.TableNextColumn()
                   local itemClicked = false
 
+                  -- Get assignment text
+                  local assignmentText = ""
+                  if item.id and _G.EZINV_GET_ITEM_ASSIGNMENT then
+                    local assignment = _G.EZINV_GET_ITEM_ASSIGNMENT(item.id)
+                    if assignment then
+                      assignmentText = string.format(" [%s]", assignment)
+                    end
+                  end
+                  
+                  local displayName = item.name .. assignmentText
+
                   if inventoryUI.multiSelectMode then
                     if inventoryUI.selectedItems[uniqueKey] then
                       ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
-                      itemClicked = ImGui.Selectable(item.name .. "##" .. bagid .. "_" .. i)
+                      itemClicked = ImGui.Selectable(displayName .. "##" .. bagid .. "_" .. i)
                       ImGui.PopStyleColor()
                     else
-                      itemClicked = ImGui.Selectable(item.name .. "##" .. bagid .. "_" .. i)
+                      itemClicked = ImGui.Selectable(displayName .. "##" .. bagid .. "_" .. i)
                     end
 
                     if itemClicked then
@@ -141,7 +152,7 @@ function M.render(inventoryUI, env)
                     drawSelectionIndicator(uniqueKey, ImGui.IsItemHovered())
                   else
                     -- Normal mode - examine item
-                    if ImGui.Selectable(item.name .. "##" .. bagid .. "_" .. i) then
+                    if ImGui.Selectable(displayName .. "##" .. bagid .. "_" .. i) then
                       local links = mq.ExtractLinks(item.itemlink)
                       if links and #links > 0 then
                         mq.ExecuteTextLink(links[1])

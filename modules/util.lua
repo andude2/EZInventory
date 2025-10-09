@@ -153,6 +153,69 @@ function M.renderContextMenu()
       end
     end
 
+    -- Character Assignment Options
+    do
+      local item = inventoryUI.contextMenu.item
+      local itemID = item and tonumber(item.id) or 0
+      if itemID and itemID > 0 then
+        local currentAssignment = _G.EZINV_GET_ITEM_ASSIGNMENT and _G.EZINV_GET_ITEM_ASSIGNMENT(itemID) or nil
+        
+        if currentAssignment then
+          if ImGui.MenuItem(string.format("Unassign from %s", currentAssignment)) then
+            if _G.EZINV_CLEAR_ITEM_ASSIGNMENT then
+              _G.EZINV_CLEAR_ITEM_ASSIGNMENT(itemID)
+            end
+            inventoryUI.needsRefresh = true
+            M.hideContextMenu()
+          end
+        end
+        
+        if ImGui.BeginMenu("Assign To Character") then
+          -- Add all available peers as assignment options
+          for _, peerName in ipairs(inventoryUI.contextMenu.peers or {}) do
+            local isCurrentAssignment = currentAssignment and currentAssignment == peerName
+            local displayName = peerName
+            if ImGui.MenuItem(displayName, false, isCurrentAssignment) then
+              if _G.EZINV_SET_ITEM_ASSIGNMENT then
+                _G.EZINV_SET_ITEM_ASSIGNMENT(itemID, peerName)
+              end
+              inventoryUI.needsRefresh = true
+              M.hideContextMenu()
+            end
+          end
+          
+          -- Also add the source character as an option with indicator if it's current character
+          local sourceChar = inventoryUI.contextMenu.source
+          if sourceChar then
+            local isCurrentAssignment = currentAssignment and currentAssignment == sourceChar
+            local myName = extractCharacterName and extractCharacterName(mq.TLO.Me.CleanName()) or "Me"
+            local displayName = sourceChar
+            if sourceChar == myName then
+              displayName = sourceChar .. " (Current)"
+            end
+            
+            if ImGui.MenuItem(displayName, false, isCurrentAssignment) then
+              if _G.EZINV_SET_ITEM_ASSIGNMENT then
+                _G.EZINV_SET_ITEM_ASSIGNMENT(itemID, sourceChar)
+              end
+              inventoryUI.needsRefresh = true
+              M.hideContextMenu()
+            end
+            
+            if sourceChar == myName and ImGui.IsItemHovered() then
+              ImGui.SetTooltip("Assigning to current character means no trade will occur during cleanup")
+            end
+          end
+          
+          ImGui.EndMenu()
+        end
+      else
+        ImGui.PushStyleColor(ImGuiCol.Text, 0.6, 0.6, 0.6, 1.0)
+        ImGui.MenuItem("Assign To Character (no item ID)", false, false)
+        ImGui.PopStyleColor()
+      end
+    end
+
     if ImGui.MenuItem("Examine") then
       if inventoryUI.contextMenu.item and inventoryUI.contextMenu.item.itemlink then
         local links = mq.ExtractLinks(inventoryUI.contextMenu.item.itemlink)

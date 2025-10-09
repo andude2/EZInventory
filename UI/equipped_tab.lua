@@ -100,7 +100,19 @@ function M.render(inventoryUI, env)
                 if item.icon and item.icon ~= 0 then drawItemIcon(item.icon) else ImGui.Text("N/A") end
                 ImGui.TableNextColumn()
                 local rowKey = string.format("%s_%s", item.name or "unnamed", tostring(item.slotid or -1))
-                if ImGui.Selectable((item.name or "Unknown") .. "##" .. rowKey) then
+                
+                -- Get assignment text
+                local assignmentText = ""
+                if item.id and _G.EZINV_GET_ITEM_ASSIGNMENT then
+                  local assignment = _G.EZINV_GET_ITEM_ASSIGNMENT(item.id)
+                  if assignment then
+                    assignmentText = string.format(" [%s]", assignment)
+                  end
+                end
+                
+                local displayName = (item.name or "Unknown") .. assignmentText
+                
+                if ImGui.Selectable(displayName .. "##" .. rowKey) then
                   local links = mq.ExtractLinks(item.itemlink)
                   if links and #links > 0 then mq.ExecuteTextLink(links[1]) else print(
                     ' No item link found in the database.') end

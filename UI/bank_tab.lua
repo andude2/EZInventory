@@ -104,7 +104,19 @@ function M.render(inventoryUI, env)
 
           -- Item name
           ImGui.TableSetColumnIndex(1)
-          if ImGui.Selectable(itemName .. "##" .. uniqueID) then
+          
+          -- Get assignment text
+          local assignmentText = ""
+          if item.id and _G.EZINV_GET_ITEM_ASSIGNMENT then
+            local assignment = _G.EZINV_GET_ITEM_ASSIGNMENT(item.id)
+            if assignment then
+              assignmentText = string.format(" [%s]", assignment)
+            end
+          end
+          
+          local displayName = itemName .. assignmentText
+          
+          if ImGui.Selectable(displayName .. "##" .. uniqueID) then
             local links = mq.ExtractLinks(item.itemlink)
             if links and #links > 0 then
               mq.ExecuteTextLink(links[1])

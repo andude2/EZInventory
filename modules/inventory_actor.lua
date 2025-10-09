@@ -30,10 +30,14 @@ M.MSG_TYPE            = {
     BANK_FLAG_UPDATE      = "bank_flag_update",      -- Apply a bank flag on the receiver
     BANK_FLAGS_REQUEST    = "bank_flags_request",    -- Ask peer for its bank flags
     BANK_FLAGS_RESPONSE   = "bank_flags_response",   -- Peer replies with its bank flags
+    CHAR_ASSIGN_UPDATE    = "char_assign_update",    -- Broadcast character assignment changes
+    CHAR_ASSIGN_REQUEST   = "char_assign_request",   -- Request character assignments from peers
+    CHAR_ASSIGN_RESPONSE  = "char_assign_response",  -- Response with character assignments
 }
 
 M.peer_inventories    = {}
 M.peer_bank_flags     = {}
+M.peer_char_assignments = {}  -- Track character assignments from all peers
 
 local actor_mailbox   = nil
 local command_mailbox = nil
@@ -762,6 +766,46 @@ local function message_handler(message)
             local name = normalizeCharacterName(content.peerName)
             M.peer_bank_flags[name] = content.flags
         end
+    elseif content.type == M.MSG_TYPE.CHAR_ASSIGN_UPDATE then
+        -- Receive and apply character assignment updates from other clients
+        local itemID = content.itemID
+        local assignedTo = content.assignedTo
+        local sourcePeer = content.sourcePeer
+        if itemID and sourcePeer then
+            if not M.peer_char_assignments[sourcePeer] then
+                M.peer_char_assignments[sourcePeer] = {}
+            end
+            if assignedTo then
+                M.peer_char_assignments[sourcePeer][itemID] = assignedTo
+            else
+                M.peer_char_assignments[sourcePeer][itemID] = nil
+            end
+            printf("[EZInventory] Updated assignment from %s: item %s -> %s", 
+                   tostring(sourcePeer), tostring(itemID), tostring(assignedTo or "none"))
+        end
+    elseif content.type == M.MSG_TYPE.CHAR_ASSIGN_REQUEST then
+        -- Respond with our character assignments
+        local assignments = {}
+        if _G.EZINV_GET_ALL_ASSIGNMENTS then
+            local ok, result = pcall(_G.EZINV_GET_ALL_ASSIGNMENTS)
+            if ok and type(result) == 'table' then assignments = result end
+        end
+        if actor_mailbox then
+            actor_mailbox:send(
+                { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
+                {
+                    type = M.MSG_TYPE.CHAR_ASSIGN_RESPONSE,
+                    peerName = normalizeCharacterName(mq.TLO.Me.CleanName()),
+                    assignments = assignments,
+                }
+            )
+        end
+    elseif content.type == M.MSG_TYPE.CHAR_ASSIGN_RESPONSE then
+        -- Store received character assignments
+        if content.peerName and type(content.assignments) == 'table' then
+            local name = normalizeCharacterName(content.peerName)
+            M.peer_char_assignments[name] = content.assignments
+        end
     end
 end
 
@@ -902,6 +946,49 @@ end
 
 function M.get_peer_bank_flags()
     return M.peer_bank_flags or {}
+end
+
+function M.broadcast_char_assignment_update(itemID, assignedTo)
+    if not actor_mailbox then
+        return false
+    end
+    if not itemID then return false end
+    
+    local myName = normalizeCharacterName(mq.TLO.Me.CleanName())
+    
+    printf("[EZInventory] Broadcasting assignment update: item %s -> %s", 
+           tostring(itemID), tostring(assignedTo or "none"))
+    
+    actor_mailbox:send(
+        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
+        {
+            type = M.MSG_TYPE.CHAR_ASSIGN_UPDATE,
+            itemID = tonumber(itemID),
+            assignedTo = assignedTo,
+            sourcePeer = myName,
+        }
+    )
+    return true
+end
+
+function M.request_all_char_assignments()
+    if not actor_mailbox then
+        return false
+    end
+    actor_mailbox:send(
+        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
+        { type = M.MSG_TYPE.CHAR_ASSIGN_REQUEST }
+    )
+    return true
+end
+
+function M.get_peer_char_assignments()
+    return M.peer_char_assignments or {}
+end
+
+function M.clear_peer_assignment_data()
+    M.peer_char_assignments = {}
+    return true
 end
 
 function M.send_bank_flag_update(peerName, itemID, flagged)

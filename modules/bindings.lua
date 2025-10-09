@@ -1,7 +1,7 @@
 local M = {}
 
 -- Registers all slash command bindings for EZInventory
--- env: mq, inventory_actor, inventoryUI, Settings, UpdateInventoryActorConfig, OnStatsLoadingModeChanged, Banking
+-- env: mq, inventory_actor, inventoryUI, Settings, UpdateInventoryActorConfig, OnStatsLoadingModeChanged, Banking, AssignmentManager
 function M.setup(env)
   local mq = env.mq
   local inventory_actor = env.inventory_actor
@@ -10,6 +10,7 @@ function M.setup(env)
   local UpdateInventoryActorConfig = env.UpdateInventoryActorConfig
   local OnStatsLoadingModeChanged = env.OnStatsLoadingModeChanged
   local Banking = env.Banking
+  local AssignmentManager = env.AssignmentManager
 
   -- Help table and renderer kept within module
   local helpInfo = {
@@ -19,6 +20,9 @@ function M.setup(env)
     { binding = "/ezinventory_toggle_basic",    description = "Toggles basic stats loading on/off" },
     { binding = "/ezinventory_toggle_detailed", description = "Toggles detailed stats loading on/off" },
     { binding = "/ezinv_autobank",              description = "Starts the Auto-Bank sequence on this character" },
+    { binding = "/ezinvassign show",            description = "Show all character assignments across all characters" },
+    { binding = "/ezinvassign execute",         description = "Execute all character assignments (consolidate items)" },
+    { binding = "/ezinvtest",                  description = "Test command for debugging AssignmentManager" },
   }
 
   local function displayHelp()
@@ -77,9 +81,58 @@ function M.setup(env)
     Settings.loadDetailedStats and "ENABLED" or "DISABLED"))
   end)
 
-  mq.bind("/ezinv_autobank", function()
-    Banking.start()
-  end)
+    mq.bind('/ezinvbank', function()
+        Banking.start()
+    end)
+    
+    -- Simple test command
+    mq.bind('/ezinvtest', function()
+        printf("[TEST] EZInventory test command works!")
+        printf("[TEST] AssignmentManager: %s", tostring(AssignmentManager))
+        if AssignmentManager then
+            printf("[TEST] showGlobalAssignments: %s", tostring(AssignmentManager.showGlobalAssignments))
+            printf("[TEST] executeAssignments: %s", tostring(AssignmentManager.executeAssignments))
+            if AssignmentManager.showGlobalAssignments then
+                printf("[TEST] Calling showGlobalAssignments...")
+                AssignmentManager.showGlobalAssignments()
+            end
+        end
+    end)
+    
+    -- Assignment Manager commands
+    mq.bind('/ezinvassign', function(cmd)
+        printf("[DEBUG] /ezinvassign called with cmd: %s", tostring(cmd))
+        printf("[DEBUG] AssignmentManager available: %s", tostring(AssignmentManager ~= nil))
+        
+        if cmd == "show" or cmd == "list" then
+            if AssignmentManager and AssignmentManager.showGlobalAssignments then
+                printf("[DEBUG] Calling showGlobalAssignments")
+                AssignmentManager.showGlobalAssignments()
+            else
+                printf("Assignment Manager not available or showGlobalAssignments function missing")
+                printf("AssignmentManager: %s", tostring(AssignmentManager))
+                if AssignmentManager then
+                    printf("showGlobalAssignments function: %s", tostring(AssignmentManager.showGlobalAssignments))
+                end
+            end
+        elseif cmd == "execute" or cmd == "run" then
+            if AssignmentManager and AssignmentManager.executeAssignments then
+                printf("[DEBUG] Calling executeAssignments")
+                local success = AssignmentManager.executeAssignments()
+                if success then
+                    printf("Assignment execution started")
+                else
+                    printf("No assignments to execute")
+                end
+            else
+                printf("Assignment Manager not available or executeAssignments function missing")
+            end
+        else
+            printf("EZInventory Assignment Commands:")
+            printf("  /ezinvassign show  - Show all global character assignments")
+            printf("  /ezinvassign execute - Execute all character assignments")
+        end
+    end)
 end
 
 -- In case displayHelp is referenced before setup, provide a safe default
