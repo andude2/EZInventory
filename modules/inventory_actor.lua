@@ -500,6 +500,32 @@ local function normalizeCharacterName(name)
     return cleaned
 end
 
+-- Build a slot-aware pickup command so we click the precise item instead of relying on names.
+local function build_pickup_command(name, bagid, slotid, opts)
+    opts = opts or {}
+    local bag = tonumber(bagid)
+    local slot = tonumber(slotid)
+
+    if opts.ignoreSlot then
+        bag = nil
+        slot = nil
+    end
+
+    if bag and bag > 0 and slot and slot > 0 then
+        return string.format('/shift /itemnotify in pack%d %d leftmouseup', bag, slot)
+    end
+
+    if slot and slot >= 0 and (not bag or bag <= 0) then
+        return string.format('/shift /itemnotify %d leftmouseup', slot)
+    end
+
+    if name and name ~= '' then
+        return string.format('/shift /itemnotify "%s" leftmouseup', name)
+    end
+
+    return nil
+end
+
 function M.gather_inventory()
     local data = {
         -- Use CleanName and sanitize to avoid publishing corpse names
@@ -1424,7 +1450,18 @@ function M.perform_multi_item_trade_step()
             state.status = "COMPLETED"
             return true
         end
-        mq.cmdf('/shift /itemnotify "%s" leftmouseup', firstItemForTrade.name)
+        local firstPickupCmd = build_pickup_command(
+            firstItemForTrade.name,
+            firstItemForTrade.bagid,
+            firstItemForTrade.slotid,
+            { ignoreSlot = firstItemForTrade.fromBank }
+        )
+        if not firstPickupCmd then
+            printf("[ERROR] Missing inventory location for %s. Aborting trade.", tostring(firstItemForTrade.name))
+            return false
+        end
+
+        mq.cmd(firstPickupCmd)
         mq.delay(500)
         if not mq.TLO.Cursor.ID() then
             printf("[ERROR] Failed to pick up %s from inventory for trade. Aborting.", firstItemForTrade.name)
@@ -1464,7 +1501,18 @@ function M.perform_multi_item_trade_step()
         if item_to_trade and filled_slots < 8 then
             printf("[BATCH STATE] Placing item %d/%d: %s",
                 state.current_item_index, #itemsToTrade, item_to_trade.name)
-            mq.cmdf('/shift /itemnotify "%s" leftmouseup', item_to_trade.name)
+            local pickupCmd = build_pickup_command(
+                item_to_trade.name,
+                item_to_trade.bagid,
+                item_to_trade.slotid,
+                { ignoreSlot = item_to_trade.fromBank }
+            )
+            if not pickupCmd then
+                printf("[ERROR] Missing inventory location for %s. Aborting trade.", tostring(item_to_trade.name))
+                return false
+            end
+
+            mq.cmd(pickupCmd)
             mq.delay(50)
             if not mq.TLO.Cursor.ID() then
                 printf("[ERROR] Failed to pick up %s from inventory for trade. Item not on cursor. Aborting.",
@@ -1578,7 +1626,13 @@ function M.perform_single_item_trade(request)
         end
         printf("%s picked up from bank.", mq.TLO.Cursor.Name())
     else
-        mq.cmdf('/shift /itemnotify "%s" leftmouseup', request.name)
+        local pickupCommand = build_pickup_command(request.name, request.bagid, request.slotid)
+        if not pickupCommand then
+            printf("[ERROR] Missing inventory location for %s. Aborting trade.", tostring(request.name))
+            return
+        end
+
+        mq.cmd(pickupCommand)
         mq.delay(500)
         if not mq.TLO.Cursor.ID() then
             printf("[ERROR] Failed to pick up %s from inventory. Item not on cursor.", request.name)
@@ -1729,11 +1783,10 @@ local function handle_command_message(message)
             print("[EZInventory] Banker not found")
         end
     elseif command == "proxy_give" then
-        printf("[DEBUG] proxy_give command received, attempting JSON decode...")
+        --printf("[DEBUG] proxy_give command received, attempting JSON decode...")
         local request = json.decode(args[1])
         if request then
-            printf("Received proxy_give (single) command for: %s to %s",
-                request.name, request.to)
+            --printf("Received proxy_give (single) command for: %s to %s", request.name, request.to)
         else
             printf("[ERROR] Failed to decode proxy_give JSON: %s", tostring(args[1]))
         end
