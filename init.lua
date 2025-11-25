@@ -186,7 +186,7 @@ local inventoryUI = {
     showToggleButton              = true,
     selectedPeer                  = _ezinv_extractCharacterNameEarly(mq.TLO.Me.CleanName()),
     peers                         = {},
-    inventoryData                 = { equipped = {}, bags = {}, bank = {}, },
+    inventoryData                 = { equipped = {}, inventory = {}, bags = {}, bank = {}, },
     expandBags                    = false,
     bagOpen                       = {},
     showAug1                      = true,
@@ -1063,7 +1063,7 @@ end
 --- Function: Check Database Lock Status
 --------------------------------------------------
 local function refreshInventoryData()
-    inventoryUI.inventoryData = { equipped = {}, bags = {}, bank = {}, }
+    inventoryUI.inventoryData = { equipped = {}, inventory = {}, bags = {}, bank = {}, }
 
     for _, peer in ipairs(inventoryUI.peers) do
         if peer.name == inventoryUI.selectedPeer then
@@ -1081,15 +1081,17 @@ end
 -- Helper: Load inventory data from the mailbox.
 --------------------------------------------------
 local function loadInventoryData(peer)
-    inventoryUI.inventoryData = { equipped = {}, bags = {}, bank = {}, }
+    inventoryUI.inventoryData = { equipped = {}, inventory = {}, bags = {}, bank = {}, }
 
     if peer and peer.data then
         inventoryUI.inventoryData.equipped = peer.data.equipped or {}
+        inventoryUI.inventoryData.inventory = peer.data.inventory or {}
         inventoryUI.inventoryData.bags = peer.data.bags or {}
         inventoryUI.inventoryData.bank = peer.data.bank or {}
     elseif peer.name == extractCharacterName(mq.TLO.Me.Name()) then
         local gathered = inventory_actor.gather_inventory()
         inventoryUI.inventoryData.equipped = gathered.equipped or {}
+        inventoryUI.inventoryData.inventory = gathered.inventory or {}
         inventoryUI.inventoryData.bags = gathered.bags or {}
         inventoryUI.inventoryData.bank = gathered.bank or {}
     end
@@ -1286,40 +1288,34 @@ local function searchAcrossPeers()
         return false
     end
     for _, invData in pairs(inventory_actor.peer_inventories) do
-        local function searchItems(items, sourceLabel)
-            if sourceLabel == "Equipped" or sourceLabel == "Bank" then
-                for _, item in ipairs(items or {}) do
-                    if itemMatches(item) then
-                        local itemCopy = {}
-                        for k, v in pairs(item) do
-                            itemCopy[k] = v
-                        end
-                        itemCopy.peerName = invData.name or "unknown"
-                        itemCopy.peerServer = invData.server or "unknown"
-                        itemCopy.source = sourceLabel
-                        table.insert(results, itemCopy)
-                    end
-                end
-            elseif sourceLabel == "Inventory" then
-                for bagId, bagItems in pairs(items or {}) do
-                    for _, item in ipairs(bagItems or {}) do
-                        if itemMatches(item) then
-                            local itemCopy = {}
-                            for k, v in pairs(item) do
-                                itemCopy[k] = v
-                            end
-                            itemCopy.peerName = invData.name or "unknown"
-                            itemCopy.peerServer = invData.server or "unknown"
-                            itemCopy.source = sourceLabel
-                            table.insert(results, itemCopy)
-                        end
-                    end
-                end
+        local function addResult(item, sourceLabel)
+            if not item or not itemMatches(item) then return end
+            local itemCopy = {}
+            for k, v in pairs(item) do
+                itemCopy[k] = v
+            end
+            itemCopy.peerName = invData.name or "unknown"
+            itemCopy.peerServer = invData.server or "unknown"
+            itemCopy.source = sourceLabel
+            table.insert(results, itemCopy)
+        end
+
+        local function searchFlat(items, sourceLabel)
+            if not items then return end
+            for _, item in ipairs(items or {}) do addResult(item, sourceLabel) end
+        end
+
+        local function searchBagItems(bags)
+            if not bags then return end
+            for _, bagItems in pairs(bags) do
+                for _, item in ipairs(bagItems or {}) do addResult(item, "Inventory") end
             end
         end
-        searchItems(invData.equipped, "Equipped")
-        searchItems(invData.bags, "Inventory")
-        searchItems(invData.bank, "Bank")
+
+        searchFlat(invData.equipped, "Equipped")
+        searchBagItems(invData.bags)
+        searchFlat(invData.inventory, "Inventory")
+        searchFlat(invData.bank, "Bank")
     end
     return results
 end

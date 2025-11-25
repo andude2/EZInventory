@@ -533,6 +533,7 @@ function M.gather_inventory()
         server = mq.TLO.MacroQuest.Server(),
         class = mq.TLO.Me.Class(),
         equipped = {},
+        inventory = {},
         bags = {},
         bank = {},
         config = {
@@ -554,17 +555,27 @@ function M.gather_inventory()
 
     for invSlot = 23, 34 do
         local pack = mq.TLO.Me.Inventory(invSlot)
-        if pack() and pack.Container() > 0 then
-            local bagid = invSlot - 22
-            data.bags[bagid] = {}
-            for i = 1, pack.Container() do
-                local item = pack.Item(i)
-                if item() then
-                    local entry = get_basic_item_info(item)
-                    entry.bagid = bagid
-                    entry.slotid = i
-                    entry.bagname = pack.Name()
-                    table.insert(data.bags[bagid], entry)
+        if pack() then
+            local generalEntry = get_basic_item_info(pack)
+            generalEntry.bagid = 0
+            generalEntry.slotid = invSlot
+            generalEntry.inventorySlot = invSlot
+            generalEntry.packslot = invSlot - 22
+            generalEntry.bagname = pack.Name()
+            table.insert(data.inventory, generalEntry)
+
+            if pack.Container() and pack.Container() > 0 then
+                local bagid = invSlot - 22
+                data.bags[bagid] = {}
+                for i = 1, pack.Container() do
+                    local item = pack.Item(i)
+                    if item() then
+                        local entry = get_basic_item_info(item)
+                        entry.bagid = bagid
+                        entry.slotid = i
+                        entry.bagname = pack.Name()
+                        table.insert(data.bags[bagid], entry)
+                    end
                 end
             end
         end

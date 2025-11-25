@@ -126,44 +126,40 @@ function M.render(inventoryUI, env)
 
       for _, invData in pairs(inventory_actor.peer_inventories) do
         if invData then
-          local function addItems(items, sourceLabel)
-            if not items then return end
-            if sourceLabel == "Inventory" then
-              for _, bagItems in pairs(items) do
-                for _, item in ipairs(bagItems or {}) do
-                  if nameOrAugMatches(item) and passesFilters(item) then
-                    local copy = {}
-                    for k, v in pairs(item) do copy[k] = v end
-                    copy.peerName = invData.name or "unknown"
-                    copy.peerServer = invData.server or "unknown"
-                    copy.source = sourceLabel
-                    table.insert(results, copy)
-                  end
-                end
-              end
-            else
-              for _, item in ipairs(items or {}) do
-                if nameOrAugMatches(item) and passesFilters(item) then
-                  local copy = {}
-                  for k, v in pairs(item) do copy[k] = v end
-                  copy.peerName = invData.name or "unknown"
-                  copy.peerServer = invData.server or "unknown"
-                  copy.source = sourceLabel
-                  table.insert(results, copy)
-                end
-              end
+          local function addResult(item, sourceLabel)
+            if not item then return end
+            if nameOrAugMatches(item) and passesFilters(item) then
+              local copy = {}
+              for k, v in pairs(item) do copy[k] = v end
+              copy.peerName = invData.name or "unknown"
+              copy.peerServer = invData.server or "unknown"
+              copy.source = sourceLabel
+              table.insert(results, copy)
             end
           end
 
+          local function addBagItems(bags)
+            if not bags then return end
+            for _, bagItems in pairs(bags) do
+              for _, item in ipairs(bagItems or {}) do addResult(item, "Inventory") end
+            end
+          end
+
+          local function addFlatItems(items, sourceLabel)
+            if not items then return end
+            for _, item in ipairs(items or {}) do addResult(item, sourceLabel) end
+          end
+
           if inventoryUI.sourceFilter == "All" or inventoryUI.sourceFilter == "Equipped" then
-            addItems(invData.equipped,
-              "Equipped")
+            addFlatItems(invData.equipped, "Equipped")
           end
           if inventoryUI.sourceFilter == "All" or inventoryUI.sourceFilter == "Inventory" then
-            addItems(invData.bags,
-              "Inventory")
+            addBagItems(invData.bags)
+            addFlatItems(invData.inventory, "Inventory")
           end
-          if inventoryUI.sourceFilter == "All" or inventoryUI.sourceFilter == "Bank" then addItems(invData.bank, "Bank") end
+          if inventoryUI.sourceFilter == "All" or inventoryUI.sourceFilter == "Bank" then
+            addFlatItems(invData.bank, "Bank")
+          end
         end
       end
 
