@@ -199,7 +199,7 @@ function M.render(inventoryUI, env)
                   else
                     if inventoryUI.selectedPeer == extractCharacterName(mq.TLO.Me.Name()) then
                       if ImGui.Button("Pickup##" .. item.name .. "_" .. tostring(item.slotid or i)) then
-                        mq.cmdf('/shift /itemnotify "%s" leftmouseup', item.name)
+                        mq.cmdf('/nomodkey /shift /itemnotify "%s" leftmouseup', item.name)
                       end
                     else
                       if item.nodrop == 0 then

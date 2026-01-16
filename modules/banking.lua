@@ -215,9 +215,13 @@ function M.update()
             end
             local cmd
             if (item.bagid or 0) > 0 and (item.slotid or 0) > 0 then
-                cmd = string.format('/itemnotify in pack%d %d leftmouseup', item.bagid, item.slotid)
+                cmd = string.format('/nomodkey /shift /itemnotify in pack%d %d leftmouseup', item.bagid, item.slotid)
+            elseif (item.bankslotid or 0) > 0 and (item.slotid or 0) > 0 then
+                cmd = string.format('/nomodkey /shift /itemnotify in bank%d %d leftmouseup', item.bankslotid, item.slotid)
+            elseif (item.bankslotid or 0) > 0 and (item.slotid or 0) < 0 then
+                cmd = string.format('/nomodkey /shift /itemnotify bank%d leftmouseup', item.bankslotid)
             elseif item.name and item.name ~= "" then
-                cmd = string.format('/itemnotify "%s" leftmouseup', item.name)
+                cmd = string.format('/nomodkey /shift /itemnotify "%s" leftmouseup', item.name)
             end
             if not cmd then
                 printf("[MQ2EZInv] Cannot determine item location for %s", item.name or "unknown")

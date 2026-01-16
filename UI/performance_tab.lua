@@ -111,8 +111,8 @@ function M.render(inventoryUI, env)
           ImGui.Unindent()
         end
       end
+      ImGui.EndChild()
     end
-    ImGui.EndChild()
 
     if ImGui.BeginChild("PerformanceSection", 0, 150, true, ImGuiChildFlags.Border) then
       ImGui.Text("Performance Metrics")
@@ -186,8 +186,8 @@ function M.render(inventoryUI, env)
         ImGui.Text("*** Consider switching to Selective mode for better performance")
         ImGui.PopStyleColor()
       end
+      ImGui.EndChild()
     end
-    ImGui.EndChild()
 
     if ImGui.BeginChild("ActionsSection", 0, 80, true, ImGuiChildFlags.Border) then
       ImGui.Text("* Actions")
@@ -223,14 +223,14 @@ function M.render(inventoryUI, env)
       end
       if ImGui.IsItemHovered() then ImGui.SetTooltip("Reset all performance settings to recommended defaults") end
 
-      if inventoryUI.isLoadingData then
+        if inventoryUI.isLoadingData then
         ImGui.Spacing()
         ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 1.0, 0.0, 1.0)
         ImGui.Text("Loading inventory data...")
         ImGui.PopStyleColor()
       end
+      ImGui.EndChild()
     end
-    ImGui.EndChild()
 
     if ImGui.CollapsingHeader("Advanced Settings") then
       ImGui.Indent()

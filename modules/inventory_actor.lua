@@ -511,16 +511,35 @@ local function build_pickup_command(name, bagid, slotid, opts)
         slot = nil
     end
 
+    if opts.isBank and opts.bankslotid then
+        local bankSlot = tonumber(opts.bankslotid)
+        local bankSlotId = bankSlot
+        if bankSlot >= 25 and bankSlot <= 26 then
+            bankSlotId = bankSlot - 24
+            if slot and slot > 0 then
+                return string.format('/nomodkey /shift /itemnotify in sharedbank%d %d leftmouseup', bankSlotId, slot)
+            else
+                return string.format('/nomodkey /shift /itemnotify sharedbank%d leftmouseup', bankSlotId)
+            end
+        else
+            if slot and slot > 0 then
+                return string.format('/nomodkey /shift /itemnotify in bank%d %d leftmouseup', bankSlot, slot)
+            else
+                return string.format('/nomodkey /shift /itemnotify bank%d leftmouseup', bankSlot)
+            end
+        end
+    end
+
     if bag and bag > 0 and slot and slot > 0 then
-        return string.format('/shift /itemnotify in pack%d %d leftmouseup', bag, slot)
+        return string.format('/nomodkey /shift /itemnotify in pack%d %d leftmouseup', bag, slot)
     end
 
     if slot and slot >= 0 and (not bag or bag <= 0) then
-        return string.format('/shift /itemnotify %d leftmouseup', slot)
+        return string.format('/nomodkey /shift /itemnotify %d leftmouseup', slot)
     end
 
     if name and name ~= '' then
-        return string.format('/shift /itemnotify "%s" leftmouseup', name)
+        return string.format('/nomodkey /shift /itemnotify "%s" leftmouseup', name)
     end
 
     return nil
@@ -1461,12 +1480,22 @@ function M.perform_multi_item_trade_step()
             state.status = "COMPLETED"
             return true
         end
-        local firstPickupCmd = build_pickup_command(
-            firstItemForTrade.name,
-            firstItemForTrade.bagid,
-            firstItemForTrade.slotid,
-            { ignoreSlot = firstItemForTrade.fromBank }
-        )
+        local firstPickupCmd
+        if firstItemForTrade.fromBank then
+            firstPickupCmd = build_pickup_command(
+                firstItemForTrade.name,
+                nil,
+                nil,
+                { isBank = true, bankslotid = firstItemForTrade.bankslotid }
+            )
+        else
+            firstPickupCmd = build_pickup_command(
+                firstItemForTrade.name,
+                firstItemForTrade.bagid,
+                firstItemForTrade.slotid,
+                {}
+            )
+        end
         if not firstPickupCmd then
             printf("[ERROR] Missing inventory location for %s. Aborting trade.", tostring(firstItemForTrade.name))
             return false
@@ -1512,12 +1541,22 @@ function M.perform_multi_item_trade_step()
         if item_to_trade and filled_slots < 8 then
             printf("[BATCH STATE] Placing item %d/%d: %s",
                 state.current_item_index, #itemsToTrade, item_to_trade.name)
-            local pickupCmd = build_pickup_command(
-                item_to_trade.name,
-                item_to_trade.bagid,
-                item_to_trade.slotid,
-                { ignoreSlot = item_to_trade.fromBank }
-            )
+            local pickupCmd
+            if item_to_trade.fromBank then
+                pickupCmd = build_pickup_command(
+                    item_to_trade.name,
+                    nil,
+                    nil,
+                    { isBank = true, bankslotid = item_to_trade.bankslotid }
+                )
+            else
+                pickupCmd = build_pickup_command(
+                    item_to_trade.name,
+                    item_to_trade.bagid,
+                    item_to_trade.slotid,
+                    {}
+                )
+            end
             if not pickupCmd then
                 printf("[ERROR] Missing inventory location for %s. Aborting trade.", tostring(item_to_trade.name))
                 return false
@@ -1629,7 +1668,7 @@ function M.perform_single_item_trade(request)
             return
         end
 
-        mq.cmdf("/itemnotify %s", bankCommand)
+        mq.cmdf("/nomodkey /shift /itemnotify %s", bankCommand)
         mq.delay(1000)
         if not mq.TLO.Cursor.ID() then
             printf("[ERROR] Failed to pick up %s from bank. Item not on cursor.", request.name)
@@ -1778,7 +1817,7 @@ local function handle_command_message(message)
         print(('[EZInventory] %s'):format(table.concat(args, " ")))
     elseif command == "pickup" then
         local itemName = table.concat(args, " ")
-        mq.cmdf('/shift /itemnotify "%s" leftmouseup', itemName)
+        mq.cmdf('/nomodkey /shift /itemnotify "%s" leftmouseup', itemName)
     elseif command == "foreground" then
         mq.cmd("/foreground")
     elseif command == "navigate_to_banker" then
@@ -1913,9 +1952,9 @@ local function handle_command_message(message)
             local bagid = tonumber(req.bagid or -1)
             local slotid = tonumber(req.slotid or -1)
             if bagid and bagid > 0 and slotid and slotid > 0 then
-                cmd = string.format('/shift /itemnotify in pack%d %d leftmouseup', bagid, slotid)
+                cmd = string.format('/nomodkey /shift /itemnotify in pack%d %d leftmouseup', bagid, slotid)
             elseif req.name and req.name ~= '' then
-                cmd = string.format('/shift /itemnotify "%s" leftmouseup', req.name)
+                cmd = string.format('/nomodkey /shift /itemnotify "%s" leftmouseup', req.name)
             end
             if not cmd then
                 print('[EZInventory] Missing item location for destroy request')

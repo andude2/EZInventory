@@ -279,18 +279,18 @@ function Collectibles.draw()
                             -- Bank item
                             if item.slotid and item.slotid > 0 then
                                 -- Item in bank bag
-                                mq.cmdf('/itemnotify bank%d %d rightmouseup', item.bankslotid, item.slotid)
+                                mq.cmdf('/nomodkey /shift /itemnotify bank%d %d rightmouseup', item.bankslotid, item.slotid)
                             else
                                 -- Item directly in bank slot
-                                mq.cmdf('/itemnotify bank%d rightmouseup', item.bankslotid)
+                                mq.cmdf('/nomodkey /shift /itemnotify bank%d rightmouseup', item.bankslotid)
                             end
                         elseif item.bagid and item.slotid then
                             if item.bagid == -1 then
                                 -- Equipped item (use slot index)
-                                mq.cmdf('/itemnotify %d rightmouseup', item.slotid)
+                                mq.cmdf('/nomodkey /shift /itemnotify %d rightmouseup', item.slotid)
                             else
                                 -- Bag item (use bag and slot indices)
-                                mq.cmdf('/itemnotify in pack%d %d rightmouseup', item.bagid, item.slotid)
+                                mq.cmdf('/nomodkey /shift /itemnotify in pack%d %d rightmouseup', item.bagid, item.slotid)
                             end
                         end
                     end

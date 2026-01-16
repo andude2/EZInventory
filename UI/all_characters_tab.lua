@@ -447,13 +447,17 @@ function M.render(inventoryUI, env)
     if inventoryUI.pcCurrentPage > 1 then
       if ImGui.Button("< Previous") then inventoryUI.pcCurrentPage = inventoryUI.pcCurrentPage - 1 end
     else
-      ImGui.BeginDisabled(); ImGui.Button("< Previous"); ImGui.EndDisabled()
+      ImGui.BeginDisabled()
+      ImGui.Button("< Previous")
+      ImGui.EndDisabled()
     end
     ImGui.SameLine()
     if inventoryUI.pcCurrentPage < inventoryUI.pcTotalPages then
       if ImGui.Button("Next >") then inventoryUI.pcCurrentPage = inventoryUI.pcCurrentPage + 1 end
     else
-      ImGui.BeginDisabled(); ImGui.Button("Next >"); ImGui.EndDisabled()
+      ImGui.BeginDisabled()
+      ImGui.Button("Next >")
+      ImGui.EndDisabled()
     end
     ImGui.SameLine(); ImGui.SetNextItemWidth(100)
     local changed
@@ -650,20 +654,20 @@ function M.render(inventoryUI, env)
                 local SlotId = tonumber(item.slotid) or -1
                 if BankSlotId >= 1 and BankSlotId <= 24 then
                   if SlotId == -1 then
-                    mq.cmdf("/shift /itemnotify bank%d leftmouseup", BankSlotId)
+                    mq.cmdf("/nomodkey /shift /itemnotify bank%d leftmouseup", BankSlotId)
                   else
-                    mq.cmdf("/shift /itemnotify in bank%d %d leftmouseup", BankSlotId, SlotId)
+                    mq.cmdf("/nomodkey /shift /itemnotify in bank%d %d leftmouseup", BankSlotId, SlotId)
                   end
                 elseif BankSlotId >= 25 and BankSlotId <= 26 then
                   local sharedSlot = BankSlotId - 24
                   if SlotId == -1 then
-                    mq.cmdf("/shift /itemnotify sharedbank%d leftmouseup", sharedSlot)
+                    mq.cmdf("/nomodkey /shift /itemnotify sharedbank%d leftmouseup", sharedSlot)
                   else
-                    mq.cmdf("/shift /itemnotify in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
+                    mq.cmdf("/nomodkey /shift /itemnotify in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
                   end
                 end
               else
-                mq.cmdf('/shift /itemnotify "%s" leftmouseup', itemName)
+                mq.cmdf('/nomodkey /shift /itemnotify "%s" leftmouseup', itemName)
               end
             end
             ImGui.PopStyleColor(3)

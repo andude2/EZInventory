@@ -635,7 +635,7 @@ local function drawEmptySlot(cell_id)
             --printf("[DEBUG] Drop Attempt: pack_number=%s, slotIndex=%s", tostring(pack_number), tostring(slotIndex))
             if pack_number >= 1 and pack_number <= 12 and slotIndex >= 1 then
                 if inventoryUI.selectedPeer == extractCharacterName(mq.TLO.Me.Name()) then
-                    mq.cmdf("/itemnotify in pack%d %d leftmouseup", pack_number, slotIndex)
+                    mq.cmdf("/nomodkey /shift /itemnotify in pack%d %d leftmouseup", pack_number, slotIndex)
                     local newItem = {
                         name = cursorItemTLO.Name(),
                         id = cursorItemTLO.ID(),
@@ -727,11 +727,11 @@ local function drawLiveItemSlot(item_tlo, cell_id)
         if mainSlot >= 23 and mainSlot <= 34 then -- It's in a bag slot
             local pack_number = mainSlot - 22
             if subSlot == -1 then
-                mq.cmdf('/shift /itemnotify "%s" leftmouseup', item_tlo.Name())
+                mq.cmdf('/nomodkey /shift /itemnotify "%s" leftmouseup', item_tlo.Name())
                 print(' [WARN] Pickup fallback: Used item name for item not in subslot.')
             else
                 local command_slotid = subSlot + 1
-                mq.cmdf("/shift /itemnotify in pack%d %d leftmouseup", pack_number, command_slotid)
+                mq.cmdf("/nomodkey /shift /itemnotify in pack%d %d leftmouseup", pack_number, command_slotid)
             end
         else
             print("[ERROR] Cannot perform standard bag pickup for item in slot " .. tostring(mainSlot))
@@ -809,7 +809,7 @@ local function drawItemSlot(item, cell_id)
 
             if pack_number >= 1 and pack_number <= 12 and command_slotid >= 1 then
                 if inventoryUI.selectedPeer == extractCharacterName(mq.TLO.Me.Name()) then
-                    mq.cmdf("/itemnotify in pack%d %d leftmouseup", pack_number, command_slotid)
+                    mq.cmdf("/nomodkey /shift /itemnotify in pack%d %d leftmouseup", pack_number, command_slotid)
 
                     if inventoryUI.inventoryData.bags[pack_number] then
                         local bagItems = inventoryUI.inventoryData.bags[pack_number]
@@ -3204,6 +3204,7 @@ function inventoryUI.render()
                         mq = mq,
                         drawItemIcon = drawItemIcon,
                         matchesSearch = matchesSearch,
+                        showContextMenu = Util.showContextMenu,
                     }
                     BankTab.render(inventoryUI, envBank)
                 end

@@ -2,12 +2,13 @@ local M = {}
 
 -- Bank Tab renderer
 -- env expects:
--- ImGui, mq, drawItemIcon, matchesSearch
+-- ImGui, mq, drawItemIcon, matchesSearch, showContextMenu
 function M.render(inventoryUI, env)
   local ImGui = env.ImGui
   local mq = env.mq
   local drawItemIcon = env.drawItemIcon
   local matchesSearch = env.matchesSearch
+  local showContextMenu = env.showContextMenu
 
   local function borFlag(...)
     if bit32 and bit32.bor then return bit32.bor(...) end
@@ -133,6 +134,12 @@ function M.render(inventoryUI, env)
             ImGui.Text(inventoryUI.bankSortMode == "name" and "Sorted alphabetically" or "Sorted by slot position")
             ImGui.EndTooltip()
           end
+          -- Right-click context menu
+          if ImGui.IsItemClicked(ImGuiMouseButton.Right) and showContextMenu then
+            local mouseX, mouseY = ImGui.GetMousePos()
+            local sourcePeer = inventoryUI.selectedPeer or mq.TLO.Me.CleanName()
+            showContextMenu(item, sourcePeer, mouseX, mouseY)
+          end
 
           -- Quantity
           ImGui.TableSetColumnIndex(2)
@@ -154,16 +161,16 @@ function M.render(inventoryUI, env)
             local SlotId = tonumber(item.slotid) or -1
             if BankSlotId >= 1 and BankSlotId <= 24 then
               if SlotId == -1 then
-                mq.cmdf("/shift /itemnotify bank%d leftmouseup", BankSlotId)
+                mq.cmdf("/nomodkey /shift /itemnotify bank%d leftmouseup", BankSlotId)
               else
-                mq.cmdf("/shift /itemnotify in bank%d %d leftmouseup", BankSlotId, SlotId)
+                mq.cmdf("/nomodkey /shift /itemnotify in bank%d %d leftmouseup", BankSlotId, SlotId)
               end
             elseif BankSlotId >= 25 and BankSlotId <= 26 then
               local sharedSlot = BankSlotId - 24 -- Convert to 1-2
               if SlotId == -1 then
-                mq.cmdf("/shift /itemnotify sharedbank%d leftmouseup", sharedSlot)
+                mq.cmdf("/nomodkey /shift /itemnotify sharedbank%d leftmouseup", sharedSlot)
               else
-                mq.cmdf("/shift /itemnotify in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
+                mq.cmdf("/nomodkey /shift /itemnotify in sharedbank%d %d leftmouseup", sharedSlot, SlotId)
               end
             else
               printf("Unknown bank slot ID: %d", BankSlotId)

@@ -399,8 +399,8 @@ function M.renderMultiTradePanel()
           ImGui.EndTable()
         end
       end
+      ImGui.EndChild()
     end
-    ImGui.EndChild()
     ImGui.Separator()
     ImGui.Text("Trade To:")
     ImGui.SameLine()
