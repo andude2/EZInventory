@@ -41,6 +41,176 @@ M.peer_char_assignments = {}  -- Track character assignments from all peers
 
 local actor_mailbox   = nil
 local command_mailbox = nil
+M.inventory_snapshot  = {}
+
+local last_lightweight_scan = 0
+local LIGHTWEIGHT_SCAN_INTERVAL_MS = 750
+
+local function get_time_ms()
+    if mq and mq.gettime then
+        local ok, value = pcall(mq.gettime)
+        if ok and value then
+            return value
+        end
+    end
+    return math.floor(os.clock() * 1000)
+end
+
+local function format_equipped_key(slot)
+    return string.format("eq_%02d", slot)
+end
+
+local function format_general_inventory_key(slot)
+    return string.format("inv_%02d", slot)
+end
+
+local function format_bag_item_key(invSlot, slot)
+    return string.format("bag_%02d_%02d", invSlot, slot)
+end
+
+local function format_bank_key(slot)
+    return string.format("bank_%02d", slot)
+end
+
+local function format_bank_bag_key(bankSlot, slot)
+    return string.format("bankbag_%02d_%02d", bankSlot, slot)
+end
+
+local function get_item_quantity(item)
+    local qty = item.Stack() or 0
+    if (not qty or qty == 0) and item.Count then
+        qty = item.Count()
+    end
+    if (not qty or qty == 0) and item.Charges then
+        qty = item.Charges()
+    end
+    return qty ~= nil and qty or 1
+end
+
+local function capture_lightweight_snapshot()
+    local snapshot = {}
+
+    local function add_entry(key, item)
+        if not key or not item then return end
+        if item() and item.ID() then
+            snapshot[key] = {
+                name = item.Name() or '',
+                qty = get_item_quantity(item),
+            }
+        end
+    end
+
+    for slot = 0, 22 do
+        add_entry(format_equipped_key(slot), mq.TLO.Me.Inventory(slot))
+    end
+
+    for invSlot = 23, 34 do
+        local pack = mq.TLO.Me.Inventory(invSlot)
+        add_entry(format_general_inventory_key(invSlot), pack)
+        if pack() and pack.Container() and pack.Container() > 0 then
+            for bagSlot = 1, pack.Container() do
+                add_entry(format_bag_item_key(invSlot, bagSlot), pack.Item(bagSlot))
+            end
+        end
+    end
+
+    for bankSlot = 1, 24 do
+        local bankItem = mq.TLO.Me.Bank(bankSlot)
+        add_entry(format_bank_key(bankSlot), bankItem)
+        if bankItem() and bankItem.Container() and bankItem.Container() > 0 then
+            for slot = 1, bankItem.Container() do
+                add_entry(format_bank_bag_key(bankSlot, slot), bankItem.Item(slot))
+            end
+        end
+    end
+
+    return snapshot
+end
+
+local function snapshots_differ(oldSnapshot, newSnapshot)
+    oldSnapshot = oldSnapshot or {}
+    for key, entry in pairs(newSnapshot) do
+        local prev = oldSnapshot[key]
+        if not prev then
+            return true
+        end
+        local prevName = prev.name or ''
+        local prevQty = prev.qty or 0
+        if prevName ~= (entry.name or '') or prevQty ~= (entry.qty or 0) then
+            return true
+        end
+    end
+    for key, _ in pairs(oldSnapshot) do
+        if not newSnapshot[key] then
+            return true
+        end
+    end
+    return false
+end
+
+local function set_snapshot_entry(snapshot, key, name, qty)
+    if not key or key == '' or not name or name == '' then
+        return
+    end
+    snapshot[key] = {
+        name = name or '',
+        qty = qty or 0,
+    }
+end
+
+local function snapshot_from_inventory_data(data)
+    local snapshot = {}
+    if not data then
+        return snapshot
+    end
+
+    for _, entry in ipairs(data.equipped or {}) do
+        local slot = tonumber(entry.slotid)
+        if slot then
+            set_snapshot_entry(snapshot, format_equipped_key(slot), entry.name, entry.qty)
+        end
+    end
+
+    for _, entry in ipairs(data.inventory or {}) do
+        local invSlot = tonumber(entry.inventorySlot) or tonumber(entry.slotid)
+        if not invSlot and entry.packslot then
+            invSlot = tonumber(entry.packslot)
+            if invSlot then
+                invSlot = invSlot + 22
+            end
+        end
+        if invSlot then
+            set_snapshot_entry(snapshot, format_general_inventory_key(invSlot), entry.name, entry.qty)
+        end
+    end
+
+    for bagId, bagItems in pairs(data.bags or {}) do
+        local invSlot = tonumber(bagId)
+        if invSlot then
+            invSlot = invSlot + 22
+            for _, bagEntry in ipairs(bagItems or {}) do
+                local slot = tonumber(bagEntry.slotid)
+                if slot then
+                    set_snapshot_entry(snapshot, format_bag_item_key(invSlot, slot), bagEntry.name, bagEntry.qty)
+                end
+            end
+        end
+    end
+
+    for _, entry in ipairs(data.bank or {}) do
+        local bankSlot = tonumber(entry.bankslotid)
+        local slotid = tonumber(entry.slotid or -1)
+        if bankSlot then
+            if slotid and slotid > 0 then
+                set_snapshot_entry(snapshot, format_bank_bag_key(bankSlot, slotid), entry.name, entry.qty)
+            else
+                set_snapshot_entry(snapshot, format_bank_key(bankSlot), entry.name, entry.qty)
+            end
+        end
+    end
+
+    return snapshot
+end
 
 -- Add function to update configuration
 function M.update_config(new_config)
@@ -627,6 +797,25 @@ function M.gather_inventory()
     return data
 end
 
+function M.inventory_has_changed(force)
+    if not mq or not mq.TLO or not mq.TLO.Me then
+        return false
+    end
+
+    if mq.TLO.MacroQuest and mq.TLO.MacroQuest.GameState and mq.TLO.MacroQuest.GameState() ~= 'INGAME' then
+        return false
+    end
+
+    local now = get_time_ms()
+    if not force and last_lightweight_scan ~= 0 and (now - last_lightweight_scan) < LIGHTWEIGHT_SCAN_INTERVAL_MS then
+        return false
+    end
+    last_lightweight_scan = now
+
+    local snapshot = capture_lightweight_snapshot()
+    return snapshots_differ(M.inventory_snapshot, snapshot)
+end
+
 local function message_handler(message)
     local content = message()
     if not content or type(content) ~= 'table' then
@@ -920,6 +1109,7 @@ function M.publish_inventory()
         { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
         { type = M.MSG_TYPE.UPDATE, data = inventoryData }
     )
+    M.inventory_snapshot = snapshot_from_inventory_data(inventoryData)
     return true
 end
 

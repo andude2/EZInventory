@@ -3495,7 +3495,16 @@ local function main()
     while true do
         mq.doevents()
         local currentTime = os.time()
-        if currentTime - inventoryUI.lastPublishTime > inventoryUI.PUBLISH_INTERVAL then
+        local publishedThisLoop = false
+        if inventory_actor.inventory_has_changed and inventory_actor.inventory_has_changed() then
+            local ok = inventory_actor.publish_inventory()
+            if ok then
+                inventoryUI.lastPublishTime = currentTime
+                publishedThisLoop = true
+            end
+        end
+
+        if not publishedThisLoop and currentTime - inventoryUI.lastPublishTime > inventoryUI.PUBLISH_INTERVAL then
             local ok = inventory_actor.publish_inventory()
             if ok then
                 inventoryUI.lastPublishTime = currentTime
