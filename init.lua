@@ -1055,7 +1055,9 @@ local function updatePeerList()
     end
 
     table.sort(inventoryUI.peers, function(a, b)
-        return a.name:lower() < b.name:lower()
+        local nameA = a.name or ""
+        local nameB = b.name or ""
+        return nameA:lower() < nameB:lower()
     end)
 end
 
