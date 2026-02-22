@@ -61,6 +61,13 @@ function M.renderContent(inventoryUI, env)
     inventoryUI.focusEffectsIncludeBank = inventoryUI.focusEffectsIncludeBank ~= false
 
     ImGui.Text("Analyze focus effects from equipped items, inventory (including bags), bank, and inserted augments.")
+    local invConfig = (inventoryUI.inventoryData and inventoryUI.inventoryData.config) or {}
+    local scanStage = tostring(invConfig.scanStage or "")
+    if scanStage == "fast" then
+      ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.9, 0.3, 1.0)
+      ImGui.Text("Waiting for enriched inventory data...")
+      ImGui.PopStyleColor()
+    end
     inventoryUI.focusEffectsFilter = ImGui.InputText("Filter##FocusEffects", inventoryUI.focusEffectsFilter)
     inventoryUI.focusEffectsIncludeEquipped = ImGui.Checkbox("Equipped", inventoryUI.focusEffectsIncludeEquipped)
     ImGui.SameLine()

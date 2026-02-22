@@ -1030,9 +1030,18 @@ local function updatePeerList()
     -- Throttle self inventory gathering to avoid stutter.
     inventoryUI._selfCache = inventoryUI._selfCache or { data = nil, time = 0 }
     local now = os.time()
-    if (now - (inventoryUI._selfCache.time or 0)) > 10 or not inventoryUI._selfCache.data then
-        -- Gather at most every 10s
-        inventoryUI._selfCache.data = inventory_actor.gather_inventory()
+    local latestCachedSelf = nil
+    if inventory_actor and inventory_actor.get_cached_inventory then
+        latestCachedSelf = inventory_actor.get_cached_inventory(true)
+    end
+    local cacheStage = latestCachedSelf and latestCachedSelf.config and latestCachedSelf.config.scanStage or ""
+    local selfStage = inventoryUI._selfCache.data and inventoryUI._selfCache.data.config and
+        inventoryUI._selfCache.data.config.scanStage or ""
+    local shouldPromoteToEnriched = latestCachedSelf and cacheStage == "enriched" and selfStage ~= "enriched"
+    if (now - (inventoryUI._selfCache.time or 0)) > 10 or not inventoryUI._selfCache.data or shouldPromoteToEnriched then
+        -- Prefer already-cached actor data, otherwise gather a fast snapshot.
+        inventoryUI._selfCache.data = latestCachedSelf or
+            inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
         inventoryUI._selfCache.time = now
     end
     local selfEntry = {
@@ -1081,7 +1090,8 @@ local function refreshInventoryData()
             if peer.data then
                 inventoryUI.inventoryData = peer.data
             elseif peer.name == extractCharacterName(mq.TLO.Me.Name()) then
-                inventoryUI.inventoryData = inventory_actor.gather_inventory()
+                inventoryUI.inventoryData = (inventory_actor.get_cached_inventory and inventory_actor.get_cached_inventory(true))
+                    or inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
             end
             break
         end
@@ -1100,7 +1110,8 @@ local function loadInventoryData(peer)
         inventoryUI.inventoryData.bags = peer.data.bags or {}
         inventoryUI.inventoryData.bank = peer.data.bank or {}
     elseif peer.name == extractCharacterName(mq.TLO.Me.Name()) then
-        local gathered = inventory_actor.gather_inventory()
+        local gathered = (inventory_actor.get_cached_inventory and inventory_actor.get_cached_inventory(true))
+            or inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
         inventoryUI.inventoryData.equipped = gathered.equipped or {}
         inventoryUI.inventoryData.inventory = gathered.inventory or {}
         inventoryUI.inventoryData.bags = gathered.bags or {}
@@ -1878,7 +1889,9 @@ function renderItemSuggestions()
 
         local equippedItem = nil
         if peerName == extractCharacterName(mq.TLO.Me.Name()) then
-            local equipped = inventory_actor.gather_inventory().equipped or {}
+            local localInventory = (inventory_actor.get_cached_inventory and inventory_actor.get_cached_inventory(true))
+                or inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
+            local equipped = localInventory.equipped or {}
             for _, item in ipairs(equipped) do
                 if tonumber(item.slotid) == tonumber(slotID) then
                     equippedItem = item
@@ -3637,6 +3650,7 @@ local function main()
         end
 
         updatePeerList()
+        refreshInventoryData()
 
         -- If we haven't populated our own view yet, load from the cached self inventory
         if not inventoryUI._initialSelfLoaded then

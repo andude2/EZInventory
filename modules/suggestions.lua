@@ -188,7 +188,8 @@ function Suggestions.getAvailableItemsForSlot(targetCharacter, slotID)
     end
 
     local myName = mq.TLO.Me.CleanName()
-    local myInventory = inventory_actor.gather_inventory()
+    local myInventory = (inventory_actor.get_cached_inventory and inventory_actor.get_cached_inventory(true))
+        or inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
     scannedSources[myName] = true
     scan(myInventory.equipped, "Equipped", myName)
     scan(myInventory.bags, "Bags", myName)

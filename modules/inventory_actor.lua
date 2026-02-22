@@ -38,6 +38,10 @@ M.MSG_TYPE            = {
 M.peer_inventories    = {}
 M.peer_bank_flags     = {}
 M.peer_char_assignments = {}  -- Track character assignments from all peers
+M.last_inventory_fast = {}
+M.last_inventory_enriched = nil
+M.last_enriched_snapshot = {}
+M._pending_enriched_messages = {}
 
 local actor_mailbox   = nil
 local command_mailbox = nil
@@ -480,7 +484,7 @@ local function safe_focus_get(func, default)
     return default
 end
 
-local function parse_focus_spell(spell)
+local function parse_focus_spell(spell, fallbackToSpellName)
     local focusEntries = {}
     local numEffects = tonumber(safe_focus_get(function() return spell.NumEffects() end, 0)) or 0
     if numEffects <= 0 then
@@ -521,6 +525,21 @@ local function parse_focus_spell(spell)
     table.sort(focusEntries, function(a, b)
         return (a.focusType or 0) < (b.focusType or 0)
     end)
+
+    if #focusEntries == 0 and fallbackToSpellName then
+        local spellName = tostring(safe_focus_get(function() return spell.Name() end, ""))
+        if spellName ~= "" then
+            table.insert(focusEntries, {
+                focusName = spellName,
+                focusType = 999,
+                maxEffect = 0,
+                effectiveLevel = effectiveLevel,
+                resistType = resistType,
+                rank = 0,
+            })
+        end
+    end
+
     return focusEntries
 end
 
@@ -531,7 +550,7 @@ local function parse_worn_spell(item)
         return entries
     end
 
-    entries = parse_focus_spell(wornSpell)
+    entries = parse_focus_spell(wornSpell, false)
     local rank = tonumber(safe_focus_get(function() return wornSpell.Rank() end, 0)) or 0
     for _, entry in ipairs(entries) do
         entry.rank = rank
@@ -555,6 +574,16 @@ local function parse_worn_spell(item)
             table.insert(entries, {
                 focusName = "Ferocity",
                 focusType = 2,
+                maxEffect = 0,
+                effectiveLevel = 0,
+                resistType = "",
+                rank = rank,
+            })
+        end
+        if #entries == 0 and wornName ~= "" then
+            table.insert(entries, {
+                focusName = wornName,
+                focusType = 999,
                 maxEffect = 0,
                 effectiveLevel = 0,
                 resistType = "",
@@ -603,7 +632,7 @@ local function scan_augment_links(item, include_effects)
             data["aug" .. i .. "Type"] = data["aug" .. i .. "AugType"]
 
             if include_effects then
-                data["aug" .. i .. "FocusEffects"] = parse_focus_spell(augItem.Focus and augItem.Focus.Spell)
+                data["aug" .. i .. "FocusEffects"] = parse_focus_spell(augItem.Focus and augItem.Focus.Spell, true)
                 data["aug" .. i .. "WornFocusEffects"] = parse_worn_spell(augItem)
             else
                 data["aug" .. i .. "FocusEffects"] = {}
@@ -661,7 +690,7 @@ local function get_basic_item_info(item, include_extended_stats)
         basic.ac = item.AC() or ""
         basic.hp = item.HP() or ""
         basic.mana = item.Mana() or ""
-        basic.focusEffects = parse_focus_spell(item.Focus and item.Focus.Spell)
+        basic.focusEffects = parse_focus_spell(item.Focus and item.Focus.Spell, true)
         basic.wornFocusEffects = parse_worn_spell(item)
         basic.value = safe_get(function() return item.Value() end, 0)
         basic.tribute = safe_get(function() return item.Tribute() end, 0)
@@ -885,7 +914,18 @@ local function build_pickup_command(name, bagid, slotid, opts)
     return nil
 end
 
-function M.gather_inventory()
+function M.gather_inventory(options)
+    options = options or {}
+    local includeExtendedStats = options.includeExtendedStats
+    if includeExtendedStats == nil then
+        includeExtendedStats = M.config.loadBasicStats
+    end
+    includeExtendedStats = not not includeExtendedStats
+    local scanStage = options.scanStage
+    if not scanStage or scanStage == "" then
+        scanStage = includeExtendedStats and "enriched" or "fast"
+    end
+
     local data = {
         -- Use CleanName and sanitize to avoid publishing corpse names
         name = normalizeCharacterName(mq.TLO.Me.CleanName()),
@@ -898,6 +938,7 @@ function M.gather_inventory()
         config = {
             loadBasicStats = M.config.loadBasicStats,
             loadDetailedStats = M.config.loadDetailedStats,
+            scanStage = scanStage,
         }
     }
 
@@ -906,7 +947,7 @@ function M.gather_inventory()
     for slot = 0, 22 do
         local item = mq.TLO.Me.Inventory(slot)
         if item() then
-            local entry = get_basic_item_info(item)
+            local entry = get_basic_item_info(item, includeExtendedStats)
             entry.slotid = slot
             table.insert(data.equipped, entry)
         end
@@ -915,7 +956,7 @@ function M.gather_inventory()
     for invSlot = 23, 34 do
         local pack = mq.TLO.Me.Inventory(invSlot)
         if pack() then
-            local generalEntry = get_basic_item_info(pack)
+            local generalEntry = get_basic_item_info(pack, includeExtendedStats)
             generalEntry.bagid = 0
             generalEntry.slotid = invSlot
             generalEntry.inventorySlot = invSlot
@@ -929,7 +970,7 @@ function M.gather_inventory()
                 for i = 1, pack.Container() do
                     local item = pack.Item(i)
                     if item() then
-                        local entry = get_basic_item_info(item)
+                        local entry = get_basic_item_info(item, includeExtendedStats)
                         entry.bagid = bagid
                         entry.slotid = i
                         entry.bagname = pack.Name()
@@ -944,7 +985,7 @@ function M.gather_inventory()
     for bankSlot = 1, 24 do
         local item = mq.TLO.Me.Bank(bankSlot)
         if item.ID() then
-            local entry = get_basic_item_info(item)
+            local entry = get_basic_item_info(item, includeExtendedStats)
             entry.bankslotid = bankSlot
             entry.slotid = -1
             table.insert(data.bank, entry)
@@ -953,7 +994,7 @@ function M.gather_inventory()
                 for i = 1, item.Container() do
                     local sub = item.Item(i)
                     if sub.ID() then
-                        local subEntry = get_basic_item_info(sub)
+                        local subEntry = get_basic_item_info(sub, includeExtendedStats)
                         subEntry.bankslotid = bankSlot
                         subEntry.slotid = i
                         subEntry.bagname = item.Name()
@@ -964,7 +1005,20 @@ function M.gather_inventory()
         end
     end
 
+    if includeExtendedStats then
+        M.last_inventory_enriched = data
+    else
+        M.last_inventory_fast = data
+    end
+
     return data
+end
+
+function M.get_cached_inventory(preferEnriched)
+    if preferEnriched then
+        return M.last_inventory_enriched or M.last_inventory_fast
+    end
+    return M.last_inventory_fast or M.last_inventory_enriched
 end
 
 function M.inventory_has_changed(force)
@@ -984,6 +1038,75 @@ function M.inventory_has_changed(force)
 
     local snapshot = capture_lightweight_snapshot()
     return snapshots_differ(M.inventory_snapshot, snapshot)
+end
+
+local function should_collect_enriched_inventory()
+    -- Loading mode only affects initial scan responsiveness.
+    -- Enriched scan always runs in background so all data eventually arrives.
+    return true
+end
+
+local function is_hovering_corpse()
+    return mq and mq.TLO and mq.TLO.Me and mq.TLO.Me.Hovering and mq.TLO.Me.Hovering()
+end
+
+local function send_inventory_payload(messageType, inventoryData)
+    if not actor_mailbox then
+        return false
+    end
+    actor_mailbox:send(
+        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
+        { type = messageType, data = inventoryData }
+    )
+    return true
+end
+
+local function queue_enriched_inventory_send(messageType)
+    if not should_collect_enriched_inventory() then
+        return
+    end
+    if messageType == M.MSG_TYPE.UPDATE and
+        (not snapshots_differ(M.last_enriched_snapshot or {}, M.inventory_snapshot or {})) then
+        return
+    end
+    if M._pending_enriched_messages[messageType] then
+        return
+    end
+    M._pending_enriched_messages[messageType] = true
+
+    table.insert(M.deferred_tasks, function()
+        M._pending_enriched_messages[messageType] = false
+        if not actor_mailbox then
+            return
+        end
+        if is_hovering_corpse() then
+            return
+        end
+        if not should_collect_enriched_inventory() then
+            return
+        end
+
+        local enrichedData = M.gather_inventory({ includeExtendedStats = true, scanStage = "enriched" })
+        if send_inventory_payload(messageType, enrichedData) then
+            local enrichedSnapshot = snapshot_from_inventory_data(enrichedData)
+            M.last_enriched_snapshot = enrichedSnapshot
+            if messageType == M.MSG_TYPE.UPDATE then
+                M.inventory_snapshot = enrichedSnapshot
+            end
+        end
+    end)
+end
+
+local function should_preserve_existing_enriched(existingData, incomingData)
+    if type(existingData) ~= "table" or type(incomingData) ~= "table" then
+        return false
+    end
+    local existingStage = existingData.config and existingData.config.scanStage or ""
+    local incomingStage = incomingData.config and incomingData.config.scanStage or ""
+    if existingStage ~= "enriched" or incomingStage ~= "fast" then
+        return false
+    end
+    return true
 end
 
 local function message_handler(message)
@@ -1008,18 +1131,16 @@ local function message_handler(message)
                 end
                 local peerId = content.data.server .. "_" .. normalizedName
                 content.data.name = normalizedName
-                M.peer_inventories[peerId] = content.data
+                local existing = M.peer_inventories[peerId]
+                if not should_preserve_existing_enriched(existing, content.data) then
+                    M.peer_inventories[peerId] = content.data
+                end
             end
         end
     elseif content.type == M.MSG_TYPE.REQUEST then
-        local myInventory = M.gather_inventory()
-        if actor_mailbox then
-            local module_name = _G.EZINV_MODULE or "ezinventory"
-            actor_mailbox:send(
-                { mailbox = module_name:lower() .. '_exchange' },
-                { type = M.MSG_TYPE.RESPONSE, data = myInventory }
-            )
-        end
+        local myInventory = M.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
+        send_inventory_payload(M.MSG_TYPE.RESPONSE, myInventory)
+        queue_enriched_inventory_send(M.MSG_TYPE.RESPONSE)
     elseif content.type == M.MSG_TYPE.RESPONSE then
         if content.data and content.data.name and content.data.server then
             -- Sanitize and normalize incoming names to avoid tracking corpse entries
@@ -1035,7 +1156,10 @@ local function message_handler(message)
                 end
                 local peerId = content.data.server .. "_" .. normalizedName
                 content.data.name = normalizedName
-                M.peer_inventories[peerId] = content.data
+                local existing = M.peer_inventories[peerId]
+                if not should_preserve_existing_enriched(existing, content.data) then
+                    M.peer_inventories[peerId] = content.data
+                end
             end
         end
     elseif content.type == M.MSG_TYPE.CONFIG_UPDATE then
@@ -1268,18 +1392,16 @@ function M.publish_inventory()
     end
 
     -- Do not publish while hovering (to avoid corpse identity/data)
-    if mq and mq.TLO and mq.TLO.Me and mq.TLO.Me.Hovering and mq.TLO.Me.Hovering() then
+    if is_hovering_corpse() then
         -- Optional: debug message; keep it low-noise
         -- print("[Inventory Actor] Skipping publish while hovering (corpse)")
         return false
     end
 
-    local inventoryData = M.gather_inventory()
-    actor_mailbox:send(
-        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
-        { type = M.MSG_TYPE.UPDATE, data = inventoryData }
-    )
+    local inventoryData = M.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
+    send_inventory_payload(M.MSG_TYPE.UPDATE, inventoryData)
     M.inventory_snapshot = snapshot_from_inventory_data(inventoryData)
+    queue_enriched_inventory_send(M.MSG_TYPE.UPDATE)
     return true
 end
 
@@ -1289,6 +1411,10 @@ function M.clear_peer_data()
     M.peer_bank_flags = {}
     M.peer_paths = {}
     M.peer_script_paths = {}
+    M.last_inventory_fast = {}
+    M.last_inventory_enriched = nil
+    M.last_enriched_snapshot = {}
+    M._pending_enriched_messages = {}
     return true
 end
 

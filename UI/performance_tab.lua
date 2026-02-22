@@ -30,9 +30,9 @@ function M.renderContent(inventoryUI, env)
       ImGui.SetNextItemWidth(150)
 
       local statsLoadingModes = {
-        { id = "minimal",   name = "Minimal",   desc = "Essential data only (fastest)" },
-        { id = "selective", name = "Selective", desc = "Basic stats (balanced)" },
-        { id = "full",      name = "Full",      desc = "All statistics (complete)" }
+        { id = "minimal",   name = "Minimal",   desc = "Fastest initial scan" },
+        { id = "selective", name = "Selective", desc = "Balanced initial scan" },
+        { id = "full",      name = "Full",      desc = "Most complete initial scan" }
       }
 
       if ImGui.BeginCombo("##StatsLoadingMode", Settings.statsLoadingMode or "selective") then
@@ -50,19 +50,20 @@ function M.renderContent(inventoryUI, env)
       if Settings.statsLoadingMode == "minimal" then
         ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 1.0, 0.3, 1.0)
         ImGui.Text("* Fastest startup and lowest memory usage")
-        ImGui.Text("*  Only loads: Name, Icon, Quantity, No Drop status")
+        ImGui.Text("* Initial pass loads only essential fields")
+        ImGui.Text("* Background pass still loads full enriched data")
         ImGui.Text("* Best for: Large inventories, slower systems")
         ImGui.PopStyleColor()
       elseif Settings.statsLoadingMode == "selective" then
         ImGui.PushStyleColor(ImGuiCol.Text, 0.3, 0.8, 1.0, 1.0)
-        ImGui.Text("* Balanced performance with essential stats")
-        ImGui.Text("* Includes: AC, HP, Mana, Value, Tribute, Clickies, Augments")
+        ImGui.Text("* Balanced initial pass before enrichment")
+        ImGui.Text("* Loads useful fields quickly, then full data follows")
         ImGui.Text("* Best for: Most users, medium-sized inventories")
         ImGui.PopStyleColor()
       elseif Settings.statsLoadingMode == "full" then
         ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 0.8, 0.3, 1.0)
-        ImGui.Text("* Complete item analysis with all statistics")
-        ImGui.Text("* Everything: Heroics, Resistances, Combat Stats, Requirements")
+        ImGui.Text("* Most complete initial pass")
+        ImGui.Text("* Background enrichment still runs for consistency")
         ImGui.Text("* Best for: Item analysis, smaller inventories")
         ImGui.PopStyleColor()
       end

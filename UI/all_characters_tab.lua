@@ -818,7 +818,7 @@ function M.renderContent(inventoryUI, env)
     if ImGui.BeginTable("AllPeersEnhancedTable_v3", 9, borFlag(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.ScrollX, ImGuiTableFlags.ScrollY, ImGuiTableFlags.Hideable, ImGuiTableFlags.ContextMenuInBody, ImGuiTableFlags.NoSavedSettings), 0, 500) then
       ImGui.TableSetupColumn("Peer", ImGuiTableColumnFlags.WidthFixed, 90)
       ImGui.TableSetupColumn("Icon", borFlag(ImGuiTableColumnFlags.WidthFixed, ImGuiTableColumnFlags.NoSort), 28)
-      ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthFixed, 280)
+      ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1.0)
       ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 70)
       ImGui.TableSetupColumn("Aug Type", ImGuiTableColumnFlags.WidthFixed, 78)
       ImGui.TableSetupColumn("Value", borFlag(ImGuiTableColumnFlags.WidthFixed, ImGuiTableColumnFlags.DefaultHide), 72)
