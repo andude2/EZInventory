@@ -8,6 +8,13 @@ local M = {}
 --   compareSlotAcrossPeers=compareSlotAcrossPeers, extractCharacterName=extractCharacterName
 -- })
 function M.render(inventoryUI, env)
+  if env.ImGui.BeginTabItem("Equipped") then
+    M.renderContent(inventoryUI, env)
+    env.ImGui.EndTabItem()
+  end
+end
+
+function M.renderContent(inventoryUI, env)
   local ImGui = env.ImGui
   local mq = env.mq
   local Suggestions = env.Suggestions
@@ -18,8 +25,7 @@ function M.render(inventoryUI, env)
   local compareSlotAcrossPeers = env.compareSlotAcrossPeers
   local extractCharacterName = env.extractCharacterName
 
-  if ImGui.BeginTabItem("Equipped") then
-    if ImGui.BeginTabBar("EquippedViewTabs", ImGuiTabBarFlags.Reorderable) then
+  if ImGui.BeginTabBar("EquippedViewTabs", ImGuiTabBarFlags.Reorderable) then
       if ImGui.BeginTabItem("Table View") then
         inventoryUI.equipView = "table"
         ImGui.BeginChild("EquippedScrollRegion", 0, 0)
@@ -549,8 +555,6 @@ function M.render(inventoryUI, env)
         renderLoadingScreen("Loading Inventory Data", "Scanning items", "This may take a moment for large inventories")
       end
       ImGui.EndTabBar()
-    end
-    ImGui.EndTabItem()
   end
 end
 

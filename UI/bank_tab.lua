@@ -4,6 +4,13 @@ local M = {}
 -- env expects:
 -- ImGui, mq, drawItemIcon, matchesSearch, showContextMenu
 function M.render(inventoryUI, env)
+  if env.ImGui.BeginTabItem("Bank") then
+    M.renderContent(inventoryUI, env)
+    env.ImGui.EndTabItem()
+  end
+end
+
+function M.renderContent(inventoryUI, env)
   local ImGui = env.ImGui
   local mq = env.mq
   local drawItemIcon = env.drawItemIcon
@@ -19,8 +26,7 @@ function M.render(inventoryUI, env)
     return s
   end
 
-  if ImGui.BeginTabItem("Bank") then
-    if not inventoryUI.inventoryData.bank or #inventoryUI.inventoryData.bank == 0 then
+  if not inventoryUI.inventoryData.bank or #inventoryUI.inventoryData.bank == 0 then
       ImGui.Text("There's no loot here! Go visit a bank and re-sync!")
     else
       -- Sorting state UI
@@ -196,8 +202,6 @@ function M.render(inventoryUI, env)
       ImGui.Text(sortInfo)
       ImGui.PopStyleColor()
     end
-    ImGui.EndTabItem()
-  end
 end
 
 return M

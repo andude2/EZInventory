@@ -99,7 +99,8 @@ function M.renderContextMenu()
     M.hideContextMenu(); return
   end
   ImGui.SetNextWindowPos(inventoryUI.contextMenu.x, inventoryUI.contextMenu.y)
-  if ImGui.Begin("##ItemContextMenu", nil, ImGuiWindowFlags.NoTitleBar + ImGuiWindowFlags.NoResize + ImGuiWindowFlags.AlwaysAutoResize + ImGuiWindowFlags.NoSavedSettings) then
+  local menuDrawn = ImGui.Begin("##ItemContextMenu", nil, ImGuiWindowFlags.NoTitleBar + ImGuiWindowFlags.NoResize + ImGuiWindowFlags.AlwaysAutoResize + ImGuiWindowFlags.NoSavedSettings)
+  if menuDrawn then
     local itemName = (inventoryUI.contextMenu.item and inventoryUI.contextMenu.item.name) or "Unknown Item"
     ImGui.Text(itemName)
     ImGui.Separator()
@@ -278,8 +279,8 @@ function M.renderContextMenu()
 
     ImGui.Separator()
     if ImGui.MenuItem("Cancel") then M.hideContextMenu() end
-    ImGui.End()
   end
+  ImGui.End()
   if ImGui.IsMouseClicked(ImGuiMouseButton.Left) and not ImGui.IsWindowHovered(ImGuiHoveredFlags.AnyWindow) then
     M.hideContextMenu()
   end
@@ -399,8 +400,8 @@ function M.renderMultiTradePanel()
           ImGui.EndTable()
         end
       end
-      ImGui.EndChild()
     end
+    ImGui.EndChild()
     ImGui.Separator()
     ImGui.Text("Trade To:")
     ImGui.SameLine()

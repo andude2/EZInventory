@@ -4,6 +4,13 @@ local M = {}
 -- env expects:
 -- ImGui, mq, AssignmentManager, inventory_actor, extractCharacterName
 function M.render(inventoryUI, env)
+  if env.ImGui.BeginTabItem("Assignments") then
+    M.renderContent(inventoryUI, env)
+    env.ImGui.EndTabItem()
+  end
+end
+
+function M.renderContent(inventoryUI, env)
   local ImGui = env.ImGui
   local mq = env.mq
   local AssignmentManager = env.AssignmentManager
@@ -17,7 +24,6 @@ function M.render(inventoryUI, env)
     forceRefresh = false
   }
 
-  if ImGui.BeginTabItem("Assignments") then
     -- Only perform expensive computations when this tab is actually visible
     
     ImGui.Text("Character Assignment Management")
@@ -343,9 +349,6 @@ function M.render(inventoryUI, env)
         end
       end
     end
-
-    ImGui.EndTabItem()
-  end
 end
 
 return M

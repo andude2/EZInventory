@@ -1,12 +1,34 @@
 local M = {}
 
+-- Card view configuration
+local CARD_WIDTH = 280
+local CARD_HEIGHT = 90
+local CARD_PADDING = 8
+local CARDS_PER_ROW = 3
+
 -- All Characters - PC Tab
 -- env expects:
 -- ImGui, mq, json, Banking, drawItemIcon, inventory_actor,
 -- itemGroups, itemMatchesGroup, extractCharacterName,
 -- isItemBankFlagged, normalizeChar, Settings, searchText, showContextMenu,
--- toggleItemSelection, drawSelectionIndicator
+-- toggleItemSelection, drawSelectionIndicator, setSearchText,
+-- forceSelect, clearForceSelect, requestSearchFocus, clearSearchFocusRequest
 function M.render(inventoryUI, env)
+  local tabFlags = 0
+  if env.forceSelect and ImGuiTabItemFlags and ImGuiTabItemFlags.SetSelected then
+    tabFlags = ImGuiTabItemFlags.SetSelected
+  end
+  local tabOpen = env.ImGui.BeginTabItem("All Characters", nil, tabFlags)
+  if env.forceSelect and env.clearForceSelect then
+    env.clearForceSelect()
+  end
+  if tabOpen then
+    M.renderContent(inventoryUI, env)
+    env.ImGui.EndTabItem()
+  end
+end
+
+function M.renderContent(inventoryUI, env)
   local ImGui = env.ImGui
   local mq = env.mq
   local json = env.json
@@ -20,12 +42,103 @@ function M.render(inventoryUI, env)
   local normalizeChar = env.normalizeChar
   local Settings = env.Settings or {}
   local searchText = env.searchText or ""
+  local setSearchText = env.setSearchText
   local showContextMenu = env.showContextMenu
   local toggleItemSelection = env.toggleItemSelection
   local drawSelectionIndicator = env.drawSelectionIndicator
+  local requestSearchFocus = env.requestSearchFocus == true
+  local clearSearchFocusRequest = env.clearSearchFocusRequest
+  local function asXY(value)
+    if type(value) == "table" then
+      local x = tonumber(value.x or value.X or value[1]) or 0
+      local y = tonumber(value.y or value.Y or value[2]) or 0
+      return x, y
+    end
+    return 0, 0
+  end
 
-  if ImGui.BeginTabItem("All Characters") then
-    -- Periodically refresh bank flags so we can mark flagged items in the list
+  local function applySearchValue(value)
+    searchText = tostring(value or "")
+    if setSearchText then
+      setSearchText(searchText)
+    end
+    inventoryUI.pcCurrentPage = 1
+  end
+
+  local function append_unique(values, value)
+    for _, existing in ipairs(values) do
+      if existing == value then return end
+    end
+    table.insert(values, value)
+  end
+
+  local function decode_aug_slot_types(rawValue)
+    local slotTypes = {}
+
+    local function decode_single_numeric(num)
+      if not num or num <= 0 then return end
+      if num <= 64 then
+        append_unique(slotTypes, num)
+        return
+      end
+      local bitPos = 1
+      local remaining = math.floor(num)
+      while remaining > 0 and bitPos <= 64 do
+        local bit = remaining % 2
+        if bit == 1 then append_unique(slotTypes, bitPos) end
+        remaining = (remaining - bit) / 2
+        bitPos = bitPos + 1
+      end
+    end
+
+    if type(rawValue) == "number" then
+      decode_single_numeric(rawValue)
+    else
+      local valueText = tostring(rawValue or "")
+      local foundNumber = false
+      for numberText in valueText:gmatch("(%d+)") do
+        local asNumber = tonumber(numberText)
+        if asNumber and asNumber > 0 then
+          decode_single_numeric(asNumber)
+          foundNumber = true
+        end
+      end
+      if not foundNumber then
+        local numeric = tonumber(valueText)
+        if numeric then decode_single_numeric(numeric) end
+      end
+    end
+
+    table.sort(slotTypes, function(a, b) return a < b end)
+    return slotTypes
+  end
+
+  local function get_augment_type_display(item)
+    if not item then return "--", "" end
+    local itemType = tostring(item.itemtype or item.type or ""):lower()
+    local rawAugType = item.augType
+      or item.augtype
+      or item.AugType
+      or item.augmentType
+      or item.AugmentType
+      or item.augmenttype
+      or item.aug_slot_type
+
+    if (not rawAugType or tonumber(rawAugType or 0) == 0) and not itemType:find("augment") then
+      return "--", ""
+    end
+
+    local decoded = decode_aug_slot_types(rawAugType)
+    if #decoded > 0 then
+      return table.concat(decoded, ", "), tostring(rawAugType or "")
+    end
+    if rawAugType and tostring(rawAugType) ~= "" and tostring(rawAugType) ~= "0" then
+      return tostring(rawAugType), tostring(rawAugType)
+    end
+    return "--", ""
+  end
+
+  -- Periodically refresh bank flags so we can mark flagged items in the list
     local now = os.time()
     inventoryUI.peerBankFlagsLastRequest = inventoryUI.peerBankFlagsLastRequest or 0
     if (now - inventoryUI.peerBankFlagsLastRequest) > 5 then
@@ -54,6 +167,25 @@ function M.render(inventoryUI, env)
     inventoryUI.pcItemsPerPage = inventoryUI.pcItemsPerPage or 50
     inventoryUI.pcTotalPages = inventoryUI.pcTotalPages or 1
 
+    local function resetAllFilters(includeSearchText)
+      inventoryUI.sourceFilter = "All"
+      inventoryUI.filterNoDrop = false
+      inventoryUI.itemTypeFilter = "All"
+      inventoryUI.excludeItemTypes = {}
+      inventoryUI.classFilter = "All"
+      inventoryUI.raceFilter = "All"
+      inventoryUI.minValueFilter = 0
+      inventoryUI.maxValueFilter = 999999999
+      inventoryUI.minTributeFilter = 0
+      inventoryUI.sortColumn = "none"
+      inventoryUI.sortDirection = "asc"
+      inventoryUI.showValueFilters = false
+      inventoryUI.pcCurrentPage = 1
+      if includeSearchText then
+        applySearchValue("")
+      end
+    end
+
     -- Build filter state signature
     local excludeItemTypesStr = table.concat(inventoryUI.excludeItemTypes or {}, ",")
     local currentFilterState = string.format("%s_%s_%s_%s_%s_%s_%d_%d_%d_%s_%s",
@@ -80,18 +212,27 @@ function M.render(inventoryUI, env)
       local results = {}
       local searchTerm = (searchText or ""):lower()
 
-      local function nameOrAugMatches(item)
-        if not item then return false end
-        if searchTerm == "" then return true end
-        local nm = (item.name or ""):lower()
-        if nm:find(searchTerm) then return true end
+      local function getSearchMatch(item)
+        if not item then return false, "", "", "", "" end
+        if searchTerm == "" then return true, "", "", "", "" end
+
+        local itemName = tostring(item.name or "")
+        local itemStart, itemEnd = itemName:lower():find(searchTerm, 1, true)
+        if itemStart and itemEnd then
+          return true, itemName, "item", itemName, itemName:sub(itemStart, itemEnd)
+        end
+
         for i = 1, 6 do
           local aug = item["aug" .. i .. "Name"]
-          if aug and type(aug) == "string" and aug:lower():find(searchTerm) then
-            return true
+          if aug and type(aug) == "string" and aug ~= "" then
+            local augStart, augEnd = aug:lower():find(searchTerm, 1, true)
+            if augStart and augEnd then
+              return true, aug, "augment", aug, aug:sub(augStart, augEnd)
+            end
           end
         end
-        return false
+
+        return false, "", "", "", ""
       end
 
       local function passesFilters(item)
@@ -128,12 +269,17 @@ function M.render(inventoryUI, env)
         if invData then
           local function addResult(item, sourceLabel)
             if not item then return end
-            if nameOrAugMatches(item) and passesFilters(item) then
+            local matchesSearch, matchText, matchType, matchField, matchFragment = getSearchMatch(item)
+            if matchesSearch and passesFilters(item) then
               local copy = {}
               for k, v in pairs(item) do copy[k] = v end
               copy.peerName = invData.name or "unknown"
               copy.peerServer = invData.server or "unknown"
               copy.source = sourceLabel
+              copy.matchText = matchText or ""
+              copy.matchType = matchType or ""
+              copy.matchField = matchField or ""
+              copy.matchFragment = matchFragment or ""
               table.insert(results, copy)
             end
           end
@@ -179,6 +325,10 @@ function M.render(inventoryUI, env)
             A, B = (a.peerName or ""):lower(), (b.peerName or ""):lower()
           elseif col == "type" then
             A, B = (a.itemtype or a.type or ""):lower(), (b.itemtype or b.type or ""):lower()
+          elseif col == "augtype" then
+            local augA = select(1, get_augment_type_display(a))
+            local augB = select(1, get_augment_type_display(b))
+            A, B = tostring(augA or ""), tostring(augB or "")
           elseif col == "qty" then
             A, B = tonumber(a.qty) or 0, tonumber(b.qty) or 0
           else
@@ -190,6 +340,32 @@ function M.render(inventoryUI, env)
 
       return results
     end
+
+    ImGui.Text("Search:")
+    ImGui.SameLine()
+    ImGui.SetNextItemWidth(320)
+    if requestSearchFocus and ImGui.SetKeyboardFocusHere then
+      ImGui.SetKeyboardFocusHere()
+      if clearSearchFocusRequest then
+        clearSearchFocusRequest()
+      end
+      requestSearchFocus = false
+    end
+    local updatedSearchText, submitted = ImGui.InputText("##AllCharsSearch", searchText or "", ImGuiInputTextFlags.EnterReturnsTrue)
+    if updatedSearchText ~= searchText then
+      applySearchValue(updatedSearchText)
+    elseif submitted then
+      inventoryUI.pcCurrentPage = 1
+    end
+    ImGui.SameLine()
+    if ImGui.Button("Clear##AllCharsSearch", 70, 0) then
+      applySearchValue("")
+    end
+    ImGui.SameLine()
+    if ImGui.Button("Reset##AllCharsSearch", 70, 0) then
+      resetAllFilters(true)
+    end
+    ImGui.Separator()
 
     local results = enhancedSearchAcrossPeers()
     local resultCount = #results
@@ -367,6 +543,7 @@ function M.render(inventoryUI, env)
           { "tribute", "Tribute" },
           { "peer",    "Character" },
           { "type",    "Item Type" },
+          { "augtype", "Aug Type" },
           { "qty",     "Quantity" },
         }
         for _, opt in ipairs(sortOptions) do
@@ -402,25 +579,13 @@ function M.render(inventoryUI, env)
       ImGui.SameLine()
       ImGui.SetCursorPosX(windowWidth - 120)
       if ImGui.Button("Clear All Filters", 120, 0) then
-        inventoryUI.sourceFilter = "All"
-        inventoryUI.filterNoDrop = false
-        inventoryUI.itemTypeFilter = "All"
-        inventoryUI.excludeItemTypes = {}
-        inventoryUI.classFilter = "All"
-        inventoryUI.raceFilter = "All"
-        inventoryUI.minValueFilter = 0
-        inventoryUI.maxValueFilter = 999999999
-        inventoryUI.minTributeFilter = 0
-        inventoryUI.sortColumn = "none"
-        inventoryUI.showValueFilters = false
-        inventoryUI.pcCurrentPage = 1
+        resetAllFilters(false)
       end
     end
 
     -- No results
     if resultCount == 0 then
       ImGui.Text("No matching items found with current filters.")
-      ImGui.EndTabItem()
       return
     end
 
@@ -469,8 +634,176 @@ function M.render(inventoryUI, env)
 
     ImGui.Separator()
 
+    -- View mode toggle
+    inventoryUI.allCharsViewMode = inventoryUI.allCharsViewMode or "table"
+    ImGui.PushStyleColor(ImGuiCol.Button, inventoryUI.allCharsViewMode == "table" and ImVec4(0.2, 0.6, 0.8, 1.0) or ImVec4(0.3, 0.3, 0.3, 1.0))
+    if ImGui.Button("Table View", 80, 0) then inventoryUI.allCharsViewMode = "table" end
+    ImGui.PopStyleColor()
+    ImGui.SameLine()
+    ImGui.PushStyleColor(ImGuiCol.Button, inventoryUI.allCharsViewMode == "cards" and ImVec4(0.2, 0.6, 0.8, 1.0) or ImVec4(0.3, 0.3, 0.3, 1.0))
+    if ImGui.Button("Card View", 80, 0) then inventoryUI.allCharsViewMode = "cards" end
+    ImGui.PopStyleColor()
+    ImGui.Separator()
+
     -- Colors for columns
     local sourceColors = { Equipped = { 0.75, 0.0, 0.0, 1.0 }, Inventory = { 0.3, 0.8, 0.3, 1.0 }, Bank = { 0.4, 0.4, 0.8, 1.0 } }
+
+    -- Card View
+    if inventoryUI.allCharsViewMode == "cards" then
+      local windowWidth = ImGui.GetWindowContentRegionWidth()
+      local cardsPerRow = math.max(1, math.floor((windowWidth - 20) / (CARD_WIDTH + CARD_PADDING)))
+      
+      for idx = startIdx, endIdx do
+        local item = results[idx]
+        if item then
+          local col = (idx - startIdx) % cardsPerRow
+          if col > 0 then
+            ImGui.SameLine(0, CARD_PADDING)
+          end
+          
+          -- Render card
+          local cardStartX, cardStartY = ImGui.GetCursorScreenPos()
+          local drawList = ImGui.GetWindowDrawList()
+          local cardId = string.format("item_card_%s_%s_%d", item.peerName or "unknown", item.name or "unnamed", idx)
+          ImGui.PushID(cardId)
+          
+          local uniqueKey = string.format("%s_%s_%s_%s", item.peerName or "unknown", item.name or "unnamed", item.source or "unknown", item.slotid or "noslot")
+          local isSelected = inventoryUI.multiSelectMode and inventoryUI.selectedItems and inventoryUI.selectedItems[uniqueKey]
+          local sourceColor = sourceColors[item.source] or { 0.8, 0.8, 0.8, 1.0 }
+          
+          local cardEndX = cardStartX + CARD_WIDTH
+          local cardEndY = cardStartY + CARD_HEIGHT
+          local bgColor = isSelected and ImVec4(0.15, 0.35, 0.15, 1.0) or ImVec4(0.12, 0.12, 0.14, 1.0)
+          local borderColor = isSelected and ImVec4(0.0, 1.0, 0.0, 1.0) or ImVec4(sourceColor[1], sourceColor[2], sourceColor[3], 0.6)
+          
+          drawList:AddRectFilled(ImVec2(cardStartX, cardStartY), ImVec2(cardEndX, cardEndY), ImGui.GetColorU32(bgColor), 6.0)
+          drawList:AddRect(ImVec2(cardStartX, cardStartY), ImVec2(cardEndX, cardEndY), ImGui.GetColorU32(borderColor), 6.0, 0, 2.0)
+          
+          ImGui.SetCursorPosX(ImGui.GetCursorPosX() + CARD_PADDING)
+          ImGui.SetCursorPosY(ImGui.GetCursorPosY() + CARD_PADDING)
+          
+          -- Icon + Name
+          if item.icon and item.icon ~= 0 then
+            drawItemIcon(item.icon, 32, 32)
+            ImGui.SameLine()
+          end
+          
+          local itemName = item.name or "Unknown"
+          local nameWidth = CARD_WIDTH - 50
+          ImGui.PushStyleColor(ImGuiCol.Text, sourceColor[1], sourceColor[2], sourceColor[3], 1.0)
+          local displayName = itemName
+          local textWidth = ImGui.CalcTextSize(itemName)
+          if type(textWidth) == "table" then textWidth = textWidth.x end
+          if textWidth > nameWidth then
+            local maxChars = math.floor(nameWidth / 7)
+            if #itemName > maxChars then
+              displayName = itemName:sub(1, maxChars - 3) .. "..."
+            end
+          end
+          
+          local clicked = ImGui.Selectable(displayName .. "##name", isSelected, 0, ImVec2(nameWidth, 20))
+          if clicked then
+            if toggleItemSelection then toggleItemSelection(uniqueKey, item) end
+          end
+          if ImGui.IsItemHovered() and itemName ~= displayName then
+            ImGui.SetTooltip(itemName)
+          end
+          if inventoryUI.multiSelectMode and drawSelectionIndicator then
+            drawSelectionIndicator(uniqueKey, ImGui.IsItemHovered())
+          end
+          if ImGui.IsItemClicked(ImGuiMouseButton.Right) and showContextMenu then
+            local mouseX, mouseY = ImGui.GetMousePos()
+            showContextMenu(item, item.peerName or (inventoryUI.selectedPeer or ""), mouseX, mouseY)
+          end
+          ImGui.PopStyleColor()
+
+          if (searchText or "") ~= "" and item.matchText and item.matchText ~= "" and (item.matchType == "augment" or item.matchText ~= (item.name or "")) then
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + CARD_PADDING)
+            ImGui.Text("(")
+            ImGui.SameLine(0, 0)
+            if item.matchType == "augment" then
+              ImGui.Text("Aug: ")
+              ImGui.SameLine(0, 0)
+            end
+            ImGui.PushStyleColor(ImGuiCol.Text, 0.2, 0.9, 0.2, 1.0)
+            ImGui.Text(item.matchText)
+            local matchHovered = ImGui.IsItemHovered()
+            ImGui.PopStyleColor()
+            ImGui.SameLine(0, 0)
+            ImGui.Text(")")
+            if matchHovered and item.matchFragment and item.matchFragment ~= "" then
+              ImGui.SetTooltip("Matched text: " .. tostring(item.matchFragment))
+            end
+          end
+          
+          -- Peer name
+          ImGui.SetCursorPosX(ImGui.GetCursorPosX() + CARD_PADDING)
+          ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 2)
+          ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.9, 1.0)
+          if ImGui.Selectable((item.peerName or "unknown") .. "##peer", false, 0, ImVec2(100, 16)) then
+            if inventory_actor and inventory_actor.send_inventory_command then
+              inventory_actor.send_inventory_command(item.peerName, "foreground", {})
+            end
+          end
+          if ImGui.IsItemHovered() then
+            ImGui.SetTooltip("Click to foreground this character")
+          end
+          ImGui.PopStyleColor()
+          
+          -- Quantity
+          local qty = tonumber(item.qty) or 1
+          if qty > 1 then
+            ImGui.SameLine()
+            ImGui.PushStyleColor(ImGuiCol.Text, 0.4, 0.8, 1.0, 1.0)
+            ImGui.Text(string.format("x%d", qty))
+            ImGui.PopStyleColor()
+          end
+          
+          -- Value and Tribute (bottom right)
+          local valueText
+          local copperValue = tonumber(item.value) or 0
+          local platValue = copperValue / 1000
+          if platValue >= 1000000 then
+            valueText = string.format("%.1fM pp", platValue / 1000000)
+          elseif platValue >= 10000 then
+            valueText = string.format("%.1fK pp", platValue / 1000)
+          elseif platValue > 0 then
+            valueText = string.format("%.0f pp", platValue)
+          end
+          
+          if valueText then
+            ImGui.SameLine()
+            local valueTextWidth = ImGui.CalcTextSize(valueText)
+            if type(valueTextWidth) == "table" then valueTextWidth = valueTextWidth.x end
+            local _, valuePosY = asXY(ImGui.GetCursorScreenPos())
+            ImGui.SetCursorScreenPos(ImVec2(cardEndX - valueTextWidth - CARD_PADDING - 10, valuePosY))
+            ImGui.PushStyleColor(ImGuiCol.Text, 0.9, 0.8, 0.4, 1.0)
+            ImGui.Text(valueText)
+            ImGui.PopStyleColor()
+          end
+          
+          local tribute = tonumber(item.tribute) or 0
+          if tribute > 0 then
+            ImGui.SameLine()
+            local _, tributePosY = asXY(ImGui.GetCursorScreenPos())
+            ImGui.SetCursorScreenPos(ImVec2(cardEndX - 30, tributePosY))
+            ImGui.PushStyleColor(ImGuiCol.Text, 0.6, 0.4, 0.8, 0.8)
+            ImGui.Text(string.format("T:%d", tribute))
+            ImGui.PopStyleColor()
+          end
+          
+          ImGui.SetCursorScreenPos(ImVec2(cardStartX, cardEndY + CARD_PADDING))
+          ImGui.Dummy(1, 1)
+          ImGui.PopID()
+          
+          if col == cardsPerRow - 1 and idx < endIdx then
+            ImGui.NewLine()
+          end
+        end
+      end
+      
+      return
+    end
 
     -- Table with headers
     local function borFlag(...)
@@ -479,15 +812,19 @@ function M.render(inventoryUI, env)
       local s = 0; for i = 1, select('#', ...) do s = s + (select(i, ...) or 0) end; return s
     end
 
-    if ImGui.BeginTable("AllPeersEnhancedTable", 8, borFlag(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.ScrollX, ImGuiTableFlags.ScrollY, ImGuiTableFlags.Hideable, ImGuiTableFlags.ContextMenuInBody), 0, 500) then
-      ImGui.TableSetupColumn("Peer", ImGuiTableColumnFlags.WidthFixed, 80)
-      ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, ImGuiTableColumnFlags.NoSort, 30)
-      ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
-      ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 30)
-      ImGui.TableSetupColumn("Value", borFlag(ImGuiTableColumnFlags.WidthFixed, ImGuiTableColumnFlags.DefaultHide), 70)
-      ImGui.TableSetupColumn("Tribute", borFlag(ImGuiTableColumnFlags.WidthFixed, ImGuiTableColumnFlags.DefaultHide), 70)
-      ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 40)
-      ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthStretch, ImGuiTableColumnFlags.NoSort)
+    local actionButtonWidth = 56
+    local actionButtonSpacing = 4
+    local actionColumnWidth = (actionButtonWidth * 2) + actionButtonSpacing + 4
+    if ImGui.BeginTable("AllPeersEnhancedTable_v3", 9, borFlag(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.ScrollX, ImGuiTableFlags.ScrollY, ImGuiTableFlags.Hideable, ImGuiTableFlags.ContextMenuInBody, ImGuiTableFlags.NoSavedSettings), 0, 500) then
+      ImGui.TableSetupColumn("Peer", ImGuiTableColumnFlags.WidthFixed, 90)
+      ImGui.TableSetupColumn("Icon", borFlag(ImGuiTableColumnFlags.WidthFixed, ImGuiTableColumnFlags.NoSort), 28)
+      ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthFixed, 280)
+      ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 70)
+      ImGui.TableSetupColumn("Aug Type", ImGuiTableColumnFlags.WidthFixed, 78)
+      ImGui.TableSetupColumn("Value", borFlag(ImGuiTableColumnFlags.WidthFixed, ImGuiTableColumnFlags.DefaultHide), 72)
+      ImGui.TableSetupColumn("Tribute", borFlag(ImGuiTableColumnFlags.WidthFixed, ImGuiTableColumnFlags.DefaultHide), 72)
+      ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 45)
+      ImGui.TableSetupColumn("Action", borFlag(ImGuiTableColumnFlags.WidthFixed, ImGuiTableColumnFlags.NoSort), actionColumnWidth)
 
       ImGui.PushStyleColor(ImGuiCol.Text, 1.0, 1.0, 0.8, 1.0)
       ImGui.TableHeadersRow()
@@ -498,7 +835,7 @@ function M.render(inventoryUI, env)
       if sortSpecs and sortSpecs.SpecsDirty and sortSpecs.Specs and sortSpecs.SpecsCount > 0 then
         local spec = sortSpecs.Specs[1]
         if spec and spec.ColumnIndex ~= nil and spec.SortDirection ~= nil then
-          local colMap = { [0] = "peer", [2] = "name", [3] = "type", [4] = "value", [5] = "tribute", [6] = "qty" }
+          local colMap = { [0] = "peer", [2] = "name", [3] = "type", [4] = "augtype", [5] = "value", [6] = "tribute", [7] = "qty" }
           local col = colMap[spec.ColumnIndex]
           if col then
             inventoryUI.sortColumn = col
@@ -603,8 +940,35 @@ function M.render(inventoryUI, env)
           end
           if ImGui.IsItemHovered() then ImGui.SetTooltip(string.format("Source: %s", item.source or "Unknown")) end
 
+          if (searchText or "") ~= "" and item.matchText and item.matchText ~= "" and (item.matchType == "augment" or item.matchText ~= (item.name or "")) then
+            ImGui.SameLine(0, 4)
+            ImGui.Text("(")
+            ImGui.SameLine(0, 0)
+            if item.matchType == "augment" then
+              ImGui.Text("Aug: ")
+              ImGui.SameLine(0, 0)
+            end
+            ImGui.PushStyleColor(ImGuiCol.Text, 0.2, 0.9, 0.2, 1.0)
+            ImGui.Text(item.matchText)
+            local matchHovered = ImGui.IsItemHovered()
+            ImGui.PopStyleColor()
+            ImGui.SameLine(0, 0)
+            ImGui.Text(")")
+            if matchHovered and item.matchFragment and item.matchFragment ~= "" then
+              ImGui.SetTooltip("Matched text: " .. tostring(item.matchFragment))
+            end
+          end
+
           -- Type
           ImGui.TableNextColumn(); ImGui.Text(item.itemtype or item.type or "Unknown")
+
+          -- Aug Type (for augmentation items)
+          ImGui.TableNextColumn()
+          local augTypeDisplay, augTypeRaw = get_augment_type_display(item)
+          ImGui.Text(augTypeDisplay)
+          if augTypeRaw ~= "" and ImGui.IsItemHovered() then
+            ImGui.SetTooltip(string.format("Raw AugType: %s", augTypeRaw))
+          end
 
           -- Value
           ImGui.TableNextColumn()
@@ -648,7 +1012,7 @@ function M.render(inventoryUI, env)
             ImGui.PushStyleColor(ImGuiCol.Button, 0.2, 0.5, 0.8, 1.0)
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0.3, 0.6, 0.9, 1.0)
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0.1, 0.4, 0.7, 1.0)
-            if ImGui.Button("Pickup##" .. uid) then
+            if ImGui.Button("Pickup##" .. uid, actionColumnWidth - 6, 0) then
               if item.source == "Bank" then
                 local BankSlotId = tonumber(item.bankslotid) or 0
                 local SlotId = tonumber(item.slotid) or -1
@@ -676,22 +1040,19 @@ function M.render(inventoryUI, env)
               ImGui.PushStyleColor(ImGuiCol.Button, 0.6, 0.4, 0.2, 1.0)
               ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0.7, 0.5, 0.3, 1.0)
               ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0.5, 0.3, 0.1, 1.0)
-              if ImGui.Button("Trade##" .. uid) then
+              if ImGui.Button("Trade##" .. uid, actionButtonWidth, 0) then
                 inventoryUI.showGiveItemPanel = true
                 inventoryUI.selectedGiveItem = itemName
                 inventoryUI.selectedGiveTarget = peerName
                 inventoryUI.selectedGiveSource = item.peerName
               end
               ImGui.PopStyleColor(3)
-
-              ImGui.SameLine(); ImGui.PushStyleColor(ImGuiCol.Text, 0.5, 0.5, 0.5, 1.0); ImGui.Text("--"); ImGui
-                  .PopStyleColor(); ImGui.SameLine()
-
-              local buttonLabel = string.format("Give to %s##%s", inventoryUI.selectedPeer or "Unknown", uid)
+              ImGui.SameLine(0, actionButtonSpacing)
+              local buttonLabel = "Give##" .. uid
               ImGui.PushStyleColor(ImGuiCol.Button, 0, 0.6, 0, 1)
               ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0, 0.8, 0, 1)
               ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0, 1.0, 0, 1)
-              if ImGui.Button(buttonLabel) then
+              if ImGui.Button(buttonLabel, actionButtonWidth, 0) then
                 local giveRequest = {
                   name = itemName,
                   to = inventoryUI.selectedPeer,
@@ -707,6 +1068,9 @@ function M.render(inventoryUI, env)
                   printf("Requested %s to give %s to %s", item.peerName, itemName, inventoryUI.selectedPeer)
                 end
               end
+              if ImGui.IsItemHovered() then
+                ImGui.SetTooltip(string.format("Give to %s", inventoryUI.selectedPeer or "Unknown"))
+              end
               ImGui.PopStyleColor(3)
             else
               ImGui.PushStyleColor(ImGuiCol.Text, 0.8, 0.3, 0.3, 1.0); ImGui.Text("No Drop"); ImGui.PopStyleColor()
@@ -720,8 +1084,6 @@ function M.render(inventoryUI, env)
       ImGui.EndTable()
     end
 
-    ImGui.EndTabItem()
-  end
 end
 
 return M

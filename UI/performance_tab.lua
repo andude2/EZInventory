@@ -3,6 +3,13 @@ local M = {}
 -- Performance & Loading tab
 -- env: ImGui, mq, Settings, UpdateInventoryActorConfig, SaveConfigWithStatsUpdate, inventory_actor, OnStatsLoadingModeChanged
 function M.render(inventoryUI, env)
+  if env.ImGui.BeginTabItem("Performance & Loading") then
+    M.renderContent(inventoryUI, env)
+    env.ImGui.EndTabItem()
+  end
+end
+
+function M.renderContent(inventoryUI, env)
   local ImGui = env.ImGui
   local mq = env.mq
   local Settings = env.Settings
@@ -11,7 +18,6 @@ function M.render(inventoryUI, env)
   local inventory_actor = env.inventory_actor
   local OnStatsLoadingModeChanged = env.OnStatsLoadingModeChanged
 
-  if ImGui.BeginTabItem("Performance & Loading") then
     ImGui.Text("Configure how inventory data is loaded and processed")
     ImGui.Separator()
 
@@ -111,8 +117,8 @@ function M.render(inventoryUI, env)
           ImGui.Unindent()
         end
       end
-      ImGui.EndChild()
     end
+    ImGui.EndChild()
 
     if ImGui.BeginChild("PerformanceSection", 0, 150, true, ImGuiChildFlags.Border) then
       ImGui.Text("Performance Metrics")
@@ -186,8 +192,8 @@ function M.render(inventoryUI, env)
         ImGui.Text("*** Consider switching to Selective mode for better performance")
         ImGui.PopStyleColor()
       end
-      ImGui.EndChild()
     end
+    ImGui.EndChild()
 
     if ImGui.BeginChild("ActionsSection", 0, 80, true, ImGuiChildFlags.Border) then
       ImGui.Text("* Actions")
@@ -229,8 +235,8 @@ function M.render(inventoryUI, env)
         ImGui.Text("Loading inventory data...")
         ImGui.PopStyleColor()
       end
-      ImGui.EndChild()
     end
+    ImGui.EndChild()
 
     if ImGui.CollapsingHeader("Advanced Settings") then
       ImGui.Indent()
@@ -268,9 +274,6 @@ function M.render(inventoryUI, env)
 
       ImGui.Unindent()
     end
-
-    ImGui.EndTabItem()
-  end
 end
 
 return M

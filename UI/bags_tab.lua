@@ -6,6 +6,13 @@ local M = {}
 -- showContextMenu, extractCharacterName, drawLiveItemSlot, drawEmptySlot, drawItemSlot,
 -- BAG_CELL_SIZE, BAG_MAX_SLOTS_PER_BAG, showItemBackground, searchText
 function M.render(inventoryUI, env)
+  if env.ImGui.BeginTabItem("Bags") then
+    M.renderContent(inventoryUI, env)
+    env.ImGui.EndTabItem()
+  end
+end
+
+function M.renderContent(inventoryUI, env)
   local ImGui = env.ImGui
   local mq = env.mq
   local drawItemIcon = env.drawItemIcon
@@ -20,8 +27,7 @@ function M.render(inventoryUI, env)
   local BAG_CELL_SIZE = env.BAG_CELL_SIZE
   local BAG_MAX_SLOTS_PER_BAG = env.BAG_MAX_SLOTS_PER_BAG
 
-  if ImGui.BeginTabItem("Bags") then
-    if ImGui.BeginTabBar("BagsViewTabs") then
+  if ImGui.BeginTabBar("BagsViewTabs") then
       -- Table View
       if ImGui.BeginTabItem("Table View") then
         inventoryUI.bagsView = "table"
@@ -326,8 +332,6 @@ function M.render(inventoryUI, env)
       end
       ImGui.EndTabBar()
     end
-    ImGui.EndTabItem()
-  end
 end
 
 return M

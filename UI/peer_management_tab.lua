@@ -4,6 +4,13 @@ local M = {}
 -- env: ImGui, mq, inventory_actor, Settings, SettingsFile, getPeerConnectionStatus, requestPeerPaths,
 --      extractCharacterName, sendLuaRunToPeer, broadcastLuaRun
 function M.render(inventoryUI, env)
+  if env.ImGui.BeginTabItem("Peer Management") then
+    M.renderContent(inventoryUI, env)
+    env.ImGui.EndTabItem()
+  end
+end
+
+function M.renderContent(inventoryUI, env)
   local ImGui = env.ImGui
   local mq = env.mq
   local ia = env.inventory_actor
@@ -15,7 +22,6 @@ function M.render(inventoryUI, env)
   local sendLuaRunToPeer = env.sendLuaRunToPeer
   local broadcastLuaRun = env.broadcastLuaRun
 
-  if ImGui.BeginTabItem("Peer Management") then
     ImGui.Text("Connection Management and Peer Discovery")
     ImGui.Separator()
     local connectionMethod, connectedPeers = getPeerConnectionStatus()
@@ -210,9 +216,6 @@ function M.render(inventoryUI, env)
       ImGui.Text(string.format("Actor Initialized: %s", ia.is_initialized() and "Yes" or "No"))
       ImGui.Unindent()
     end
-
-    ImGui.EndTabItem()
-  end
 end
 
 return M

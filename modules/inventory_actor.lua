@@ -444,14 +444,174 @@ local function get_valid_slots(item)
     return slots
 end
 
-local function scan_augment_links(item)
+local FOCUS_TYPE_LOOKUP = {
+    [1] = "Cleave",
+    [2] = "Ferocity",
+    [124] = "Spell Damage",
+    [125] = "Healing",
+    [126] = "Resist",
+    [127] = "Cast Time",
+    [128] = "Duration",
+    [129] = "Range",
+    [130] = "Hate",
+    [131] = "Reagent",
+    [132] = "Mana Cost",
+    [133] = "Stun Time",
+}
+
+local RESIST_TYPE_LOOKUP = {
+    [1] = "Magic",
+    [2] = "Fire",
+    [3] = "Cold",
+    [4] = "Poison",
+    [5] = "Disease",
+    [6] = "Chromatic",
+    [7] = "Prismatic",
+    [8] = "Physical",
+    [9] = "Corruption",
+}
+
+local function safe_focus_get(func, default)
+    default = default or 0
+    local ok, result = pcall(func)
+    if ok and result ~= nil then
+        return result
+    end
+    return default
+end
+
+local function parse_focus_spell(spell)
+    local focusEntries = {}
+    local numEffects = tonumber(safe_focus_get(function() return spell.NumEffects() end, 0)) or 0
+    if numEffects <= 0 then
+        return focusEntries
+    end
+
+    local effectiveLevel = 0
+    local resistType = ""
+    local byType = {}
+
+    for effect = 1, numEffects do
+        local attrib = tonumber(safe_focus_get(function() return spell.Attrib(effect)() end, 0)) or 0
+        if attrib == 134 then
+            effectiveLevel = tonumber(safe_focus_get(function() return spell.Base(effect)() end, 0)) or 0
+        elseif attrib == 135 then
+            local resistIndex = tonumber(safe_focus_get(function() return spell.Base(effect)() end, 0)) or 0
+            resistType = RESIST_TYPE_LOOKUP[resistIndex] or ""
+        elseif (attrib >= 124 and attrib <= 133) or attrib == 1 or attrib == 2 then
+            local maxEffect = tonumber(safe_focus_get(function() return spell.Base2(effect)() end, 0)) or 0
+            if maxEffect == 0 then
+                maxEffect = tonumber(safe_focus_get(function() return spell.Base(effect)() end, 0)) or 0
+            end
+            byType[attrib] = maxEffect
+        end
+    end
+
+    for focusType, maxEffect in pairs(byType) do
+        table.insert(focusEntries, {
+            focusName = FOCUS_TYPE_LOOKUP[focusType] or ("Focus " .. tostring(focusType)),
+            focusType = focusType,
+            maxEffect = maxEffect,
+            effectiveLevel = effectiveLevel,
+            resistType = resistType,
+            rank = 0,
+        })
+    end
+
+    table.sort(focusEntries, function(a, b)
+        return (a.focusType or 0) < (b.focusType or 0)
+    end)
+    return focusEntries
+end
+
+local function parse_worn_spell(item)
+    local entries = {}
+    local wornSpell = item.Worn and item.Worn.Spell
+    if not wornSpell then
+        return entries
+    end
+
+    entries = parse_focus_spell(wornSpell)
+    local rank = tonumber(safe_focus_get(function() return wornSpell.Rank() end, 0)) or 0
+    for _, entry in ipairs(entries) do
+        entry.rank = rank
+    end
+
+    -- Some servers expose cleave/ferocity as named worn spells without parseable attrib data.
+    if #entries == 0 then
+        local wornName = tostring(safe_focus_get(function() return wornSpell.Name() end, ""))
+        local lower = wornName:lower()
+        if lower:find("cleave", 1, true) then
+            table.insert(entries, {
+                focusName = "Cleave",
+                focusType = 1,
+                maxEffect = 0,
+                effectiveLevel = 0,
+                resistType = "",
+                rank = rank,
+            })
+        end
+        if lower:find("ferocity", 1, true) then
+            table.insert(entries, {
+                focusName = "Ferocity",
+                focusType = 2,
+                maxEffect = 0,
+                effectiveLevel = 0,
+                resistType = "",
+                rank = rank,
+            })
+        end
+    end
+
+    return entries
+end
+
+local function scan_augment_links(item, include_effects)
     local data = {}
+    local function safe_aug_get(func, default)
+        default = default or 0
+        local ok, result = pcall(func)
+        if ok and result ~= nil then
+            return result
+        end
+        return default
+    end
+
     for i = 1, 6 do
-        local augItem = item.AugSlot(i).Item
+        local augSlot = item.AugSlot(i)
+        -- Slot metadata (also used by empty-slot augment views)
+        data["aug" .. i .. "SlotVisible"] = safe_aug_get(function() return augSlot.Visible() end, 0)
+        data["aug" .. i .. "SlotEmpty"] = safe_aug_get(function() return augSlot.Empty() end, 0)
+        data["aug" .. i .. "SlotType"] = safe_aug_get(function() return augSlot.Type() end, 0)
+
+        local augItem = augSlot.Item
         if augItem() then
             data["aug" .. i .. "Name"] = augItem.Name()
             data["aug" .. i .. "link"] = augItem.ItemLink("CLICKABLE")()
             data["aug" .. i .. "icon"] = augItem.Icon()
+            data["aug" .. i .. "Id"] = safe_aug_get(function() return augItem.ID() end, 0)
+            data["aug" .. i .. "AC"] = safe_aug_get(function() return augItem.AC() end, 0)
+            data["aug" .. i .. "HP"] = safe_aug_get(function() return augItem.HP() end, 0)
+            data["aug" .. i .. "Mana"] = safe_aug_get(function() return augItem.Mana() end, 0)
+            -- Used by Augments tab "Fits Slot Type" column.
+            local augType = safe_aug_get(function() return augItem.AugType() end, 0)
+            if tonumber(augType) == 0 then
+                augType = data["aug" .. i .. "SlotType"] or 0
+            end
+            data["aug" .. i .. "AugType"] = augType
+            -- Keep legacy key fallback used by some UI code.
+            data["aug" .. i .. "Type"] = data["aug" .. i .. "AugType"]
+
+            if include_effects then
+                data["aug" .. i .. "FocusEffects"] = parse_focus_spell(augItem.Focus and augItem.Focus.Spell)
+                data["aug" .. i .. "WornFocusEffects"] = parse_worn_spell(augItem)
+            else
+                data["aug" .. i .. "FocusEffects"] = {}
+                data["aug" .. i .. "WornFocusEffects"] = {}
+            end
+        else
+            data["aug" .. i .. "FocusEffects"] = {}
+            data["aug" .. i .. "WornFocusEffects"] = {}
         end
     end
     return data
@@ -473,6 +633,10 @@ local function get_basic_item_info(item, include_extended_stats)
         return default
     end
 
+    if include_extended_stats == nil then
+        include_extended_stats = M.config.loadBasicStats
+    end
+
     basic.name = item.Name() or ""
     basic.id = item.ID() or 0
     basic.icon = item.Icon() or 0
@@ -480,22 +644,25 @@ local function get_basic_item_info(item, include_extended_stats)
     basic.nodrop = item.NoDrop() and 1 or 0
     basic.tradeskills = item.Tradeskills() and 1 or 0
     basic.qty = item.Stack() or 1
+    -- Keep lightweight but always provide item type metadata used by search tables.
+    basic.itemtype = safe_get(function() return item.Type() end, "")
+    basic.itemClass = safe_get(function() return item.ItemClass() end, "")
+    basic.augType = safe_get(function() return item.AugType() end, 0)
+    -- Compatibility aliases for mixed peer payloads/UI readers.
+    basic.augtype = basic.augType
+    basic.AugType = basic.augType
 
-    local augments = scan_augment_links(item)
+    local augments = scan_augment_links(item, include_extended_stats)
     for k, v in pairs(augments) do
         basic[k] = v
-    end
-
-    if include_extended_stats == nil then
-        include_extended_stats = M.config.loadBasicStats
     end
 
     if include_extended_stats then
         basic.ac = item.AC() or ""
         basic.hp = item.HP() or ""
         basic.mana = item.Mana() or ""
-        basic.itemtype = safe_get(function() return item.Type() end, "")
-        basic.itemClass = safe_get(function() return item.ItemClass() end, "")
+        basic.focusEffects = parse_focus_spell(item.Focus and item.Focus.Spell)
+        basic.wornFocusEffects = parse_worn_spell(item)
         basic.value = safe_get(function() return item.Value() end, 0)
         basic.tribute = safe_get(function() return item.Tribute() end, 0)
         basic.clickySpell = safe_get(function() return item.Clicky.Spell() end, "")
@@ -503,6 +670,9 @@ local function get_basic_item_info(item, include_extended_stats)
         basic.clickyCastTime = safe_get(function() return item.Clicky.CastTime() end, 0)
         basic.clickyRecastTime = safe_get(function() return item.Clicky.RecastTime() end, 0)
         basic.clickyEffectType = safe_get(function() return item.Clicky.EffectType() end, "")
+    else
+        basic.focusEffects = {}
+        basic.wornFocusEffects = {}
     end
 
     local classInfo = get_item_class_info(item)
