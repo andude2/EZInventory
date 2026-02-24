@@ -26,9 +26,13 @@ function M.renderContent(inventoryUI, env)
   local extractCharacterName = env.extractCharacterName
 
   if ImGui.BeginTabBar("EquippedViewTabs", ImGuiTabBarFlags.Reorderable) then
+      local tabBarOk, tabBarErr = pcall(function()
       if ImGui.BeginTabItem("Table View") then
+        local tableChildActive = false
+        local tableOk, tableErr = pcall(function()
         inventoryUI.equipView = "table"
         ImGui.BeginChild("EquippedScrollRegion", 0, 0)
+        tableChildActive = true
         -- Content of child region
         ImGui.Text("Show Columns:")
         ImGui.SameLine()
@@ -185,18 +189,34 @@ function M.renderContent(inventoryUI, env)
         end
         -- Always call EndChild after BeginChild
         ImGui.EndChild()
+        tableChildActive = false
+        end)
+        if tableChildActive then
+          ImGui.EndChild()
+        end
+        if not tableOk then
+          printf("[EZInventory] Table view render error: %s", tostring(tableErr))
+          ImGui.TextColored(1.0, 0.3, 0.3, 1.0, "Table view error. See console for details.")
+        end
         ImGui.EndTabItem()
       end
 
       if not inventoryUI.isLoadingData then
         if ImGui.BeginTabItem("Visual") then
-          ImGui.Dummy(235, 0)
+          local visualColumnsActive = false
+          local visualOk, visualErr = pcall(function()
           local armorTypes = { "All", "Plate", "Chain", "Cloth", "Leather", }
+          local statFilterModes = { "All", "Less Than", "Greater Than" }
           inventoryUI.armorTypeFilter = inventoryUI.armorTypeFilter or "All"
+          inventoryUI.visualFilterACMode = inventoryUI.visualFilterACMode or "All"
+          inventoryUI.visualFilterACValue = tonumber(inventoryUI.visualFilterACValue) or 0
+          inventoryUI.visualFilterHPMode = inventoryUI.visualFilterHPMode or "All"
+          inventoryUI.visualFilterHPValue = tonumber(inventoryUI.visualFilterHPValue) or 0
+          inventoryUI.visualFilterManaMode = inventoryUI.visualFilterManaMode or "All"
+          inventoryUI.visualFilterManaValue = tonumber(inventoryUI.visualFilterManaValue) or 0
+          ImGui.Text("Armor:")
           ImGui.SameLine()
-          ImGui.Text("Armor Type:")
-          ImGui.SameLine()
-          ImGui.SetNextItemWidth(100)
+          ImGui.SetNextItemWidth(90)
           if ImGui.BeginCombo("##ArmorTypeFilter", inventoryUI.armorTypeFilter) then
             for _, armorType in ipairs(armorTypes) do
               if ImGui.Selectable(armorType, inventoryUI.armorTypeFilter == armorType) then
@@ -204,6 +224,41 @@ function M.renderContent(inventoryUI, env)
               end
             end
             ImGui.EndCombo()
+          end
+
+          local function renderStatFilterControls(label, modeKey, valueKey)
+            ImGui.Text(label .. ":")
+            ImGui.SameLine()
+            ImGui.SetNextItemWidth(90)
+            if ImGui.BeginCombo("##" .. modeKey, inventoryUI[modeKey]) then
+              for _, mode in ipairs(statFilterModes) do
+                if ImGui.Selectable(mode, inventoryUI[modeKey] == mode) then
+                  inventoryUI[modeKey] = mode
+                end
+              end
+              ImGui.EndCombo()
+            end
+            ImGui.SameLine()
+            ImGui.SetNextItemWidth(160)
+            local inputValue = ImGui.InputInt("##" .. valueKey, inventoryUI[valueKey])
+            inventoryUI[valueKey] = math.max(0, tonumber(inputValue) or 0)
+          end
+
+          ImGui.SameLine(0, 8)
+          renderStatFilterControls("AC", "visualFilterACMode", "visualFilterACValue")
+          ImGui.SameLine(0, 8)
+          renderStatFilterControls("HP", "visualFilterHPMode", "visualFilterHPValue")
+          ImGui.SameLine(0, 8)
+          renderStatFilterControls("Mana", "visualFilterManaMode", "visualFilterManaValue")
+          ImGui.SameLine(0, 8)
+          if ImGui.Button("Reset Filters##VisualStatFilters") then
+            inventoryUI.armorTypeFilter = "All"
+            inventoryUI.visualFilterACMode = "All"
+            inventoryUI.visualFilterACValue = 0
+            inventoryUI.visualFilterHPMode = "All"
+            inventoryUI.visualFilterHPValue = 0
+            inventoryUI.visualFilterManaMode = "All"
+            inventoryUI.visualFilterManaValue = 0
           end
           ImGui.Separator()
 
@@ -247,6 +302,7 @@ function M.renderContent(inventoryUI, env)
 
           -- Create two columns: left for visual grid, right for comparison list
           ImGui.Columns(2, "EquippedColumns", true)
+          visualColumnsActive = true
           local function calculateEquippedTableWidth()
             local contentWidth = 4 * 50
             local borderWidth = 1
@@ -429,11 +485,47 @@ function M.renderContent(inventoryUI, env)
                 processedResults = filtered
               end
 
+              local function passesStatFilter(filterMode, filterValue, statValue)
+                if filterMode == "All" then return true end
+                local statNumber = tonumber(statValue)
+                if not statNumber then return false end
+                local threshold = tonumber(filterValue) or 0
+                if filterMode == "Less Than" then
+                  return statNumber < threshold
+                elseif filterMode == "Greater Than" then
+                  return statNumber > threshold
+                end
+                return true
+              end
+
+              if inventoryUI.visualFilterACMode ~= "All"
+                  or inventoryUI.visualFilterHPMode ~= "All"
+                  or inventoryUI.visualFilterManaMode ~= "All" then
+                local filtered = {}
+                for _, entry in ipairs(processedResults) do
+                  if not entry.item then
+                    table.insert(filtered, entry)
+                  else
+                    local matchesAC = passesStatFilter(inventoryUI.visualFilterACMode, inventoryUI.visualFilterACValue, entry.item.ac)
+                    local matchesHP = passesStatFilter(inventoryUI.visualFilterHPMode, inventoryUI.visualFilterHPValue, entry.item.hp)
+                    local matchesMana = passesStatFilter(inventoryUI.visualFilterManaMode, inventoryUI.visualFilterManaValue, entry.item.mana)
+                    if matchesAC and matchesHP and matchesMana then
+                      table.insert(filtered, entry)
+                    end
+                  end
+                end
+                processedResults = filtered
+              end
+
               table.sort(processedResults, function(a, b) return (a.peerName or "zzz") < (b.peerName or "zzz") end)
 
               local equippedResults, emptyResults = {}, {}
               for _, result in ipairs(processedResults) do
                 if result.item then table.insert(equippedResults, result) else table.insert(emptyResults, result) end
+              end
+
+              if #equippedResults == 0 and #emptyResults == 0 then
+                ImGui.Text("No characters match the current armor/stat filters.")
               end
 
               if #equippedResults > 0 then
@@ -549,10 +641,23 @@ function M.renderContent(inventoryUI, env)
             ImGui.Text("Click on a slot to compare it across all characters.")
           end
           ImGui.Columns(1)
+          visualColumnsActive = false
+          end)
+          if visualColumnsActive then
+            ImGui.Columns(1)
+          end
+          if not visualOk then
+            printf("[EZInventory] Visual tab render error: %s", tostring(visualErr))
+            ImGui.TextColored(1.0, 0.3, 0.3, 1.0, "Visual tab error. See console for details.")
+          end
           ImGui.EndTabItem()
         end
       else
         renderLoadingScreen("Loading Inventory Data", "Scanning items", "This may take a moment for large inventories")
+      end
+      end)
+      if not tabBarOk then
+        printf("[EZInventory] Equipped view render error: %s", tostring(tabBarErr))
       end
       ImGui.EndTabBar()
   end

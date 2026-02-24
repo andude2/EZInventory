@@ -1,6 +1,6 @@
 -- ezinventory.lua
 -- developed by psatty82
--- updated 09/04/2025
+-- updated 02/23/2026
 local mq    = require("mq")
 local ImGui = require("ImGui")
 local icons = require("mq.icons")
@@ -82,6 +82,12 @@ local Defaults            = {
     showHP                     = false,
     showMana                   = false,
     showClicky                 = false,
+    visualFilterACMode         = "All",
+    visualFilterACValue        = 0,
+    visualFilterHPMode         = "All",
+    visualFilterHPValue        = 0,
+    visualFilterManaMode       = "All",
+    visualFilterManaValue      = 0,
     comparisonShowSvMagic      = false,
     comparisonShowSvFire       = false,
     comparisonShowSvCold       = false,
@@ -208,6 +214,12 @@ local inventoryUI = {
     showHP                        = false,
     showMana                      = false,
     showClicky                    = false,
+    visualFilterACMode            = "All",
+    visualFilterACValue           = 0,
+    visualFilterHPMode            = "All",
+    visualFilterHPValue           = 0,
+    visualFilterManaMode          = "All",
+    visualFilterManaValue         = 0,
     comparisonShowSvMagic         = false,
     comparisonShowSvFire          = false,
     comparisonShowSvCold          = false,
@@ -1079,22 +1091,171 @@ local function updatePeerList()
     end)
 end
 
+local EMPTY_INVENTORY_DATA = { equipped = {}, inventory = {}, bags = {}, bank = {}, }
+local inventoryFingerprintCache = setmetatable({}, { __mode = "k" })
+
+local function bagSortKey(a, b)
+    local an = tonumber(a)
+    local bn = tonumber(b)
+    if an and bn then
+        return an < bn
+    end
+    return tostring(a) < tostring(b)
+end
+
+local function mixHash(hash, value)
+    local text = tostring(value or "")
+    for i = 1, #text do
+        hash = ((hash * 131) + string.byte(text, i)) % 2147483647
+    end
+    return hash
+end
+
+local function hashInventoryItem(hash, item)
+    if type(item) ~= "table" then
+        return mixHash(hash, item)
+    end
+
+    local scalarKeys = {}
+    local flatArrayKeys = {}
+
+    for key, value in pairs(item) do
+        local valueType = type(value)
+        if valueType ~= "table" and valueType ~= "function" and valueType ~= "userdata" and valueType ~= "thread" then
+            table.insert(scalarKeys, key)
+        elseif valueType == "table" then
+            local isFlatArray = true
+            for _, entry in ipairs(value) do
+                local entryType = type(entry)
+                if entryType == "table" or entryType == "function" or entryType == "userdata" or entryType == "thread" then
+                    isFlatArray = false
+                    break
+                end
+            end
+            if isFlatArray and #value > 0 then
+                table.insert(flatArrayKeys, key)
+            end
+        end
+    end
+
+    table.sort(scalarKeys, function(a, b) return tostring(a) < tostring(b) end)
+    table.sort(flatArrayKeys, function(a, b) return tostring(a) < tostring(b) end)
+
+    for _, key in ipairs(scalarKeys) do
+        hash = mixHash(hash, key)
+        hash = mixHash(hash, item[key])
+    end
+
+    for _, key in ipairs(flatArrayKeys) do
+        hash = mixHash(hash, key)
+        local values = item[key]
+        hash = mixHash(hash, #values)
+        for _, value in ipairs(values) do
+            hash = mixHash(hash, value)
+        end
+    end
+
+    return hash
+end
+
+local function hashInventoryList(hash, label, list)
+    hash = mixHash(hash, label)
+    hash = mixHash(hash, #list)
+    for index, item in ipairs(list) do
+        hash = mixHash(hash, index)
+        hash = hashInventoryItem(hash, item)
+    end
+    return hash
+end
+
+local function getInventoryFingerprint(data)
+    if type(data) ~= "table" then
+        return "none"
+    end
+
+    local cached = inventoryFingerprintCache[data]
+    if cached then
+        return cached
+    end
+
+    local hash = 5381
+    hash = hashInventoryList(hash, "equipped", data.equipped or {})
+    hash = hashInventoryList(hash, "inventory", data.inventory or {})
+    hash = hashInventoryList(hash, "bank", data.bank or {})
+
+    local bags = data.bags or {}
+    local bagIds = {}
+    for bagId, _ in pairs(bags) do
+        table.insert(bagIds, bagId)
+    end
+    table.sort(bagIds, bagSortKey)
+
+    hash = mixHash(hash, "bags")
+    hash = mixHash(hash, #bagIds)
+    for _, bagId in ipairs(bagIds) do
+        hash = mixHash(hash, bagId)
+        local bagItems = bags[bagId] or bags[tostring(bagId)] or {}
+        hash = hashInventoryList(hash, "bag_items", bagItems)
+    end
+
+    local fingerprint = tostring(hash)
+    inventoryFingerprintCache[data] = fingerprint
+    return fingerprint
+end
+
+local function applyInventoryData(newData, selectedPeer)
+    local data = newData or EMPTY_INVENTORY_DATA
+    local fingerprint = getInventoryFingerprint(data)
+
+    if inventoryUI._lastInventoryPeer == selectedPeer and inventoryUI._lastInventoryFingerprint == fingerprint then
+        return false
+    end
+
+    inventoryUI.inventoryData = data
+    inventoryUI._lastInventoryPeer = selectedPeer
+    inventoryUI._lastInventoryFingerprint = fingerprint
+    return true
+end
+
 --------------------------------------------------
 --- Function: Check Database Lock Status
 --------------------------------------------------
 local function refreshInventoryData()
-    inventoryUI.inventoryData = { equipped = {}, inventory = {}, bags = {}, bank = {}, }
+    local selectedPeer = inventoryUI.selectedPeer
+    if not selectedPeer or selectedPeer == "" then
+        applyInventoryData(EMPTY_INVENTORY_DATA, selectedPeer)
+        return
+    end
 
+    local selectedData = nil
     for _, peer in ipairs(inventoryUI.peers) do
-        if peer.name == inventoryUI.selectedPeer then
+        if peer.name == selectedPeer then
             if peer.data then
-                inventoryUI.inventoryData = peer.data
+                selectedData = peer.data
             elseif peer.name == extractCharacterName(mq.TLO.Me.Name()) then
-                inventoryUI.inventoryData = (inventory_actor.get_cached_inventory and inventory_actor.get_cached_inventory(true))
+                selectedData = (inventory_actor.get_cached_inventory and inventory_actor.get_cached_inventory(true))
                     or inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
             end
             break
         end
+    end
+
+    if selectedData then
+        inventoryUI._missingSelectedPeerSince = nil
+        applyInventoryData(selectedData, selectedPeer)
+        return
+    end
+
+    local now = os.time()
+    if inventoryUI._lastInventoryPeer ~= selectedPeer then
+        inventoryUI._missingSelectedPeerSince = now
+        applyInventoryData(EMPTY_INVENTORY_DATA, selectedPeer)
+        return
+    end
+
+    inventoryUI._missingSelectedPeerSince = inventoryUI._missingSelectedPeerSince or now
+    if now - inventoryUI._missingSelectedPeerSince >= 2 then
+        applyInventoryData(EMPTY_INVENTORY_DATA, selectedPeer)
     end
 end
 
@@ -1102,20 +1263,17 @@ end
 -- Helper: Load inventory data from the mailbox.
 --------------------------------------------------
 local function loadInventoryData(peer)
-    inventoryUI.inventoryData = { equipped = {}, inventory = {}, bags = {}, bank = {}, }
+    inventoryUI._missingSelectedPeerSince = nil
 
     if peer and peer.data then
-        inventoryUI.inventoryData.equipped = peer.data.equipped or {}
-        inventoryUI.inventoryData.inventory = peer.data.inventory or {}
-        inventoryUI.inventoryData.bags = peer.data.bags or {}
-        inventoryUI.inventoryData.bank = peer.data.bank or {}
-    elseif peer.name == extractCharacterName(mq.TLO.Me.Name()) then
+        applyInventoryData(peer.data, peer.name)
+    elseif peer and peer.name == extractCharacterName(mq.TLO.Me.Name()) then
         local gathered = (inventory_actor.get_cached_inventory and inventory_actor.get_cached_inventory(true))
             or inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
-        inventoryUI.inventoryData.equipped = gathered.equipped or {}
-        inventoryUI.inventoryData.inventory = gathered.inventory or {}
-        inventoryUI.inventoryData.bags = gathered.bags or {}
-        inventoryUI.inventoryData.bank = gathered.bank or {}
+        applyInventoryData(gathered, peer.name)
+    else
+        local selectedPeer = peer and peer.name or inventoryUI.selectedPeer
+        applyInventoryData(EMPTY_INVENTORY_DATA, selectedPeer)
     end
 end
 
