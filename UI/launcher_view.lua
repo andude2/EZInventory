@@ -1,4 +1,17 @@
 local M = {}
+local hasImAnim, ImAnim = pcall(require, "ImAnim")
+if not hasImAnim then ImAnim = nil end
+
+local function getSafeDeltaTime(ImGui)
+    local dt = 1.0 / 60.0
+    local ok, io = pcall(ImGui.GetIO)
+    if ok and io and io.DeltaTime then
+        dt = tonumber(io.DeltaTime) or dt
+    end
+    if dt <= 0 then dt = 1.0 / 60.0 end
+    if dt > 0.1 then dt = 0.1 end
+    return dt
+end
 
 function M.render(inventoryUI, env)
     local ImGui = env.ImGui
@@ -33,6 +46,20 @@ function M.render(inventoryUI, env)
     if windowWidth <= 0 then
         windowWidth = math.max(0, (ImGui.GetWindowWidth() or 0) - 20)
     end
+    local dt = getSafeDeltaTime(ImGui)
+    inventoryUI._launcherCardHover = inventoryUI._launcherCardHover or {}
+
+    local function tweenFloat(id, key, target, duration)
+        if not (ImAnim and ImAnim.TweenFloat and ImAnim.EasePreset and IamEaseType and IamEaseType.OutCubic and IamPolicy and IamPolicy.Crossfade) then
+            return target
+        end
+        local ok, value = pcall(ImAnim.TweenFloat, id, key, target, duration, ImAnim.EasePreset(IamEaseType.OutCubic), IamPolicy.Crossfade, dt)
+        if ok and type(value) == "number" then
+            return value
+        end
+        return target
+    end
+
     local tileWidth = 130
     local tileHeight = 110
     local spacing = 12
@@ -59,34 +86,66 @@ function M.render(inventoryUI, env)
 
     local function renderTile(tile)
         inventoryUI.windows = inventoryUI.windows or {}
-        local isActive = inventoryUI.windows[tile.id]
-        if tile.id == "Collectibles" and env.collectibles and env.collectibles.isVisible then
-            isActive = env.collectibles.isVisible()
-        end
-        local function withAlpha(vec4, alpha)
-            if type(vec4) == "table" then
-                local r = tonumber(vec4.x or vec4.r or vec4[1]) or 0.3
-                local g = tonumber(vec4.y or vec4.g or vec4[2]) or 0.3
-                local b = tonumber(vec4.z or vec4.b or vec4[3]) or 0.3
-                return ImVec4(r, g, b, alpha)
+        local childOpen = false
+        local styleColorPushed = false
+        local styleVarPushed = false
+        local lift = 0.0
+
+        local tile_ok, tile_err = xpcall(function()
+            local isActive = inventoryUI.windows[tile.id]
+            if tile.id == "Collectibles" and env.collectibles and env.collectibles.isVisible then
+                isActive = env.collectibles.isVisible()
             end
-            return ImVec4(0.3, 0.3, 0.3, alpha)
-        end
-        
-        ImGui.BeginGroup()
-        
-        local color = tile.color
-        if not isActive then
-            -- Dim the background if window is closed
-            color = withAlpha(tile.color, 0.3)
-        end
-        
-        ImGui.PushStyleColor(ImGuiCol.ChildBg, color)
-        ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 10.0)
-        
-        local tileChildDrawn = ImGui.BeginChild("Tile_" .. tile.id, tileWidth, tileHeight, true, ImGuiWindowFlags.NoScrollbar)
-        if tileChildDrawn then
-            local tile_ok, tile_err = pcall(function()
+            local hoveredTarget = inventoryUI._launcherCardHover[tile.id] == true
+            local animId = ImHashStr("ezinv_launcher_tile_" .. tile.id)
+            lift = tweenFloat(animId, ImHashStr(tile.id .. "_lift"), hoveredTarget and -8.0 or 0.0, 0.22)
+            local shadowStrength = tweenFloat(animId, ImHashStr(tile.id .. "_shadow"), hoveredTarget and 1.0 or 0.0, 0.22)
+            local borderAnim = tweenFloat(animId, ImHashStr(tile.id .. "_border"), hoveredTarget and 1.0 or 0.0, 0.18)
+            local hoverDescription = isActive and ("Hide " .. tile.label) or ("Show " .. tile.label)
+            local descAnim = tweenFloat(animId, ImHashStr(tile.id .. "_desc"), hoveredTarget and 1.0 or 0.0, 0.2)
+
+            local function withAlpha(vec4, alpha)
+                if type(vec4) == "table" then
+                    local r = tonumber(vec4.x or vec4.r or vec4[1]) or 0.3
+                    local g = tonumber(vec4.y or vec4.g or vec4[2]) or 0.3
+                    local b = tonumber(vec4.z or vec4.b or vec4[3]) or 0.3
+                    return ImVec4(r, g, b, alpha)
+                end
+                return ImVec4(0.3, 0.3, 0.3, alpha)
+            end
+
+            local color = tile.color
+            local baseAlpha = 1.0
+            if not isActive then
+                -- Dim the background if window is closed
+                baseAlpha = 0.3
+            end
+            color = withAlpha(tile.color, math.min(1.0, baseAlpha + shadowStrength * 0.12))
+
+            local cursorX, cursorY = ImGui.GetCursorPos()
+            ImGui.SetCursorPos(cursorX, cursorY + lift)
+
+            local startX, startY = asXY(ImGui.GetCursorScreenPos())
+            if shadowStrength > 0.01 then
+                local parentDrawList = ImGui.GetWindowDrawList()
+                for s = 3, 1, -1 do
+                    local spread = (2.0 + s * 2.0) * shadowStrength
+                    local alpha = math.min(0.22, (0.02 * s + 0.02) * shadowStrength)
+                    parentDrawList:AddRectFilled(
+                        ImVec2(startX + spread * 0.35, startY + spread),
+                        ImVec2(startX + tileWidth + spread * 0.35, startY + tileHeight + spread),
+                        ImGui.GetColorU32(0.0, 0.0, 0.0, alpha), 10.0)
+                end
+            end
+
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, color)
+            styleColorPushed = true
+            ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 10.0)
+            styleVarPushed = true
+
+            local tileChildDrawn = ImGui.BeginChild("Tile_" .. tile.id, tileWidth, tileHeight, true, ImGuiWindowFlags.NoScrollbar)
+            childOpen = true
+            if tileChildDrawn then
                 -- Center Icon
                 local iconText = tile.icon
                 ImGui.SetWindowFontScale(2.5)
@@ -94,12 +153,24 @@ function M.render(inventoryUI, env)
                 ImGui.SetCursorPos((tileWidth - iconWidth) / 2, 15)
                 ImGui.Text(iconText)
                 ImGui.SetWindowFontScale(1.0)
-                
+
                 -- Label
                 local labelWidth = asWidth(ImGui.CalcTextSize(tile.label))
-                ImGui.SetCursorPos((tileWidth - labelWidth) / 2, tileHeight - 35)
+                local labelYOffset = descAnim * 10.0
+                ImGui.SetCursorPos((tileWidth - labelWidth) / 2, tileHeight - 35 - labelYOffset)
                 ImGui.Text(tile.label)
-                
+
+                -- Hover description (same text used for tooltip)
+                if descAnim > 0.01 then
+                    local descY = tileHeight - 22 + (1.0 - descAnim) * 6.0
+                    local descW = asWidth(ImGui.CalcTextSize(hoverDescription))
+                    local descX = math.max(6, (tileWidth - descW) / 2)
+                    ImGui.SetCursorPos(descX, descY)
+                    ImGui.PushStyleColor(ImGuiCol.Text, ImVec4(0.9, 0.95, 1.0, math.min(1.0, descAnim)))
+                    ImGui.Text(hoverDescription)
+                    ImGui.PopStyleColor()
+                end
+
                 -- Active dot
                 if isActive then
                     ImGui.SetCursorPos(tileWidth - 20, 5)
@@ -117,28 +188,54 @@ function M.render(inventoryUI, env)
                         inventoryUI.windows[tile.id] = not inventoryUI.windows[tile.id]
                     end
                 end
-                
-                if ImGui.IsItemHovered() then
-                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand)
-                    local drawList = ImGui.GetWindowDrawList()
-                    local minX, minY = asXY(ImGui.GetItemRectMin())
-                    local maxX, maxY = asXY(ImGui.GetItemRectMax())
-                    drawList:AddRect(ImVec2(minX, minY), ImVec2(maxX, maxY), ImGui.GetColorU32(1, 1, 1, 0.6), 10.0, 0, 2.0)
-                    
-                    ImGui.BeginTooltip()
-                    ImGui.Text(isActive and "Click to Hide " .. tile.label or "Click to Show " .. tile.label)
-                    ImGui.EndTooltip()
+
+                local hoveredNow = ImGui.IsItemHovered()
+                inventoryUI._launcherCardHover[tile.id] = hoveredNow
+
+                local drawList = ImGui.GetWindowDrawList()
+                local minX, minY = asXY(ImGui.GetItemRectMin())
+                local maxX, maxY = asXY(ImGui.GetItemRectMax())
+                local borderStrength = math.max(borderAnim, hoveredNow and 1.0 or 0.0)
+                if borderStrength > 0.01 then
+                    local borderAlpha = math.floor(70 + 170 * borderStrength)
+                    local thickness = 1.5 + borderStrength * 1.5
+                    drawList:AddRect(
+                        ImVec2(minX, minY), ImVec2(maxX, maxY),
+                        ImGui.GetColorU32(1.0, 1.0, 1.0, math.min(1.0, borderAlpha / 255.0)),
+                        10.0, 0, thickness)
                 end
-            end)
-            if not tile_ok then
-                print(string.format("[EZInventory] Launcher tile render failed (%s): %s", tostring(tile.id), tostring(tile_err)))
+
+                if hoveredNow then
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand)
+                end
+            else
+                inventoryUI._launcherCardHover[tile.id] = false
             end
+        end, debug.traceback)
+
+        if childOpen then
+            local endChildOk, endChildErr = pcall(ImGui.EndChild)
+            if not endChildOk then
+                print(string.format("[EZInventory] Launcher tile EndChild failed (%s): %s", tostring(tile.id), tostring(endChildErr)))
+            end
+            childOpen = false
         end
-        ImGui.EndChild()
-        ImGui.PopStyleVar()
-        ImGui.PopStyleColor()
-        
-        ImGui.EndGroup()
+        if lift < 0 then
+            local afterX, afterY = ImGui.GetCursorPos()
+            ImGui.SetCursorPos(afterX, afterY - lift)
+        end
+        if styleVarPushed then
+            pcall(ImGui.PopStyleVar)
+            styleVarPushed = false
+        end
+        if styleColorPushed then
+            pcall(ImGui.PopStyleColor)
+            styleColorPushed = false
+        end
+
+        if not tile_ok then
+            print(string.format("[EZInventory] Launcher tile render failed (%s): %s", tostring(tile.id), tostring(tile_err)))
+        end
     end
 
     local current_col = 0
@@ -213,9 +310,19 @@ function M.render(inventoryUI, env)
                  if not window_ok then
                      ImGui.TextColored(1, 0, 0, 1, "Render error in " .. title)
                      print(string.format("[EZInventory] Pop-out render failed (%s): %s", tostring(key), tostring(window_err)))
+                     -- If module content crashed while a child/tab scope was open, unwind child scopes.
+                     for _ = 1, 12 do
+                         local childClosed = pcall(ImGui.EndChild)
+                         if not childClosed then
+                             break
+                         end
+                     end
                  end
              end
-             ImGui.End()
+             local end_ok, end_err = pcall(ImGui.End)
+             if not end_ok then
+                 print(string.format("[EZInventory] Pop-out end failed (%s): %s", tostring(key), tostring(end_err)))
+             end
         end
     end
     
@@ -264,20 +371,32 @@ function M.render(inventoryUI, env)
                 if tabBarOpen then
                     local bagsOpen = ImGui.BeginTabItem("Bags")
                     if bagsOpen then
-                        if env.modules.BagsTab and env.modules.BagsTab.renderContent then
-                            env.modules.BagsTab.renderContent(ui, env.envs.Bags)
-                        else
-                            ImGui.TextColored(1, 0, 0, 1, "Error: Bags tab not available")
+                        local bagsOk, bagsErr = pcall(function()
+                            if env.modules.BagsTab and env.modules.BagsTab.renderContent then
+                                env.modules.BagsTab.renderContent(ui, env.envs.Bags)
+                            else
+                                ImGui.TextColored(1, 0, 0, 1, "Error: Bags tab not available")
+                            end
+                        end)
+                        if not bagsOk then
+                            print(string.format("[EZInventory] Inventory pop-out Bags render failed: %s", tostring(bagsErr)))
+                            ImGui.TextColored(1, 0, 0, 1, "Bags render error")
                         end
                         ImGui.EndTabItem()
                     end
 
                     local bankOpen = ImGui.BeginTabItem("Bank")
                     if bankOpen then
-                        if env.modules.BankTab and env.modules.BankTab.renderContent then
-                            env.modules.BankTab.renderContent(ui, env.envs.Bank)
-                        else
-                            ImGui.TextColored(1, 0, 0, 1, "Error: Bank tab not available")
+                        local bankOk, bankErr = pcall(function()
+                            if env.modules.BankTab and env.modules.BankTab.renderContent then
+                                env.modules.BankTab.renderContent(ui, env.envs.Bank)
+                            else
+                                ImGui.TextColored(1, 0, 0, 1, "Error: Bank tab not available")
+                            end
+                        end)
+                        if not bankOk then
+                            print(string.format("[EZInventory] Inventory pop-out Bank render failed: %s", tostring(bankErr)))
+                            ImGui.TextColored(1, 0, 0, 1, "Bank render error")
                         end
                         ImGui.EndTabItem()
                     end

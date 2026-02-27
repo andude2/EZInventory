@@ -3048,6 +3048,7 @@ function inventoryUI.render()
         inventoryUI.visible = false
     end
 
+    local tabbedContentChildOpen = false
     local contentOk, contentErr = xpcall(function()
     if open and show then
         inventoryUI.selectedServer = inventoryUI.selectedServer or server
@@ -3398,6 +3399,7 @@ function inventoryUI.render()
         -- Content
         local avail = ImGui.GetContentRegionAvail()
         ImGui.BeginChild("TabbedContentRegion", 0, 0, ImGuiChildFlags.Border)
+        tabbedContentChildOpen = true
         
         local BAG_ICON_SIZE = 32
         local BAG_CELL_SIZE = BAG_CELL_SIZE or 40
@@ -3594,15 +3596,31 @@ function inventoryUI.render()
             end
         end
         ImGui.EndChild()
+        tabbedContentChildOpen = false
     end
     end, debug.traceback)
 
-    ImGui.End()
+    if tabbedContentChildOpen then
+        -- Unwind any leaked nested child windows first, then the tabbed content child itself.
+        for _ = 1, 16 do
+            local childClosed = pcall(ImGui.EndChild)
+            if not childClosed then
+                break
+            end
+        end
+        tabbedContentChildOpen = false
+    end
+
+    local endOk, endErr = pcall(ImGui.End)
     inventoryUI._mainWindowBegan = false
     Theme.pop_ezinventory_theme(ImGui, theme_count)
 
     if not contentOk then
         print(string.format("[EZInventory] Main window render error: %s", tostring(contentErr)))
+        return
+    end
+    if not endOk then
+        print(string.format("[EZInventory] Main window end error: %s", tostring(endErr)))
         return
     end
 
@@ -3752,6 +3770,12 @@ mq.imgui.init("InventoryWindow", function()
     if not success then
         print(string.format("[EZInventory] ImGui callback error: %s", tostring(err)))
         if inventoryUI._mainWindowBegan then
+            for _ = 1, 16 do
+                local childClosed = pcall(ImGui.EndChild)
+                if not childClosed then
+                    break
+                end
+            end
             pcall(ImGui.End)
             inventoryUI._mainWindowBegan = false
         end
