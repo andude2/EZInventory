@@ -51,6 +51,8 @@ function M.render(inventoryUI, env)
         { id = "Augments", label = "Augments", icon = icons.FA_DIAMOND or "AU", color = ImVec4(0.45, 0.15, 0.45, 1.0) },
         { id = "CheckUpgrades", label = "Upgrades", icon = icons.FA_CHEVRON_CIRCLE_UP or "U", color = ImVec4(0.25, 0.55, 0.15, 1.0) },
         { id = "FocusEffects", label = "Focus", icon = icons.FA_MAGIC or "F", color = ImVec4(0.25, 0.25, 0.55, 1.0) },
+        { id = "Collectibles", label = "Collectibles", icon = icons.FA_STAR or "C", color = ImVec4(0.65, 0.45, 0.15, 1.0) },
+        { id = "WindowSettings", label = "Settings", icon = icons.FA_COG or "W", color = ImVec4(0.35, 0.35, 0.35, 1.0) },
         -- Hidden by request: keep module code, remove launcher button.
         -- { id = "Performance", label = "Settings", icon = icons.FA_COG or "S", color = ImVec4(0.35, 0.35, 0.35, 1.0) },
     }
@@ -58,6 +60,9 @@ function M.render(inventoryUI, env)
     local function renderTile(tile)
         inventoryUI.windows = inventoryUI.windows or {}
         local isActive = inventoryUI.windows[tile.id]
+        if tile.id == "Collectibles" and env.collectibles and env.collectibles.isVisible then
+            isActive = env.collectibles.isVisible()
+        end
         local function withAlpha(vec4, alpha)
             if type(vec4) == "table" then
                 local r = tonumber(vec4.x or vec4.r or vec4[1]) or 0.3
@@ -104,7 +109,13 @@ function M.render(inventoryUI, env)
                 -- Overlay button
                 ImGui.SetCursorPos(0, 0)
                 if ImGui.InvisibleButton("Btn_" .. tile.id, tileWidth, tileHeight) then
-                    inventoryUI.windows[tile.id] = not inventoryUI.windows[tile.id]
+                    if tile.id == "Collectibles" then
+                        if env.collectibles and env.collectibles.toggle then
+                            env.collectibles.toggle()
+                        end
+                    else
+                        inventoryUI.windows[tile.id] = not inventoryUI.windows[tile.id]
+                    end
                 end
                 
                 if ImGui.IsItemHovered() then
@@ -164,11 +175,28 @@ function M.render(inventoryUI, env)
              if not open then
                  inventoryUI.windows[key] = false
              end
-             if show then
-                 local closeButtonWidth = 72
-                 local availWidth = asWidth(ImGui.GetContentRegionAvail())
-                 if availWidth > closeButtonWidth then
-                     ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (availWidth - closeButtonWidth))
+            if show then
+                local closeButtonWidth = 72
+                local giveButtonWidth = 90
+                local gap = 6
+                local availWidth = asWidth(ImGui.GetContentRegionAvail())
+
+                if key == "AllChars" and env.actions and env.actions.openGiveItem then
+                    if ImGui.Button("Give Item##AllCharsHeader", giveButtonWidth, 0) then
+                        env.actions.openGiveItem()
+                    end
+                    if ImGui.IsItemHovered() then
+                        ImGui.SetTooltip("Open the Give Item panel")
+                    end
+                    ImGui.SameLine()
+                end
+
+                if availWidth > closeButtonWidth then
+                    local consumed = 0
+                    if key == "AllChars" and env.actions and env.actions.openGiveItem then
+                        consumed = giveButtonWidth + gap
+                    end
+                    ImGui.SetCursorPosX(ImGui.GetCursorPosX() + math.max(0, availWidth - closeButtonWidth - consumed))
                  end
                  if ImGui.Button("Close##PopoutClose_" .. key, closeButtonWidth, 0) then
                      inventoryUI.windows[key] = false
@@ -192,6 +220,44 @@ function M.render(inventoryUI, env)
     end
     
     if env.modules and env.envs then
+        local windowSettingsModule = {
+            renderContent = function(ui, _)
+                ImGui.Text("Settings")
+                ImGui.Separator()
+
+                local floatLabel = ui.showToggleButton and "Hide Floating Button" or "Show Floating Button"
+                if ImGui.Button(floatLabel, 210, 0) then
+                    ui.showToggleButton = not ui.showToggleButton
+                end
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Toggles the EZInventory floating eye button.")
+                end
+
+                local lockLabel = ui.windowLocked and "Unlock Main Window" or "Lock Main Window"
+                if ImGui.Button(lockLabel, 210, 0) then
+                    ui.windowLocked = not ui.windowLocked
+                end
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Locks/unlocks moving and resizing the main window.")
+                end
+
+                if ImGui.Button("Save Config", 120, 0) then
+                    if env.actions and env.actions.saveConfig then
+                        env.actions.saveConfig()
+                    end
+                end
+
+                ImGui.Spacing()
+                local viewLabel = (ui.viewMode == "launcher") and "Tabs" or "Launcher"
+                if ImGui.Button(viewLabel, 120, 0) then
+                    ui.viewMode = (ui.viewMode == "launcher") and "tabbed" or "launcher"
+                end
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Switch between Tabbed View and Launcher View")
+                end
+            end
+        }
+
         local inventoryCombined = {
             renderContent = function(ui, _)
                 local tabBarOpen = ImGui.BeginTabBar("InventoryCombinedTabs")
@@ -229,6 +295,7 @@ function M.render(inventoryUI, env)
         renderWindow("Augments", "Augment Search", env.modules.AugmentsTab, env.envs.Augments)
         renderWindow("CheckUpgrades", "Upgrade Check", env.modules.CheckUpgradesTab, env.envs.CheckUpgrades)
         renderWindow("FocusEffects", "Focus Effects Analysis", env.modules.FocusEffectsTab, env.envs.FocusEffects)
+        renderWindow("WindowSettings", "Settings", windowSettingsModule, nil)
         renderWindow("Performance", "Performance & Settings", env.modules.PerformanceTab, env.envs.Performance)
     end
 end

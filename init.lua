@@ -36,6 +36,7 @@ _G.EZINV_BROADCAST_NAME = original_module_name
 print(string.format("[EZInventory] Internal module name: %s, Broadcast name: %s", module_name, original_module_name))
 
 local inventory_actor     = require("EZInventory.modules.inventory_actor")
+inventory_actor.peer_inventories = inventory_actor.peer_inventories or {}
 local peerCache           = {}
 local lastCacheTime       = 0
 local lastPathRequestTime = 0
@@ -68,6 +69,14 @@ local server              = string.gsub(mq.TLO.MacroQuest.Server(), ' ', '_')
 local SettingsFile        = string.format('%s/EZInventory/%s/%s.lua', mq.configDir, server, mq.TLO.Me.CleanName())
 local Settings            = {}
 local searchText          = ""
+
+local function iconLabel(icon, label)
+    local iconText = tostring(icon or "")
+    local labelText = tostring(label or "")
+    if iconText == "" then return labelText end
+    if labelText == "" then return iconText end
+    return string.format("%s %s", iconText, labelText)
+end
 
 --- @tag Config
 --- @section Default Settings
@@ -196,7 +205,7 @@ local function _ezinv_extractCharacterNameEarly(name)
 end
 
 local inventoryUI = {
-    visible                       = true,
+    visible                       = false,
     viewMode                      = "launcher",
     showToggleButton              = true,
     selectedPeer                  = _ezinv_extractCharacterNameEarly(mq.TLO.Me.CleanName()),
@@ -265,6 +274,7 @@ local inventoryUI = {
     enableStatsFiltering          = true,
     autoRefreshInventory          = true,
     statsLoadingMode              = "selective",
+    _mainWindowBegan              = false,
 }
 for k, v in pairs(Settings) do
     inventoryUI[k] = v
@@ -358,7 +368,7 @@ local function refreshPeerCache()
     if now - lastCacheTime > 2 then
         peerCache = {}
 
-        for peerID, inv in pairs(inventory_actor.peer_inventories) do
+        for peerID, inv in pairs(inventory_actor.peer_inventories or {}) do
             local server = inv.server or "Unknown"
             peerCache[server] = peerCache[server] or {}
             table.insert(peerCache[server], inv)
@@ -1066,7 +1076,7 @@ local function updatePeerList()
     table.insert(inventoryUI.peers, selfEntry)
 
     -- Add regular player peers
-    for _, invData in pairs(inventory_actor.peer_inventories) do
+    for _, invData in pairs(inventory_actor.peer_inventories or {}) do
         if invData.name ~= myName then
             local peerEntry = {
                 name = invData.name or "Unknown",
@@ -1393,7 +1403,7 @@ end
 local function compareSlotAcrossPeers(slotID)
     local results = {}
 
-    for _, invData in pairs(inventory_actor.peer_inventories) do
+    for _, invData in pairs(inventory_actor.peer_inventories or {}) do
         local peerName = invData.name or "Unknown"
         local peerServer = invData.server or "Unknown"
 
@@ -1467,7 +1477,7 @@ local function searchAcrossPeers()
         end
         return false
     end
-    for _, invData in pairs(inventory_actor.peer_inventories) do
+    for _, invData in pairs(inventory_actor.peer_inventories or {}) do
         local function addResult(item, sourceLabel)
             if not item or not itemMatches(item) then return end
             local itemCopy = {}
@@ -1605,7 +1615,7 @@ function generateEquipmentComparison(compareItem, slotID)
     }
 
     -- Compare against each character's equipped item in that slot
-    for peerID, invData in pairs(inventory_actor.peer_inventories) do
+    for peerID, invData in pairs(inventory_actor.peer_inventories or {}) do
         if invData and invData.name and invData.equipped then
             -- Check if this character's class can use the comparison item
             local characterClass = invData.class
@@ -1625,7 +1635,7 @@ function generateEquipmentComparison(compareItem, slotID)
 
             -- Skip if we still don't have a class or if the class can't use the item
             if not characterClass or characterClass == "UNK" or not Suggestions.canClassUseItem(compareItem, characterClass) then
-                goto continue -- Skip this character
+                -- goto continue -- Skip this character
             end
 
             local equippedItem = nil
@@ -1682,7 +1692,7 @@ function generateEquipmentComparison(compareItem, slotID)
                 newStats = compareStats
             })
         end
-        ::continue::
+        -- ::continue::
     end
 
     -- Sort by character name
@@ -2057,7 +2067,7 @@ function renderItemSuggestions()
                 end
             end
         else
-            for _, peer in pairs(inventory_actor.peer_inventories) do
+            for _, peer in pairs(inventory_actor.peer_inventories or {}) do
                 if peer.name == peerName and peer.equipped then
                     for _, item in ipairs(peer.equipped) do
                         if tonumber(item.slotid) == tonumber(slotID) then
@@ -3032,15 +3042,14 @@ function inventoryUI.render()
 
     -- Begin window
     local open, show = ImGui.Begin("Inventory Window##EzInventory", true, windowFlags)
+    inventoryUI._mainWindowBegan = true
 
     if not open then
         inventoryUI.visible = false
-        ImGui.End()
-        Theme.pop_ezinventory_theme(ImGui, theme_count)
-        return
     end
 
-    if show then
+    local contentOk, contentErr = xpcall(function()
+    if open and show then
         inventoryUI.selectedServer = inventoryUI.selectedServer or server
         local function widthOf(value)
             if type(value) == "number" then return value end
@@ -3078,136 +3087,50 @@ function inventoryUI.render()
             end
         end
 
-        local function renderServerPeerSelectors()
-            ImGui.Text("Select Server:")
-            inlineOrWrap(170, 8)
-            ImGui.SetNextItemWidth(fitWidth(170, 120))
-            if ImGui.BeginCombo("##ServerCombo", inventoryUI.selectedServer or "None") then
-                local serverList = {}
-                if inventoryUI.servers then
-                    for srv, _ in pairs(inventoryUI.servers) do
-                        table.insert(serverList, srv)
-                    end
-                end
-                table.sort(serverList)
-                for i, srv in ipairs(serverList) do
-                    ImGui.PushID(string.format("server_%s_%d", srv, i))
-                    if ImGui.Selectable(srv, inventoryUI.selectedServer == srv) then
-                        inventoryUI.selectedServer = srv
-                        local validPeer = false
-                        for _, peer in ipairs(inventoryUI.servers[srv] or {}) do
-                            if peer.name == inventoryUI.selectedPeer then
-                                validPeer = true
-                                break
-                            end
-                        end
-                        if not validPeer then
-                            inventoryUI.selectedPeer = nil
-                        end
-                    end
-                    if inventoryUI.selectedServer == srv then
-                        ImGui.SetItemDefaultFocus()
-                    end
-                    ImGui.PopID()
-                end
-                ImGui.EndCombo()
+        local function renderHeaderCloseButton()
+            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.2, 0.8, 0.2, 1.0))
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.4, 1.0, 0.4, 1.0))
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.1, 0.6, 0.1, 1.0))
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
+            if ImGui.Button("Close", 65, 0) then
+                inventoryUI.visible = false
             end
-
-            inlineOrWrap(520, 12)
-            ImGui.Text("Select Peer:")
-            inlineOrWrap(220, 8)
-            ImGui.SetNextItemWidth(fitWidth(350, 180))
-            refreshPeerCache()
-            local displayPeer = inventoryUI.selectedPeer or "Select Peer"
-            if inventoryUI.selectedServer and ImGui.BeginCombo("##PeerCombo", displayPeer) then
-                local peers = peerCache[inventoryUI.selectedServer] or {}
-                local regularPeers = {}
-                for _, invData in pairs(inventory_actor.peer_inventories) do
-                    if invData.server == inventoryUI.selectedServer then
-                        table.insert(regularPeers, {
-                            name = invData.name or "Unknown",
-                            server = invData.server,
-                            isMailbox = true,
-                            isBotCharacter = false,
-                            data = invData,
-                        })
-                    end
-                end
-                table.sort(regularPeers, function(a, b)
-                    return (a.name or ""):lower() < (b.name or ""):lower()
-                end)
-                if #regularPeers > 0 then
-                    ImGui.TextColored(0.7, 0.7, 1.0, 1.0, "Players:")
-                    for i, peer in ipairs(regularPeers) do
-                        ImGui.PushID(string.format("peer_%s_%s_%d", peer.name, peer.server, i))
-                        local isSelected = inventoryUI.selectedPeer == peer.name
-                        if ImGui.Selectable("  " .. peer.name, isSelected) then
-                            inventoryUI.selectedPeer = peer.name
-                            loadInventoryData(peer)
-
-                            -- If there's a selected slot, refresh available items for the new character
-                            if inventoryUI.selectedSlotID and inventoryUI.showItemSuggestions then
-                                inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(
-                                    peer.name, inventoryUI.selectedSlotID)
-                                inventoryUI.filteredItemsCache.lastFilterKey = "" -- Invalidate cache
-                                inventoryUI.itemSuggestionsTarget = peer.name
-                                inventoryUI.itemSuggestionsSlotName = inventoryUI.selectedSlotName or "Unknown Slot"
-                            end
-                        end
-                        if isSelected then
-                            ImGui.SetItemDefaultFocus()
-                        end
-                        ImGui.PopID()
-                    end
-                end
-                ImGui.EndCombo()
-            end
-        end
-
-        -- Toggle View Button
-        local viewLabel = (inventoryUI.viewMode == "launcher") and "Tabs" or "Launcher"
-        local viewButtonWidth = 82
-        if ImGui.Button(viewLabel, viewButtonWidth, 0) then
-            inventoryUI.viewMode = (inventoryUI.viewMode == "launcher") and "tabbed" or "launcher"
-        end
-        if ImGui.IsItemHovered() then
-            ImGui.SetTooltip("Switch between Tabbed View and Launcher View")
-        end
-
-        inlineOrWrap(95, 6)
-        if ImGui.Button("Give Item", 90, 0) then
-            inventoryUI.showGiveItemPanel = not inventoryUI.showGiveItemPanel
-        end
-
-        -- Clean Up Inventory button
-        local cleanupButtonWidth = 170
-        inlineOrWrap(cleanupButtonWidth + 6, 6)
-        local cleanupInProgress = (Banking and Banking.isBusy()) or (AssignmentManager and AssignmentManager.isBusy())
-        if cleanupInProgress then
-            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.8, 0.6, 0.2, 1.0))
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.8, 0.6, 0.2, 1.0))
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.8, 0.6, 0.2, 1.0))
-            ImGui.Button("Cleaning Up...", cleanupButtonWidth, 0)
-            ImGui.PopStyleColor(3)
             if ImGui.IsItemHovered() then
-                ImGui.SetTooltip("Inventory cleanup in progress")
+                ImGui.SetTooltip("Minimizes the UI")
             end
-        else
+            ImGui.PopStyleVar()
+            ImGui.PopStyleColor(3)
+        end
+
+        local function renderCleanupButton(cleanupButtonWidth)
+            local cleanupInProgress = (Banking and Banking.isBusy()) or (AssignmentManager and AssignmentManager.isBusy())
+            if cleanupInProgress then
+                ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.8, 0.6, 0.2, 1.0))
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.8, 0.6, 0.2, 1.0))
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.8, 0.6, 0.2, 1.0))
+                ImGui.Button("Cleaning Up...", cleanupButtonWidth, 0)
+                ImGui.PopStyleColor(3)
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Inventory cleanup in progress")
+                end
+                return
+            end
+
             ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.2, 0.6, 0.8, 1.0))
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.4, 0.8, 1.0, 1.0))
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.1, 0.4, 0.6, 1.0))
-            if ImGui.Button("Clean Up Inventory", cleanupButtonWidth, 0) then
+            if ImGui.Button("Clean Up", cleanupButtonWidth, 0) then
                 printf("[EZInventory] Starting inventory cleanup...")
-                
+
                 local actionsStarted = 0
-                
+
                 -- First execute character assignments
                 local assignmentSuccess = AssignmentManager.executeAssignments()
                 if assignmentSuccess then
                     printf("[EZInventory] Character assignments initiated")
                     actionsStarted = actionsStarted + 1
                 end
-                
+
                 -- Check if we have bank-flagged items and try banking
                 local hasBankFlagged = false
                 local myName = extractCharacterName(mq.TLO.Me.CleanName())
@@ -3219,7 +3142,7 @@ function inventoryUI.render()
                         end
                     end
                 end
-                
+
                 if hasBankFlagged then
                     if Banking and Banking.start then
                         local bankingStarted = Banking.start()
@@ -3233,7 +3156,7 @@ function inventoryUI.render()
                 else
                     printf("[EZInventory] No items flagged for banking")
                 end
-                
+
                 if actionsStarted == 0 then
                     printf("[EZInventory] No cleanup actions needed - no character assignments or bank-flagged items found")
                     printf("[EZInventory] To use cleanup: assign items to characters (right-click -> Assign To Character) or flag items for banking")
@@ -3250,125 +3173,204 @@ function inventoryUI.render()
                 ImGui.EndTooltip()
             end
         end
-        local iconSpacing = 6
-        local iconSize = 22
 
-        -- Collectibles button
-        local collectIcon = icons.FA_STAR or "C"
-        local collectColor = ImVec4(0.8, 0.6, 0.2, 1.0)
-        local collectHoverColor = ImVec4(1.0, 0.8, 0.4, 1.0)
-        local collectActiveColor = ImVec4(0.6, 0.4, 0.1, 1.0)
-        ImGui.PushStyleColor(ImGuiCol.Button, collectColor)
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, collectHoverColor)
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, collectActiveColor)
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
-        if ImGui.Button(collectIcon, iconSize, iconSize) then
-            Collectibles.toggle()
-        end
-        if ImGui.IsItemHovered() then
-            ImGui.SetTooltip("Show/Hide Collectibles")
-        end
-        ImGui.PopStyleVar()
-        ImGui.PopStyleColor(3)
+        local function renderServerPeerSelectors()
+            local headerWidth = availWidth()
+            if headerWidth >= 300 then
+                ImGui.SetNextItemWidth(fitWidth(140, 100))
+                if ImGui.BeginCombo("##ServerCombo", iconLabel(icons.FA_SERVER or "", inventoryUI.selectedServer or "Server")) then
+                    local serverList = {}
+                    if inventoryUI.servers then
+                        for srv, _ in pairs(inventoryUI.servers) do
+                            table.insert(serverList, srv)
+                        end
+                    end
+                    table.sort(serverList)
+                    for i, srv in ipairs(serverList) do
+                        ImGui.PushID(string.format("server_%s_%d", srv, i))
+                        if ImGui.Selectable(srv, inventoryUI.selectedServer == srv) then
+                            inventoryUI.selectedServer = srv
+                            local validPeer = false
+                            for _, peer in ipairs(inventoryUI.servers[srv] or {}) do
+                                if peer.name == inventoryUI.selectedPeer then
+                                    validPeer = true
+                                    break
+                                end
+                            end
+                            if not validPeer then
+                                inventoryUI.selectedPeer = nil
+                            end
+                        end
+                        if inventoryUI.selectedServer == srv then
+                            ImGui.SetItemDefaultFocus()
+                        end
+                        ImGui.PopID()
+                    end
+                    ImGui.EndCombo()
+                end
 
-        inlineOrWrap(iconSize + iconSpacing, iconSpacing)
-        local floatIcon = inventoryUI.showToggleButton and icons.FA_EYE or icons.FA_EYE_SLASH
-        local eyeColor = inventoryUI.showToggleButton and ImVec4(0.2, 0.6, 0.8, 1.0) or ImVec4(0.6, 0.6, 0.6, 1.0)
-        local eyeHoverColor = inventoryUI.showToggleButton and ImVec4(0.4, 0.8, 1.0, 1.0) or ImVec4(0.8, 0.8, 0.8, 1.0)
-        local eyeActiveColor = inventoryUI.showToggleButton and ImVec4(0.1, 0.4, 0.6, 1.0) or ImVec4(0.4, 0.4, 0.4, 1.0)
-        ImGui.PushStyleColor(ImGuiCol.Button, eyeColor)
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, eyeHoverColor)
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, eyeActiveColor)
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
-        if ImGui.Button(floatIcon, iconSize, iconSize) then
-            inventoryUI.showToggleButton = not inventoryUI.showToggleButton
-        end
-        if ImGui.IsItemHovered() then
-            ImGui.SetTooltip(inventoryUI.showToggleButton and "Hide Floating Button" or "Show Floating Button")
-        end
-        ImGui.PopStyleVar()
-        ImGui.PopStyleColor(3)
+                inlineOrWrap(160, 8)
+                refreshPeerCache()
+                local displayPeer = inventoryUI.selectedPeer or "Peer"
+                ImGui.SetNextItemWidth(fitWidth(160, 120))
+                if inventoryUI.selectedServer and ImGui.BeginCombo("##PeerCombo", iconLabel(icons.FA_USERS or icons.FA_USER or "", displayPeer)) then
+                    local regularPeers = {}
+                    for _, invData in pairs(inventory_actor.peer_inventories or {}) do
+                        if invData.server == inventoryUI.selectedServer then
+                            table.insert(regularPeers, {
+                                name = invData.name or "Unknown",
+                                server = invData.server,
+                                isMailbox = true,
+                                isBotCharacter = false,
+                                data = invData,
+                            })
+                        end
+                    end
+                    table.sort(regularPeers, function(a, b)
+                        return (a.name or ""):lower() < (b.name or ""):lower()
+                    end)
+                    if #regularPeers > 0 then
+                        ImGui.TextColored(0.7, 0.7, 1.0, 1.0, "Players:")
+                        for i, peer in ipairs(regularPeers) do
+                            ImGui.PushID(string.format("peer_%s_%s_%d", peer.name, peer.server, i))
+                            local isSelected = inventoryUI.selectedPeer == peer.name
+                            if ImGui.Selectable("  " .. peer.name, isSelected) then
+                                inventoryUI.selectedPeer = peer.name
+                                loadInventoryData(peer)
 
-        inlineOrWrap(95, iconSpacing)
-        ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.2, 0.5, 0.8, 1.0))
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.4, 0.7, 1.0, 1.0))
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.1, 0.3, 0.6, 1.0))
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
-        if ImGui.Button("Save Config", 90, 0) then
-            SaveConfigWithStatsUpdate()
-        end
-        if ImGui.IsItemHovered() then
-            ImGui.BeginTooltip()
-            ImGui.Text("Save visible column settings for this character.")
-            ImGui.EndTooltip()
-        end
-        ImGui.PopStyleVar()
-        ImGui.PopStyleColor(3)
+                                -- If there's a selected slot, refresh available items for the new character
+                                if inventoryUI.selectedSlotID and inventoryUI.showItemSuggestions then
+                                    inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(
+                                        peer.name, inventoryUI.selectedSlotID)
+                                    inventoryUI.filteredItemsCache.lastFilterKey = "" -- Invalidate cache
+                                    inventoryUI.itemSuggestionsTarget = peer.name
+                                    inventoryUI.itemSuggestionsSlotName = inventoryUI.selectedSlotName or "Unknown Slot"
+                                end
+                            end
+                            if isSelected then
+                                ImGui.SetItemDefaultFocus()
+                            end
+                            ImGui.PopID()
+                        end
+                    end
+                    ImGui.EndCombo()
+                end
 
-        inlineOrWrap(iconSize + iconSpacing, iconSpacing)
-        local lockIcon = inventoryUI.windowLocked and icons.FA_LOCK or icons.FA_UNLOCK
-        local lockColor = inventoryUI.windowLocked and ImVec4(0.8, 0.6, 0.2, 1.0) or ImVec4(0.6, 0.6, 0.6, 1.0)
-        local lockHoverColor = inventoryUI.windowLocked and ImVec4(1.0, 0.8, 0.4, 1.0) or ImVec4(0.8, 0.8, 0.8, 1.0)
-        local lockActiveColor = inventoryUI.windowLocked and ImVec4(0.6, 0.4, 0.1, 1.0) or ImVec4(0.4, 0.4, 0.4, 1.0)
-        ImGui.PushStyleColor(ImGuiCol.Button, lockColor)
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, lockHoverColor)
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, lockActiveColor)
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
-        if ImGui.Button(lockIcon, iconSize, iconSize) then
-            inventoryUI.windowLocked = not inventoryUI.windowLocked
-        end
-        if ImGui.IsItemHovered() then
-            ImGui.SetTooltip(inventoryUI.windowLocked and "Unlock window" or "Lock window")
-        end
-        ImGui.PopStyleVar()
-        ImGui.PopStyleColor(3)
+                inlineOrWrap(70, 8)
+                renderHeaderCloseButton()
+            else
+                ImGui.SetNextItemWidth(fitWidth(150, 120))
+                if ImGui.BeginCombo("##ServerCombo", iconLabel(icons.FA_SERVER or "", inventoryUI.selectedServer or "Server")) then
+                    local serverList = {}
+                    if inventoryUI.servers then
+                        for srv, _ in pairs(inventoryUI.servers) do
+                            table.insert(serverList, srv)
+                        end
+                    end
+                    table.sort(serverList)
+                    for i, srv in ipairs(serverList) do
+                        ImGui.PushID(string.format("server_%s_%d", srv, i))
+                        if ImGui.Selectable(srv, inventoryUI.selectedServer == srv) then
+                            inventoryUI.selectedServer = srv
+                            local validPeer = false
+                            for _, peer in ipairs(inventoryUI.servers[srv] or {}) do
+                                if peer.name == inventoryUI.selectedPeer then
+                                    validPeer = true
+                                    break
+                                end
+                            end
+                            if not validPeer then
+                                inventoryUI.selectedPeer = nil
+                            end
+                        end
+                        if inventoryUI.selectedServer == srv then
+                            ImGui.SetItemDefaultFocus()
+                        end
+                        ImGui.PopID()
+                    end
+                    ImGui.EndCombo()
+                end
+                ImGui.Spacing()
+                refreshPeerCache()
+                local displayPeer = inventoryUI.selectedPeer or "Peer"
+                ImGui.SetNextItemWidth(fitWidth(150, 120))
+                if inventoryUI.selectedServer and ImGui.BeginCombo("##PeerCombo", iconLabel(icons.FA_USERS or icons.FA_USER or "", displayPeer)) then
+                    local regularPeers = {}
+                    for _, invData in pairs(inventory_actor.peer_inventories or {}) do
+                        if invData.server == inventoryUI.selectedServer then
+                            table.insert(regularPeers, {
+                                name = invData.name or "Unknown",
+                                server = invData.server,
+                                isMailbox = true,
+                                isBotCharacter = false,
+                                data = invData,
+                            })
+                        end
+                    end
+                    table.sort(regularPeers, function(a, b)
+                        return (a.name or ""):lower() < (b.name or ""):lower()
+                    end)
+                    if #regularPeers > 0 then
+                        ImGui.TextColored(0.7, 0.7, 1.0, 1.0, "Players:")
+                        for i, peer in ipairs(regularPeers) do
+                            ImGui.PushID(string.format("peer_%s_%s_%d", peer.name, peer.server, i))
+                            local isSelected = inventoryUI.selectedPeer == peer.name
+                            if ImGui.Selectable("  " .. peer.name, isSelected) then
+                                inventoryUI.selectedPeer = peer.name
+                                loadInventoryData(peer)
 
-        inlineOrWrap(70, iconSpacing)
-        ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.2, 0.8, 0.2, 1.0))
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.4, 1.0, 0.4, 1.0))
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.1, 0.6, 0.1, 1.0))
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
-        if ImGui.Button("Close", 65, 0) then
-            inventoryUI.visible = false
-        end
-        if ImGui.IsItemHovered() then
-            ImGui.SetTooltip("Minimizes the UI")
-        end
-        ImGui.PopStyleVar()
-        ImGui.PopStyleColor(3)
+                                -- If there's a selected slot, refresh available items for the new character
+                                if inventoryUI.selectedSlotID and inventoryUI.showItemSuggestions then
+                                    inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(
+                                        peer.name, inventoryUI.selectedSlotID)
+                                    inventoryUI.filteredItemsCache.lastFilterKey = "" -- Invalidate cache
+                                    inventoryUI.itemSuggestionsTarget = peer.name
+                                    inventoryUI.itemSuggestionsSlotName = inventoryUI.selectedSlotName or "Unknown Slot"
+                                end
+                            end
+                            if isSelected then
+                                ImGui.SetItemDefaultFocus()
+                            end
+                            ImGui.PopID()
+                        end
+                    end
+                    ImGui.EndCombo()
+                end
 
-        inlineOrWrap(60, iconSpacing)
-        ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.8, 0.2, 0.2, 1.0))
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(1.0, 0.4, 0.4, 1.0))
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.6, 0.1, 0.1, 1.0))
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
-        if ImGui.Button("Exit", 55, 0) then
-            mq.exit()
+                ImGui.Spacing()
+                renderHeaderCloseButton()
+            end
         end
-        if ImGui.IsItemHovered() then
-            ImGui.SetTooltip("Exits the Script On This Screen")
-        end
-        ImGui.PopStyleVar()
-        ImGui.PopStyleColor(3)
 
         renderServerPeerSelectors()
-
+        ImGui.Spacing()
+        ImGui.Spacing()
         ImGui.Separator()
-        ImGui.Text("Search Items:")
-        inlineOrWrap(220, 8)
-        ImGui.SetNextItemWidth(fitWidth(300, 120))
+        ImGui.Spacing()
+
+        local cleanupButtonWidth = 170
+        local availWidthSpace = widthOf(ImGui.GetContentRegionAvail())
+        local reservedRowWidth = cleanupButtonWidth + 6 + 28 + 4
+        local preferredSearchWidth = math.max(120, availWidthSpace - reservedRowWidth)
+        local searchWidth = fitWidth(preferredSearchWidth, 100)
+        
+        ImGui.SetNextItemWidth(searchWidth)
         local headerSearchSubmitted = false
-        searchText, headerSearchSubmitted = ImGui.InputText("##Search", searchText or "", ImGuiInputTextFlags.EnterReturnsTrue)
+        searchText, headerSearchSubmitted = ImGui.InputTextWithHint("##Search", iconLabel(icons.FA_SEARCH or "", "Search Items..."), searchText or "", ImGuiInputTextFlags.EnterReturnsTrue)
         if headerSearchSubmitted and (searchText or "") ~= "" then
             openAllCharactersSearch()
         end
         if ImGui.IsItemHovered() then
             ImGui.SetTooltip("Press Enter to open All Characters search")
         end
-        inlineOrWrap(60, 6)
-        if ImGui.Button("Clear") then
+        ImGui.SameLine(0, 4)
+        if ImGui.Button(icons.FA_TIMES or "X", 28, 0) then
             searchText = ""
         end
+        if ImGui.IsItemHovered() then ImGui.SetTooltip("Clear Search") end
+        ImGui.SameLine(0, 6)
+        renderCleanupButton(cleanupButtonWidth)
+
         ImGui.Separator()
         local matchingBags = {}
         local function matchesSearch(item)
@@ -3549,7 +3551,17 @@ function inventoryUI.render()
                         Augments = envAugments,
                         CheckUpgrades = envCheckUpgrades,
                         FocusEffects = envFocusEffects,
-                    }
+                    },
+                    collectibles = {
+                        isVisible = function() return Collectibles.visible == true end,
+                        toggle = Collectibles.toggle,
+                    },
+                    actions = {
+                        saveConfig = SaveConfigWithStatsUpdate,
+                        openGiveItem = function()
+                            inventoryUI.showGiveItemPanel = true
+                        end,
+                    },
                 })
             end)
             if not launcher_success then
@@ -3583,24 +3595,36 @@ function inventoryUI.render()
         end
         ImGui.EndChild()
     end
+    end, debug.traceback)
 
     ImGui.End()
+    inventoryUI._mainWindowBegan = false
     Theme.pop_ezinventory_theme(ImGui, theme_count)
 
+    if not contentOk then
+        print(string.format("[EZInventory] Main window render error: %s", tostring(contentErr)))
+        return
+    end
+
     -- Render additional UI elements
-    Util.renderContextMenu()
-    renderMultiSelectIndicator()
-    Util.renderMultiTradePanel()
-    renderEquipmentComparison()
-    renderItemSuggestions()
-    renderItemExchange()
-    do
-        local envModals = {
-            ImGui = ImGui,
-            inventory_actor = inventory_actor,
-            extractCharacterName = extractCharacterName,
-        }
-        Modals.renderPeerBankingPanel(inventoryUI, envModals)
+    local extrasOk, extrasErr = xpcall(function()
+        Util.renderContextMenu()
+        renderMultiSelectIndicator()
+        Util.renderMultiTradePanel()
+        renderEquipmentComparison()
+        renderItemSuggestions()
+        renderItemExchange()
+        do
+            local envModals = {
+                ImGui = ImGui,
+                inventory_actor = inventory_actor,
+                extractCharacterName = extractCharacterName,
+            }
+            Modals.renderPeerBankingPanel(inventoryUI, envModals)
+        end
+    end, debug.traceback)
+    if not extrasOk then
+        print(string.format("[EZInventory] Auxiliary UI render error: %s", tostring(extrasErr)))
     end
 end
 
@@ -3714,8 +3738,7 @@ Util.setup({
 })
 
 mq.imgui.init("InventoryWindow", function()
-    -- Wrap everything to detect errors
-    local success = pcall(function()
+    local success, err = xpcall(function()
         if inventoryUI.showToggleButton then
             InventoryToggleButton()
         end
@@ -3725,7 +3748,14 @@ mq.imgui.init("InventoryWindow", function()
         Collectibles.draw()
         Banking.update()
         AssignmentManager.update()
-    end)
+    end, debug.traceback)
+    if not success then
+        print(string.format("[EZInventory] ImGui callback error: %s", tostring(err)))
+        if inventoryUI._mainWindowBegan then
+            pcall(ImGui.End)
+            inventoryUI._mainWindowBegan = false
+        end
+    end
 end)
 
 -- Initialize slash-command bindings via module

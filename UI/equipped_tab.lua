@@ -187,12 +187,10 @@ function M.renderContent(inventoryUI, env)
             ImGui.EndTable()
           end
         end
-        -- Always call EndChild after BeginChild
-        ImGui.EndChild()
-        tableChildActive = false
         end)
         if tableChildActive then
           ImGui.EndChild()
+          tableChildActive = false
         end
         if not tableOk then
           printf("[EZInventory] Table view render error: %s", tostring(tableErr))
