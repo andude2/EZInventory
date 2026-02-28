@@ -235,6 +235,32 @@ function M.renderContent(inventoryUI, env)
         return false, "", "", "", ""
       end
 
+      local classAliases = {
+        WARRIOR = "WAR",
+        CLERIC = "CLR",
+        PALADIN = "PAL",
+        RANGER = "RNG",
+        SHADOWKNIGHT = "SHD",
+        DRUID = "DRU",
+        MONK = "MNK",
+        BARD = "BRD",
+        ROGUE = "ROG",
+        SHAMAN = "SHM",
+        NECROMANCER = "NEC",
+        WIZARD = "WIZ",
+        MAGICIAN = "MAG",
+        ENCHANTER = "ENC",
+        BEASTLORD = "BST",
+        BERSERKER = "BER",
+      }
+
+      local function normalizeClassName(className)
+        local cleaned = tostring(className or ""):match("^%s*(.-)%s*$") or ""
+        if cleaned == "" then return "" end
+        local upper = cleaned:upper():gsub("[%s%-]", "")
+        return classAliases[upper] or upper
+      end
+
       local function passesFilters(item)
         if not item then return false end
         if inventoryUI.filterNoDrop and item.nodrop == 1 then return false end
@@ -253,8 +279,39 @@ function M.renderContent(inventoryUI, env)
           end
         end
         if inventoryUI.classFilter ~= "All" then
-          local cls = item.classes or ""
-          if type(cls) ~= "string" or not cls:find(inventoryUI.classFilter) then return false end
+          local selectedClass = normalizeClassName(inventoryUI.classFilter)
+          local hasClassMatch = false
+
+          if item.allClasses == true then
+            hasClassMatch = true
+          end
+
+          if not hasClassMatch and type(item.classes) == "table" then
+            for _, className in ipairs(item.classes) do
+              if normalizeClassName(className) == selectedClass then
+                hasClassMatch = true
+                break
+              end
+            end
+          end
+
+          if not hasClassMatch and type(item.classes) == "string" then
+            local rawClasses = tostring(item.classes):upper()
+            if rawClasses == "ALL" then
+              hasClassMatch = true
+            elseif rawClasses:find(selectedClass, 1, true) then
+              hasClassMatch = true
+            else
+              for token in tostring(item.classes):gmatch("[^,%s/]+") do
+                if normalizeClassName(token) == selectedClass then
+                  hasClassMatch = true
+                  break
+                end
+              end
+            end
+          end
+
+          if not hasClassMatch then return false end
         end
         if inventoryUI.raceFilter ~= "All" then
           local races = item.races or ""

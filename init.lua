@@ -1423,23 +1423,6 @@ local function compareSlotAcrossPeers(slotID)
     return results
 end
 
---------------------------------------------------
--- Function: Get Class Armor Type
---------------------------------------------------
-local function getArmorTypeByClass(class)
-    if class == "WAR" or class == "CLR" or class == "PAL" or class == "SHD" or class == "BRD" then
-        return "Plate"
-    elseif class == "RNG" or class == "ROG" or class == "SHM" or class == "BER" then
-        return "Chain"
-    elseif class == "NEC" or class == "WIZ" or class == "MAG" or class == "ENC" then
-        return "Cloth"
-    elseif class == "DRU" or class == "MNK" or class == "BST" then
-        return "Leather"
-    else
-        return "Unknown"
-    end
-end
-
 local itemGroups = {
     Weapon = { "1H Blunt", "1H Slashing", "2H Blunt", "2H Slashing", "Bow", "Throwing", "Wind Instrument" },
     Armor = { "Armor", "Shield" },
