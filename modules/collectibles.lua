@@ -4,6 +4,7 @@ local ImGui = require("ImGui")
 local icons = require("mq.icons")
 local inventory_actor = require("EZInventory.modules.inventory_actor")
 local json = require("dkjson")
+local Theme = require("EZInventory.modules.theme")
 
 local Collectibles = {}
 
@@ -145,6 +146,11 @@ end
 -- Draw the collectibles UI
 function Collectibles.draw()
     if not Collectibles.visible then return end
+    local themeCount = Theme.push_ezinventory_theme(ImGui)
+    local function endCollectiblesWindow()
+        ImGui.End()
+        Theme.pop_ezinventory_theme(ImGui, themeCount)
+    end
 
     local windowFlags = bit32.bor(
         ImGuiWindowFlags.MenuBar
@@ -155,23 +161,17 @@ function Collectibles.draw()
     local visible, should_draw = ImGui.Begin("Collectibles##EZInventoryCollectibles", true, windowFlags)
     if not visible then
         Collectibles.visible = false
-        ImGui.End()
+        endCollectiblesWindow()
         return
     end
 
     if not should_draw then
-        ImGui.End()
+        endCollectiblesWindow()
         return
     end
 
     -- Menu bar
     if ImGui.BeginMenuBar() then
-        if ImGui.Button("Refresh") then
-            Collectibles.loadCollectibleItems()
-            Collectibles.requestPeerCollectibles()
-        end
-
-        ImGui.SameLine()
         local totalLocal = #Collectibles.items
         local totalPeers = 0
         local peerCount = 0
@@ -194,6 +194,19 @@ function Collectibles.draw()
         ImGui.EndMenuBar()
     end
 
+    if ImGui.Button("Refresh##Collectibles", 90, 0) then
+        Collectibles.loadCollectibleItems()
+        Collectibles.requestPeerCollectibles()
+    end
+
+    ImGui.SameLine()
+    if ImGui.Button("Close##Collectibles", 72, 0) then
+        Collectibles.visible = false
+        endCollectiblesWindow()
+        return
+    end
+    ImGui.Separator()
+
     -- Loading indicator
     if Collectibles.isLoading then
         local windowWidth = ImGui.GetWindowWidth()
@@ -204,7 +217,7 @@ function Collectibles.draw()
         local textWidth = ImGui.CalcTextSize(loadingText)
         ImGui.SetCursorPosX((windowWidth - textWidth) * 0.5)
         ImGui.Text(loadingText)
-        ImGui.End()
+        endCollectiblesWindow()
         return
     end
 
@@ -327,7 +340,7 @@ function Collectibles.draw()
         ImGui.Text(noItemsText)
     end
 
-    ImGui.End()
+    endCollectiblesWindow()
 end
 
 return Collectibles

@@ -1,7 +1,7 @@
 local M = {}
 
 -- Registers all slash command bindings for EZInventory
--- env: mq, inventory_actor, inventoryUI, Settings, UpdateInventoryActorConfig, OnStatsLoadingModeChanged, Banking, AssignmentManager
+-- env: mq, inventory_actor, inventoryUI, Settings, UpdateInventoryActorConfig, OnStatsLoadingModeChanged, Banking, AssignmentManager, setMainWindowVisible
 function M.setup(env)
   local mq = env.mq
   local inventory_actor = env.inventory_actor
@@ -11,6 +11,7 @@ function M.setup(env)
   local OnStatsLoadingModeChanged = env.OnStatsLoadingModeChanged
   local Banking = env.Banking
   local AssignmentManager = env.AssignmentManager
+  local setMainWindowVisible = env.setMainWindowVisible
 
   -- Help table and renderer kept within module
   local helpInfo = {
@@ -41,7 +42,11 @@ function M.setup(env)
   end)
 
   mq.bind("/ezinventory_ui", function()
-    inventoryUI.visible = not inventoryUI.visible
+    if type(setMainWindowVisible) == "function" then
+      setMainWindowVisible(not inventoryUI.visible)
+    else
+      inventoryUI.visible = not inventoryUI.visible
+    end
   end)
 
   mq.bind("/ezinventory_cmd", function(peer, command, ...)

@@ -295,6 +295,24 @@ end
 
 SyncSettingsToUI()
 
+local function resetLauncherPopupState()
+    if inventoryUI.viewMode ~= "launcher" then return end
+    inventoryUI.windows = {}
+    inventoryUI._launcherCardHover = {}
+    if Collectibles then
+        Collectibles.visible = false
+    end
+end
+
+local function setMainWindowVisible(shouldBeVisible)
+    local newVisible = shouldBeVisible == true
+    local wasVisible = inventoryUI.visible == true
+    inventoryUI.visible = newVisible
+    if wasVisible and not newVisible then
+        resetLauncherPopupState()
+    end
+end
+
 local EQ_ICON_OFFSET        = 500
 local ICON_WIDTH            = 20
 local ICON_HEIGHT           = 20
@@ -1028,7 +1046,7 @@ local function InventoryToggleButton()
 
     local icon = icons.FA_ITALIC or "Inv"
     if ImGui.Button(icon, 50, 50) then
-        inventoryUI.visible = not inventoryUI.visible
+        setMainWindowVisible(not inventoryUI.visible)
     end
 
     if ImGui.IsItemHovered() then
@@ -3028,7 +3046,7 @@ function inventoryUI.render()
     inventoryUI._mainWindowBegan = true
 
     if not open then
-        inventoryUI.visible = false
+        setMainWindowVisible(false)
     end
 
     local tabbedContentChildOpen = false
@@ -3077,10 +3095,27 @@ function inventoryUI.render()
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.1, 0.6, 0.1, 1.0))
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
             if ImGui.Button("Close", 65, 0) then
-                inventoryUI.visible = false
+                setMainWindowVisible(false)
             end
             if ImGui.IsItemHovered() then
                 ImGui.SetTooltip("Minimizes the UI")
+            end
+            ImGui.PopStyleVar()
+            ImGui.PopStyleColor(3)
+        end
+
+        local function renderHeaderViewModeButton()
+            local targetView = (inventoryUI.viewMode == "launcher") and "Tabbed" or "Launcher"
+            local buttonText = (inventoryUI.viewMode == "launcher") and "Tabs" or "Launch"
+            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.25, 0.55, 0.85, 1.0))
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.35, 0.7, 1.0, 1.0))
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.2, 0.45, 0.7, 1.0))
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
+            if ImGui.Button(buttonText, 74, 0) then
+                inventoryUI.viewMode = (inventoryUI.viewMode == "launcher") and "tabbed" or "launcher"
+            end
+            if ImGui.IsItemHovered() then
+                ImGui.SetTooltip(string.format("Current: %s\nSwitch to: %s", tostring(inventoryUI.viewMode), targetView))
             end
             ImGui.PopStyleVar()
             ImGui.PopStyleColor(3)
@@ -3240,7 +3275,9 @@ function inventoryUI.render()
                     ImGui.EndCombo()
                 end
 
-                inlineOrWrap(70, 8)
+                inlineOrWrap(145, 8)
+                renderHeaderViewModeButton()
+                inlineOrWrap(70, 6)
                 renderHeaderCloseButton()
             else
                 ImGui.SetNextItemWidth(fitWidth(150, 120))
@@ -3322,6 +3359,8 @@ function inventoryUI.render()
                 end
 
                 ImGui.Spacing()
+                renderHeaderViewModeButton()
+                inlineOrWrap(70, 6)
                 renderHeaderCloseButton()
             end
         end
@@ -3775,6 +3814,7 @@ Bindings.setup({
     OnStatsLoadingModeChanged = OnStatsLoadingModeChanged,
     Banking = Banking,
     AssignmentManager = AssignmentManager,
+    setMainWindowVisible = setMainWindowVisible,
 })
 
 local function main()
