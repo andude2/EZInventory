@@ -310,13 +310,6 @@ function M.render(inventoryUI, env)
                  if not window_ok then
                      ImGui.TextColored(1, 0, 0, 1, "Render error in " .. title)
                      print(string.format("[EZInventory] Pop-out render failed (%s): %s", tostring(key), tostring(window_err)))
-                     -- If module content crashed while a child/tab scope was open, unwind child scopes.
-                     for _ = 1, 12 do
-                         local childClosed = pcall(ImGui.EndChild)
-                         if not childClosed then
-                             break
-                         end
-                     end
                  end
              end
              local end_ok, end_err = pcall(ImGui.End)
@@ -369,6 +362,22 @@ function M.render(inventoryUI, env)
             renderContent = function(ui, _)
                 local tabBarOpen = ImGui.BeginTabBar("InventoryCombinedTabs")
                 if tabBarOpen then
+                    local equippedOpen = ImGui.BeginTabItem("Equipped")
+                    if equippedOpen then
+                        local eqOk, eqErr = pcall(function()
+                            if env.modules.EquippedTab and env.modules.EquippedTab.renderContent then
+                                env.modules.EquippedTab.renderContent(ui, env.envs.Equipped)
+                            else
+                                ImGui.TextColored(1, 0, 0, 1, "Error: Equipped tab not available")
+                            end
+                        end)
+                        if not eqOk then
+                            print(string.format("[EZInventory] Inventory pop-out Equipped render failed: %s", tostring(eqErr)))
+                            ImGui.TextColored(1, 0, 0, 1, "Equipped render error")
+                        end
+                        ImGui.EndTabItem()
+                    end
+
                     local bagsOpen = ImGui.BeginTabItem("Bags")
                     if bagsOpen then
                         local bagsOk, bagsErr = pcall(function()

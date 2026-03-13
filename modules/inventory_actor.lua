@@ -921,6 +921,9 @@ function M.gather_inventory(options)
         includeExtendedStats = M.config.loadBasicStats
     end
     includeExtendedStats = not not includeExtendedStats
+    
+    local onlyEquippedWithStats = options.onlyEquippedWithStats
+    
     local scanStage = options.scanStage
     if not scanStage or scanStage == "" then
         scanStage = includeExtendedStats and "enriched" or "fast"
@@ -947,10 +950,19 @@ function M.gather_inventory(options)
     for slot = 0, 22 do
         local item = mq.TLO.Me.Inventory(slot)
         if item() then
-            local entry = get_basic_item_info(item, includeExtendedStats)
+            -- Force stats for equipped items if requested for fast UI population
+            local entry = get_basic_item_info(item, includeExtendedStats or onlyEquippedWithStats)
             entry.slotid = slot
             table.insert(data.equipped, entry)
         end
+    end
+
+    -- If only minimal equipped scan requested, skip the rest
+    if onlyEquippedWithStats and not includeExtendedStats then
+        if onlyEquippedWithStats then
+            M.last_inventory_fast = data
+        end
+        return data
     end
 
     for invSlot = 23, 34 do
@@ -1061,11 +1073,11 @@ local function send_inventory_payload(messageType, inventoryData)
     return true
 end
 
-local function queue_enriched_inventory_send(messageType)
+local function queue_enriched_inventory_send(messageType, force)
     if not should_collect_enriched_inventory() then
         return
     end
-    if messageType == M.MSG_TYPE.UPDATE and
+    if not force and messageType == M.MSG_TYPE.UPDATE and
         (not snapshots_differ(M.last_enriched_snapshot or {}, M.inventory_snapshot or {})) then
         return
     end
@@ -1385,7 +1397,7 @@ function M.request_item_stats(peerName, itemName, location, slotInfo, callback)
     return true
 end
 
-function M.publish_inventory()
+function M.publish_inventory(force)
     if not actor_mailbox then
         print("[Inventory Actor] Cannot publish inventory - actor system not initialized")
         return false
@@ -1398,10 +1410,11 @@ function M.publish_inventory()
         return false
     end
 
-    local inventoryData = M.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
+    -- Initial fast scan includes equipped stats for immediate UI/comparison population
+    local inventoryData = M.gather_inventory({ includeExtendedStats = false, onlyEquippedWithStats = true, scanStage = "fast" })
     send_inventory_payload(M.MSG_TYPE.UPDATE, inventoryData)
     M.inventory_snapshot = snapshot_from_inventory_data(inventoryData)
-    queue_enriched_inventory_send(M.MSG_TYPE.UPDATE)
+    queue_enriched_inventory_send(M.MSG_TYPE.UPDATE, force)
     return true
 end
 

@@ -8,29 +8,35 @@ function M.get_slot_options(inventoryData, getSlotNameFromID)
     local options = {}
     local seen = {}
 
-    for _, entry in ipairs(inventoryData and inventoryData.equipped or {}) do
-        local slotId = tonumber(entry.slotid)
-        if slotId ~= nil and not seen[slotId] then
-            seen[slotId] = true
-            table.insert(options, {
-                slotId = slotId,
-                slotName = getSlotNameFromID(slotId) or ("Slot " .. tostring(slotId)),
-            })
+    local function add_slot_option(slotId)
+        local numericSlotId = tonumber(slotId)
+        if numericSlotId == nil or seen[numericSlotId] then
+            return
         end
+
+        seen[numericSlotId] = true
+        table.insert(options, {
+            slotId = numericSlotId,
+            slotName = getSlotNameFromID(numericSlotId) or ("Slot " .. tostring(numericSlotId)),
+        })
     end
 
-    if #options == 0 then
-        for _, slotId in ipairs(DEFAULT_SLOT_IDS) do
-            table.insert(options, {
-                slotId = slotId,
-                slotName = getSlotNameFromID(slotId) or ("Slot " .. tostring(slotId)),
-            })
-        end
-    else
-        table.sort(options, function(a, b)
-            return (a.slotName or "") < (b.slotName or "")
-        end)
+    for _, slotId in ipairs(DEFAULT_SLOT_IDS) do
+        add_slot_option(slotId)
     end
+
+    for _, entry in ipairs(inventoryData and inventoryData.equipped or {}) do
+        add_slot_option(entry.slotid)
+    end
+
+    table.sort(options, function(a, b)
+        local leftName = a.slotName or ""
+        local rightName = b.slotName or ""
+        if leftName ~= rightName then
+            return leftName < rightName
+        end
+        return (a.slotId or 0) < (b.slotId or 0)
+    end)
 
     return options
 end
