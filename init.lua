@@ -123,6 +123,15 @@ ItemUtils.setup({
     character_utils = CharacterUtils,
 })
 
+-- Maintain compatibility with UI modules and actor sync code that read/write
+-- assignments through globals.
+_G.EZINV_GET_ITEM_ASSIGNMENT = ItemUtils.getItemAssignment
+_G.EZINV_SET_ITEM_ASSIGNMENT = ItemUtils.setItemAssignment
+_G.EZINV_CLEAR_ITEM_ASSIGNMENT = ItemUtils.clearItemAssignment
+_G.EZINV_GET_ALL_ASSIGNMENTS = function()
+    return State.Settings.characterAssignments or {}
+end
+
 NetworkManager.setup({
     inventory_actor = inventory_actor,
     inventoryUI = inventoryUI,
@@ -166,6 +175,9 @@ Util.setup({
     extractCharacterName = CharacterUtils.extractCharacterName,
     isItemBankFlagged = ItemUtils.isItemBankFlagged,
     setItemBankFlag = ItemUtils.setItemBankFlag,
+    getItemAssignment = ItemUtils.getItemAssignment,
+    setItemAssignment = ItemUtils.setItemAssignment,
+    clearItemAssignment = ItemUtils.clearItemAssignment,
     peerCache = {}, -- Peer list cache managed internally or via NetworkManager
     drawItemIcon = SharedUI.drawItemIcon,
 })

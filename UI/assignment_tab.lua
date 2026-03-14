@@ -1,3 +1,6 @@
+---@type fun(itemID: integer): nil
+_G.EZINV_CLEAR_ITEM_ASSIGNMENT = _G.EZINV_CLEAR_ITEM_ASSIGNMENT
+
 local M = {}
 
 -- Assignment Management Tab renderer

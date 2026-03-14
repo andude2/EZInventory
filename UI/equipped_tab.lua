@@ -1,3 +1,6 @@
+---@type fun(itemID: integer): string|nil
+_G.EZINV_GET_ITEM_ASSIGNMENT = _G.EZINV_GET_ITEM_ASSIGNMENT
+
 local M = {}
 
 -- Equipped Tab renderer

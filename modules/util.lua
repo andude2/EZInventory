@@ -1,3 +1,6 @@
+---@type fun(itemID: integer): string|nil
+_G.EZINV_GET_ITEM_ASSIGNMENT = _G.EZINV_GET_ITEM_ASSIGNMENT
+
 local M = {}
 
 -- Utility module for context menus, selection helpers, and multi-trade UI
@@ -6,6 +9,7 @@ local M = {}
 local ImGui, mq, json
 local inventoryUI, inventory_actor, Settings, SettingsFile
 local extractCharacterName, isItemBankFlagged, setItemBankFlag
+local getItemAssignment, setItemAssignment, clearItemAssignment
 local peerCache, drawItemIcon
 local showEquipmentComparison -- set later via setter if needed
 
@@ -20,6 +24,9 @@ function M.setup(env)
   extractCharacterName = env.extractCharacterName
   isItemBankFlagged = env.isItemBankFlagged
   setItemBankFlag = env.setItemBankFlag
+  getItemAssignment = env.getItemAssignment
+  setItemAssignment = env.setItemAssignment
+  clearItemAssignment = env.clearItemAssignment
   peerCache = env.peerCache
   drawItemIcon = env.drawItemIcon
 end
@@ -159,11 +166,18 @@ function M.renderContextMenu()
       local item = inventoryUI.contextMenu.item
       local itemID = item and tonumber(item.id) or 0
       if itemID and itemID > 0 then
-        local currentAssignment = _G.EZINV_GET_ITEM_ASSIGNMENT and _G.EZINV_GET_ITEM_ASSIGNMENT(itemID) or nil
+        local currentAssignment = nil
+        if getItemAssignment then
+          currentAssignment = getItemAssignment(itemID)
+        elseif _G.EZINV_GET_ITEM_ASSIGNMENT then
+          currentAssignment = _G.EZINV_GET_ITEM_ASSIGNMENT(itemID)
+        end
         
         if currentAssignment then
           if ImGui.MenuItem(string.format("Unassign from %s", currentAssignment)) then
-            if _G.EZINV_CLEAR_ITEM_ASSIGNMENT then
+            if clearItemAssignment then
+              clearItemAssignment(itemID)
+            elseif _G.EZINV_CLEAR_ITEM_ASSIGNMENT then
               _G.EZINV_CLEAR_ITEM_ASSIGNMENT(itemID)
             end
             inventoryUI.needsRefresh = true
@@ -177,7 +191,9 @@ function M.renderContextMenu()
             local isCurrentAssignment = currentAssignment and currentAssignment == peerName
             local displayName = peerName
             if ImGui.MenuItem(displayName, false, isCurrentAssignment) then
-              if _G.EZINV_SET_ITEM_ASSIGNMENT then
+              if setItemAssignment then
+                setItemAssignment(itemID, peerName)
+              elseif _G.EZINV_SET_ITEM_ASSIGNMENT then
                 _G.EZINV_SET_ITEM_ASSIGNMENT(itemID, peerName)
               end
               inventoryUI.needsRefresh = true
@@ -196,7 +212,9 @@ function M.renderContextMenu()
             end
             
             if ImGui.MenuItem(displayName, false, isCurrentAssignment) then
-              if _G.EZINV_SET_ITEM_ASSIGNMENT then
+              if setItemAssignment then
+                setItemAssignment(itemID, sourceChar)
+              elseif _G.EZINV_SET_ITEM_ASSIGNMENT then
                 _G.EZINV_SET_ITEM_ASSIGNMENT(itemID, sourceChar)
               end
               inventoryUI.needsRefresh = true
