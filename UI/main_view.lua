@@ -107,7 +107,7 @@ function M.render()
         local envCheckUpgrades = { ImGui=ImGui, mq=mq, json=json, CheckUpgrades=CheckUpgrades, Suggestions=Suggestions, getSlotNameFromID=item_utils.getSlotNameFromID, drawItemIcon=shared_ui.drawItemIcon, inventory_actor=inventory_actor, Settings=state.Settings }
         local envFocusEffects = { ImGui=ImGui, mq=mq, FocusEffects=FocusEffects, getSlotNameFromID=item_utils.getSlotNameFromID }
 
-        ImGui.BeginChild("TabbedContentRegion", 0, 0, ImGuiChildFlags.Border)
+        ImGui.BeginChild("TabbedContentRegion", 0, 0, true, ImGuiChildFlags.Border)
         local tab_ok, tab_err = pcall(function()
             if inventoryUI.viewMode == "launcher" then
                 LauncherView.render(inventoryUI, { ImGui=ImGui, modules={ EquippedTab=EquippedTab, BagsTab=BagsTab, BankTab=BankTab, AllCharsTab=AllCharsTab, AssignmentTab=AssignmentTab, PeerTab=PeerTab, PerformanceTab=PerformanceTab, AugmentsTab=AugmentsTab, CheckUpgradesTab=CheckUpgradesTab, FocusEffectsTab=FocusEffectsTab }, envs={ Equipped=envEquipped, Bags=envBags, Bank=envBank, AllChars=envAll, Assignment=envAssignment, Peer=envPeer, Performance=envPerf, Augments=envAugments, CheckUpgrades=envCheckUpgrades, FocusEffects=envFocusEffects }, collectibles={ isVisible=function() return Collectibles.visible==true end, toggle=Collectibles.toggle }, actions={ saveConfig=SaveConfigWithStatsUpdate, openGiveItem=function() inventoryUI.showGiveItemPanel=true end } })

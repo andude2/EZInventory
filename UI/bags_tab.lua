@@ -157,8 +157,10 @@ function M.renderContent(inventoryUI, env)
                       toggleItemSelection(item, uniqueKey, inventoryUI.selectedPeer)
                     end
 
-                    -- Draw selection indicator
-                    drawSelectionIndicator(uniqueKey, ImGui.IsItemHovered())
+                    -- Draw selection indicator when the shared helper is available.
+                    if drawSelectionIndicator then
+                      drawSelectionIndicator(uniqueKey, ImGui.IsItemHovered())
+                    end
                   else
                     -- Normal mode - examine item
                     if ImGui.Selectable(displayName .. "##" .. bagid .. "_" .. i) then
