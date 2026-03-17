@@ -49,6 +49,9 @@ M.inventory_snapshot  = {}
 
 local last_lightweight_scan = 0
 local LIGHTWEIGHT_SCAN_INTERVAL_MS = 750
+local SHORT_ACTION_DELAY_MS = 200
+local MEDIUM_ACTION_DELAY_MS = 400
+local LOOP_POLL_DELAY_MS = 100
 
 local function get_time_ms()
     if mq and mq.gettime then
@@ -58,6 +61,31 @@ local function get_time_ms()
         end
     end
     return math.floor(os.clock() * 1000)
+end
+
+local function trade_log(tag, fmt, ...)
+    local message = fmt
+    if select('#', ...) > 0 then
+        message = string.format(fmt, ...)
+    end
+    printf("[%s] %s", tostring(tag or "TRADE"), message)
+end
+
+local function trade_wait(reason, fmt, ...)
+    if fmt then
+        trade_log("WAIT", "%s | " .. fmt, tostring(reason or "pending"), ...)
+    else
+        trade_log("WAIT", "%s", tostring(reason or "pending"))
+    end
+end
+
+local function describe_trade_request(request)
+    if not request then
+        return "unknown request"
+    end
+    local itemName = request.name or "Unknown Item"
+    local target = request.toon or request.target or "Unknown Target"
+    return string.format("%s -> %s", itemName, target)
 end
 
 local function format_equipped_key(slot)
@@ -912,6 +940,58 @@ local function build_pickup_command(name, bagid, slotid, opts)
     end
 
     return nil
+end
+
+local function cursor_has_item()
+    return mq.TLO.Cursor() ~= nil and (mq.TLO.Cursor.ID() or 0) > 0
+end
+
+local function get_trade_slot_fill_count()
+    if not mq.TLO.Window("TradeWnd").Open() then
+        return 0
+    end
+
+    local filled = 0
+    for i = 0, 7 do
+        local slot_tlo = mq.TLO.Window("TradeWnd").Child("TRDW_TradeSlot" .. i)
+        if slot_tlo() and slot_tlo.Tooltip() ~= nil and slot_tlo.Tooltip() ~= "" then
+            filled = filled + 1
+        end
+    end
+
+    return filled
+end
+
+local function place_cursor_item_in_trade(targetToon, expectedMinFilledSlots)
+    expectedMinFilledSlots = tonumber(expectedMinFilledSlots) or 1
+
+    if not mq.TLO.Window("TradeWnd").Open() then
+        return false
+    end
+
+    if get_trade_slot_fill_count() >= expectedMinFilledSlots then
+        return true
+    end
+
+    for _ = 1, 3 do
+        if not cursor_has_item() then
+            return get_trade_slot_fill_count() >= expectedMinFilledSlots
+        end
+
+        if not mq.TLO.Target() or mq.TLO.Target.CleanName() ~= targetToon then
+            mq.cmdf("/tar pc %s", targetToon)
+            mq.delay(200)
+        end
+
+        mq.cmd("/click left target")
+        mq.delay(250)
+
+        if get_trade_slot_fill_count() >= expectedMinFilledSlots or not cursor_has_item() then
+            return get_trade_slot_fill_count() >= expectedMinFilledSlots or not cursor_has_item()
+        end
+    end
+
+    return false
 end
 
 function M.gather_inventory(options)
@@ -1773,10 +1853,19 @@ function M.process_pending_requests()
                 if mq.TLO.Cursor.ID() then mq.delay(100) end
             end
         else
-            printf("[SINGLE] Processing single item request: Give %s to %s", request.name, request.toon)
-            table.insert(M.deferred_tasks, function()
-                M.perform_single_item_trade(request)
-            end)
+            local queuedAgeMs = request.queuedAt and (get_time_ms() - request.queuedAt) or nil
+            if queuedAgeMs then
+                if queuedAgeMs > 500 and #M.deferred_tasks > 0 then
+                    trade_log("SINGLE", "Processing single item request: %s (queued %dms ago, deferred_backlog=%d)",
+                        describe_trade_request(request), queuedAgeMs, #M.deferred_tasks)
+                else
+                    trade_log("SINGLE", "Processing single item request: %s (queued %dms ago)",
+                        describe_trade_request(request), queuedAgeMs)
+                end
+            else
+                trade_log("SINGLE", "Processing single item request: %s", describe_trade_request(request))
+            end
+            M.perform_single_item_trade(request)
         end
     end
 end
@@ -1813,7 +1902,7 @@ function M.perform_multi_item_trade_step()
                 return false
             end
             mq.cmdf("/target id %d", banker.ID())
-            mq.delay(500)
+            mq.delay(SHORT_ACTION_DELAY_MS)
             mq.cmdf("/nav target")
             state.banker_nav_start_time = os.time()
             state.status = "WAIT_NAVIGATING_TO_BANKER"
@@ -1837,9 +1926,9 @@ function M.perform_multi_item_trade_step()
             end
         else
             mq.cmd("/nav stop")
-            mq.delay(500)
+            mq.delay(SHORT_ACTION_DELAY_MS)
             mq.cmd("/click right target")
-            mq.delay(1000)
+            mq.delay(MEDIUM_ACTION_DELAY_MS)
             state.at_banker = true
             state.status = "RETRIEVING_BANK_ITEMS"
             state.current_bank_item_index = 1
@@ -1884,7 +1973,7 @@ function M.perform_multi_item_trade_step()
             end
 
             mq.cmdf("/nomodkey /shift /itemnotify %s", bankCommand)
-            mq.delay(500)
+            mq.delay(SHORT_ACTION_DELAY_MS)
 
             if not mq.TLO.Cursor.ID() then
                 printf("[ERROR] Failed to pick up %s from bank. Item not on cursor. Aborting trade.",
@@ -1893,7 +1982,7 @@ function M.perform_multi_item_trade_step()
             end
             printf("%s picked up from bank.", mq.TLO.Cursor.Name())
             mq.cmd("/autoinventory")
-            mq.delay(500)
+            mq.delay(SHORT_ACTION_DELAY_MS)
             if mq.TLO.Cursor.ID() then
                 printf("[ERROR] %s stuck on cursor after autoinventory. Aborting.", mq.TLO.Cursor.Name())
                 mq.delay(100)
@@ -1915,11 +2004,11 @@ function M.perform_multi_item_trade_step()
                 printf("[BATCH STATE] All bank items for this session retrieved. Closing bank and navigating to target.")
                 if mq.TLO.Window("BankWnd").Open() then
                     mq.TLO.Window("BankWnd").DoClose()
-                    mq.delay(500)
+                    mq.delay(150)
                 end
                 if mq.TLO.Window("BigBankWnd").Open() then
                     mq.TLO.Window("BigBankWnd").DoClose()
-                    mq.delay(500)
+                    mq.delay(150)
                 end
                 state.status = "NAVIGATING_TO_TARGET"
                 state.nav_start_time = 0
@@ -1953,7 +2042,7 @@ function M.perform_multi_item_trade_step()
             end
         else
             mq.cmd("/nav stop")
-            mq.delay(500)
+            mq.delay(SHORT_ACTION_DELAY_MS)
             state.status = "OPENING_TRADE_WINDOW"
         end
     end
@@ -1962,11 +2051,11 @@ function M.perform_multi_item_trade_step()
         printf("[BATCH STATE] Opening trade window with %s", targetToon)
         if mq.TLO.Window("BankWnd").Open() then
             mq.TLO.Window("BankWnd").DoClose()
-            mq.delay(500)
+            mq.delay(150)
         end
         if mq.TLO.Window("BigBankWnd").Open() then
             mq.TLO.Window("BigBankWnd").DoClose()
-            mq.delay(500)
+            mq.delay(150)
         end
         local firstItemForTrade = nil
         for i = 1, #itemsToTrade do
@@ -2001,7 +2090,7 @@ function M.perform_multi_item_trade_step()
         end
 
         mq.cmd(firstPickupCmd)
-        mq.delay(500)
+        mq.delay(SHORT_ACTION_DELAY_MS)
         if not mq.TLO.Cursor.ID() then
             printf("[ERROR] Failed to pick up %s from inventory for trade. Aborting.", firstItemForTrade.name)
             return false
@@ -2013,7 +2102,7 @@ function M.perform_multi_item_trade_step()
             return false
         end
         mq.cmd("/click left target")
-        mq.delay(500)
+        mq.delay(SHORT_ACTION_DELAY_MS)
         state.current_item_index = state.current_item_index + 1
 
         mq.delay(5)
@@ -2028,13 +2117,7 @@ function M.perform_multi_item_trade_step()
             return false
         end
         local item_to_trade = itemsToTrade[state.current_item_index]
-        local filled_slots = 0
-        for i = 0, 7 do
-            local slot_tlo = mq.TLO.Window("TradeWnd").Child("TRDW_TradeSlot" .. i)
-            if slot_tlo() and slot_tlo.Tooltip() ~= nil and slot_tlo.Tooltip() ~= "" then
-                filled_slots = filled_slots + 1
-            end
-        end
+        local filled_slots = get_trade_slot_fill_count()
         printf("Trade window has %d filled slots.", filled_slots)
 
         if item_to_trade and filled_slots < 8 then
@@ -2069,8 +2152,15 @@ function M.perform_multi_item_trade_step()
                 return false
             end
             printf("%s picked up. Placing in trade window.", mq.TLO.Cursor.Name())
-            mq.cmd("/click left target")
-            mq.delay(50)
+            local placed = place_cursor_item_in_trade(targetToon, filled_slots + 1)
+            if not placed then
+                printf("[ERROR] Failed to place %s into the trade window. Aborting.", item_to_trade.name)
+                if cursor_has_item() then
+                    mq.cmd("/autoinventory")
+                    mq.delay(100)
+                end
+                return false
+            end
             state.current_item_index = state.current_item_index + 1
             return true
         else
@@ -2111,10 +2201,10 @@ function M.perform_multi_item_trade_step()
 end
 
 function M.perform_single_item_trade(request)
-    printf("Performing single item trade for: %s to %s", request.name, request.toon)
+    trade_log("SINGLE", "Starting single item trade: %s", describe_trade_request(request))
 
     if request.fromBank then
-        printf("Attempting to retrieve %s from bank.", request.name)
+        trade_log("STEP", "Retrieving %s from bank before trade.", request.name)
         local banker = mq.TLO.Spawn("npc banker")
         if not banker() then
             print("[ERROR] Could not find a banker nearby. Cannot retrieve item from bank.")
@@ -2122,15 +2212,16 @@ function M.perform_single_item_trade(request)
         end
 
         mq.cmdf("/target id %d", banker.ID())
-        mq.delay(500)
+        mq.delay(SHORT_ACTION_DELAY_MS)
         mq.cmdf("/nav target")
         local navStartTime = os.time()
+        trade_wait("navigating to banker", "item=%s banker_id=%d", request.name, banker.ID())
         while mq.TLO.Target.Distance3D() > 10 and (os.time() - navStartTime) < 15 do
-            mq.delay(500)
+            mq.delay(LOOP_POLL_DELAY_MS)
             if not mq.TLO.Target.ID() then break end
         end
         mq.cmd("/nav stop")
-        mq.delay(500)
+        mq.delay(SHORT_ACTION_DELAY_MS)
 
         if mq.TLO.Target.Distance3D() > 10 then
             printf("[ERROR] Failed to reach banker for %s. Aborting trade.", request.name)
@@ -2138,11 +2229,11 @@ function M.perform_single_item_trade(request)
         end
 
         mq.cmd("/click right target")
-        mq.delay(1000)
+        mq.delay(MEDIUM_ACTION_DELAY_MS)
 
         if not mq.TLO.Window("BankWnd").Open() and not mq.TLO.Window("BigBankWnd").Open() then
             mq.cmd("/bank")
-            mq.delay(1000)
+            mq.delay(MEDIUM_ACTION_DELAY_MS)
         end
 
         local BankSlotId = tonumber(request.bankslotid) or 0
@@ -2168,12 +2259,12 @@ function M.perform_single_item_trade(request)
         end
 
         mq.cmdf("/nomodkey /shift /itemnotify %s", bankCommand)
-        mq.delay(1000)
-        if not mq.TLO.Cursor.ID() then
+        mq.delay(MEDIUM_ACTION_DELAY_MS)
+        if not cursor_has_item() then
             printf("[ERROR] Failed to pick up %s from bank. Item not on cursor.", request.name)
             return
         end
-        printf("%s picked up from bank.", mq.TLO.Cursor.Name())
+        trade_log("STEP", "%s picked up from bank.", mq.TLO.Cursor.Name())
     else
         local pickupCommand = build_pickup_command(request.name, request.bagid, request.slotid)
         if not pickupCommand then
@@ -2181,13 +2272,14 @@ function M.perform_single_item_trade(request)
             return
         end
 
+        trade_log("STEP", "Picking up %s from inventory.", request.name)
         mq.cmd(pickupCommand)
-        mq.delay(500)
-        if not mq.TLO.Cursor.ID() then
+        mq.delay(SHORT_ACTION_DELAY_MS)
+        if not cursor_has_item() then
             printf("[ERROR] Failed to pick up %s from inventory. Item not on cursor.", request.name)
             return
         end
-        printf("%s picked up from inventory.", mq.TLO.Cursor.Name())
+        trade_log("STEP", "%s picked up from inventory.", mq.TLO.Cursor.Name())
     end
 
     local spawn = mq.TLO.Spawn("pc =" .. request.toon)
@@ -2201,12 +2293,13 @@ function M.perform_single_item_trade(request)
     end
 
     if spawn.Distance3D() > 15 then
-        printf("Recipient %s is too far away (%.2f). Navigating to trade %s...", request.toon, spawn.Distance3D(),
+        trade_log("STEP", "Recipient %s is %.2f away. Navigating to trade %s.", request.toon, spawn.Distance3D(),
             request.name)
         mq.cmdf("/nav id %s", spawn.ID())
         local startTime = os.time()
+        trade_wait("navigating to recipient", "target=%s distance=%.2f", request.toon, spawn.Distance3D())
         while spawn.Distance3D() > 15 and os.time() - startTime < 30 do
-            mq.delay(1000)
+            mq.delay(250)
             if not mq.TLO.Spawn("pc =" .. request.toon).ID() then
                 printf("[ERROR] Target %s disappeared during navigation. Aborting trade for %s.", request.toon,
                     request.name)
@@ -2231,44 +2324,60 @@ function M.perform_single_item_trade(request)
 
     if mq.TLO.Window("BankWnd").Open() then
         mq.TLO.Window("BankWnd").DoClose()
-        mq.delay(500)
+        mq.delay(150)
     end
     if mq.TLO.Window("BigBankWnd").Open() then
         mq.TLO.Window("BigBankWnd").DoClose()
-        mq.delay(500)
+        mq.delay(150)
     end
 
     mq.cmdf("/tar pc %s", request.toon)
-    mq.delay(500)
+    mq.delay(SHORT_ACTION_DELAY_MS)
+    trade_log("STEP", "Opening trade window with %s.", request.toon)
     mq.cmd("/click left target")
 
     local timeout = os.time() + 5
+    trade_wait("trade window to open", "target=%s", request.toon)
     while not mq.TLO.Window("TradeWnd").Open() and os.time() < timeout do
-        mq.delay(200)
+        mq.delay(LOOP_POLL_DELAY_MS)
     end
 
     if not mq.TLO.Window("TradeWnd").Open() then
         mq.cmdf("/popcustom 5 Trade window failed to open with %s for %s. Aborting trade.", request.toon, request.name)
-        if mq.TLO.Cursor.ID() then
+        if cursor_has_item() then
             mq.cmd('/autoinventory')
             mq.delay(100)
         end
         return
     end
 
-    mq.delay(1000)
+    mq.delay(150)
+    local initialFilledSlots = get_trade_slot_fill_count()
+    if cursor_has_item() or initialFilledSlots < 1 then
+        trade_log("STEP", "Placing %s into the trade window.", request.name)
+        local placed = place_cursor_item_in_trade(request.toon, 1)
+        if not placed then
+            printf("[ERROR] Failed to place %s into the trade window.", request.name)
+            if cursor_has_item() then
+                mq.cmd('/autoinventory')
+                mq.delay(100)
+            end
+            mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
+            return
+        end
+    end
 
-    mq.cmd("/nomodkey /itemnotify trade leftmouseup")
-    mq.delay(500)
-
+    trade_log("STEP", "Requesting %s to auto-accept trade.", request.toon)
     M.send_inventory_command(request.toon, "auto_accept_trade", {})
-    mq.delay(500)
+    mq.delay(300)
 
+    trade_log("STEP", "Clicking Trade button for %s.", request.name)
     mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
 
-    timeout = os.time() + 10
+    timeout = os.time() + 15
+    trade_wait("recipient to accept trade", "target=%s item=%s", request.toon, request.name)
     while mq.TLO.Window("TradeWnd").Open() and os.time() < timeout do
-        mq.delay(500)
+        mq.delay(250)
     end
 
 
@@ -2276,11 +2385,11 @@ function M.perform_single_item_trade(request)
         printf("[WARN] Trade window remained open for %s. Possible issue with trade.", request.name)
         mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
     else
-        printf("Successfully traded %s to %s.", request.name, request.toon)
+        trade_log("DONE", "Successfully traded %s to %s.", request.name, request.toon)
         -- If auto-exchange is enabled, send exchange command to recipient after successful trade
         if request.autoExchange and request.targetSlot then
-            -- Wait 2 seconds for the item to be fully transferred
-            mq.delay(2000)
+            trade_wait("post-trade item transfer settle", "auto-exchange for %s", request.name)
+            mq.delay(750)
             M.send_inventory_command(request.toon, "perform_auto_exchange", {
                 json.encode({
                     itemName = request.name,
@@ -2349,12 +2458,14 @@ local function handle_command_message(message)
                 bagid = request.bagid,
                 slotid = request.slotid,
                 bankslotid = request.bankslotid,
+                queuedAt = get_time_ms(),
                 -- Add auto-exchange fields
                 autoExchange = request.autoExchange,
                 targetSlot = request.targetSlot,
                 targetSlotName = request.targetSlotName
             })
-            print("Added single item request to pending queue")
+            trade_log("QUEUE", "Added single item request to pending queue: %s (queue=%d)",
+                describe_trade_request({ name = request.name, toon = request.to }), #M.pending_requests)
 
             -- Auto-exchange will be handled after successful trade completion
         else
@@ -2385,12 +2496,14 @@ local function handle_command_message(message)
         end
     elseif command == "auto_accept_trade" then
         table.insert(M.deferred_tasks, function()
-            print("Auto accepting trade")
-            local timeout = os.time() + 5
+            trade_log("ACCEPT", "Auto-accept task started.")
+            local timeout = os.time() + 10
+            trade_wait("incoming trade window", "auto_accept_trade")
             while not mq.TLO.Window("TradeWnd").Open() and os.time() < timeout do
-                mq.delay(100)
+                mq.delay(LOOP_POLL_DELAY_MS)
             end
             if mq.TLO.Window("TradeWnd").Open() then
+                trade_log("ACCEPT", "Trade window open. Clicking accept.")
                 mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
             else
                 mq.cmd("/popcustom 5 TradeWnd did not open for auto-accept")
@@ -2487,7 +2600,11 @@ function M.send_inventory_command(peer, command, args)
         print("[Inventory Actor] Cannot send command - command mailbox not initialized")
         return false
     end
-    printf("[SEND CMD] Trying to send %s to %s", command, tostring(peer))
+    if command == "proxy_give" or command == "proxy_give_batch" or command == "auto_accept_trade" or command == "perform_auto_exchange" then
+        trade_log("SEND CMD", "Trying to send %s to %s", command, tostring(peer))
+    else
+        printf("[SEND CMD] Trying to send %s to %s", command, tostring(peer))
+    end
     command_mailbox:send(
         { character = peer },
         { type = 'command', command = command, args = args or {}, target = peer }

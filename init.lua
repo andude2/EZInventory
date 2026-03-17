@@ -285,13 +285,13 @@ local function main()
 
     while true do
         mq.doevents()
-        NetworkManager.update()
-        
+        inventory_actor.process_pending_requests()
         if #inventory_actor.deferred_tasks > 0 then
             local task = table.remove(inventory_actor.deferred_tasks, 1)
             pcall(task)
         end
-        mq.delay(100)
+        NetworkManager.update()
+        mq.delay(50)
     end
 end
 

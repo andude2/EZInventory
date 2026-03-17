@@ -27,8 +27,88 @@ function M.renderContent(inventoryUI, env)
   local drawLiveItemSlot = env.drawLiveItemSlot
   local drawEmptySlot = env.drawEmptySlot
   local drawItemSlot = env.drawItemSlot
-  local BAG_CELL_SIZE = env.BAG_CELL_SIZE
-  local BAG_MAX_SLOTS_PER_BAG = env.BAG_MAX_SLOTS_PER_BAG
+  local BAG_CELL_SIZE = tonumber(env.BAG_CELL_SIZE) or 40
+  local BAG_MAX_SLOTS_PER_BAG = tonumber(env.BAG_MAX_SLOTS_PER_BAG) or 10
+
+  local function drawCellFrame(cell_id, hasItem)
+    local clicked = ImGui.InvisibleButton("##cell_" .. tostring(cell_id), BAG_CELL_SIZE, BAG_CELL_SIZE)
+    local minX, minY = ImGui.GetItemRectMin()
+    local maxX, maxY = ImGui.GetItemRectMax()
+    local drawList = ImGui.GetWindowDrawList()
+    local showBackground = not not env.showItemBackground
+
+    local fillColor
+    if showBackground then
+      if hasItem then
+        fillColor = ImGui.GetColorU32(0.18, 0.22, 0.28, 0.95)
+      else
+        fillColor = ImGui.GetColorU32(0.10, 0.10, 0.12, 0.85)
+      end
+      drawList:AddRectFilled(ImVec2(minX, minY), ImVec2(maxX, maxY), fillColor, 3)
+    end
+
+    local borderColor
+    if hasItem then
+      borderColor = ImGui.GetColorU32(0.42, 0.56, 0.72, 1.0)
+    else
+      borderColor = ImGui.GetColorU32(0.32, 0.32, 0.36, 1.0)
+    end
+    drawList:AddRect(ImVec2(minX, minY), ImVec2(maxX, maxY), borderColor, 3, 0, 1.5)
+
+    return clicked, minX, minY, maxX, maxY
+  end
+
+  local function drawFallbackEmptySlot(cell_id)
+    drawCellFrame(cell_id, false)
+  end
+
+  local function drawFallbackItemSlot(itemLike, cell_id)
+    local clicked, minX, minY, maxX, maxY = drawCellFrame(cell_id, itemLike ~= nil)
+    ImGui.SetCursorScreenPos(minX, minY)
+    if env.drawItemIcon and itemLike and itemLike.icon and itemLike.icon > 0 then
+      env.drawItemIcon(itemLike.icon, BAG_CELL_SIZE - 4, BAG_CELL_SIZE - 4)
+    else
+      ImGui.SetCursorScreenPos(minX + 12, minY + 8)
+      ImGui.Text((itemLike and itemLike.name and itemLike.name:sub(1, 1)) or "?")
+    end
+    if clicked and itemLike and itemLike.itemlink then
+      local links = mq.ExtractLinks(itemLike.itemlink)
+      if links and #links > 0 then
+        mq.ExecuteTextLink(links[1])
+      end
+    end
+    if ImGui.IsItemHovered() and itemLike and itemLike.name then
+      ImGui.BeginTooltip()
+      ImGui.Text(itemLike.name)
+      if itemLike.qty then
+        ImGui.Text("Qty: " .. tostring(itemLike.qty))
+      end
+      ImGui.EndTooltip()
+    end
+    if itemLike and itemLike.qty and tonumber(itemLike.qty) and tonumber(itemLike.qty) > 1 then
+      local drawList = ImGui.GetWindowDrawList()
+      local qtyText = tostring(itemLike.qty)
+      local textWidth = ImGui.CalcTextSize(qtyText)
+      drawList:AddText(ImVec2(maxX - textWidth - 4, maxY - 16), ImGui.GetColorU32(1, 1, 1, 1), qtyText)
+    end
+  end
+
+  drawEmptySlot = drawEmptySlot or drawFallbackEmptySlot
+  drawItemSlot = drawItemSlot or function(item_db, cell_id)
+    drawFallbackItemSlot(item_db, cell_id)
+  end
+  drawLiveItemSlot = drawLiveItemSlot or function(item_tlo, cell_id)
+    local itemLike = nil
+    if item_tlo and item_tlo() then
+      itemLike = {
+        name = item_tlo.Name(),
+        icon = item_tlo.Icon(),
+        qty = item_tlo.Stack() or item_tlo.Count() or item_tlo.Charges(),
+        itemlink = item_tlo.ItemLink and item_tlo.ItemLink() or nil,
+      }
+    end
+    drawFallbackItemSlot(itemLike, cell_id)
+  end
 
   if ImGui.BeginTabBar("BagsViewTabs") then
       -- Table View
@@ -241,7 +321,9 @@ function M.renderContent(inventoryUI, env)
       if ImGui.BeginTabItem("Visual Layout") then
         inventoryUI.bagsView = "visual"
 
+        env.showItemBackground = not not env.showItemBackground
         env.showItemBackground = ImGui.Checkbox("Show Item Background", env.showItemBackground)
+        inventoryUI.showItemBackground = env.showItemBackground
         ImGui.Separator()
 
         local content_width = ImGui.GetWindowContentRegionWidth()

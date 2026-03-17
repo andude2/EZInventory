@@ -299,8 +299,6 @@ function M.renderContent(inventoryUI, env)
           end
           inventoryUI.selectedItem = inventoryUI.selectedItem or nil
           inventoryUI.hoverStates = {}
-          inventoryUI.openItemWindow = inventoryUI.openItemWindow or nil
-
           -- Create two columns: left for visual grid, right for comparison list
           ImGui.Columns(2, "EquippedColumns", true)
           visualColumnsActive = true
@@ -323,10 +321,6 @@ function M.renderContent(inventoryUI, env)
               ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
               drawItemIcon(item.icon, 40, 40)
               if clicked then
-                if mq.TLO.Window("ItemDisplayWindow").Open() then
-                  mq.TLO.Window("ItemDisplayWindow").DoClose()
-                  inventoryUI.openItemWindow = nil
-                end
                 inventoryUI.selectedSlotID = slotID
                 inventoryUI.selectedSlotName = slotName
                 inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
@@ -364,10 +358,6 @@ function M.renderContent(inventoryUI, env)
               ImGui.Text(slotName)
               ImGui.PopStyleColor()
               if clicked then
-                if mq.TLO.Window("ItemDisplayWindow").Open() then
-                  mq.TLO.Window("ItemDisplayWindow").DoClose()
-                  inventoryUI.openItemWindow = nil
-                end
                 inventoryUI.selectedSlotID = slotID
                 inventoryUI.selectedSlotName = slotName
                 inventoryUI.compareResults = compareSlotAcrossPeers(slotID)

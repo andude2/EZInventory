@@ -89,7 +89,23 @@ function M.render()
 
         -- Environments
         local envEquipped = { ImGui=ImGui, mq=mq, Suggestions=Suggestions, drawItemIcon=shared_ui.drawItemIcon, renderLoadingScreen=shared_ui.renderLoadingScreen, getSlotNameFromID=item_utils.getSlotNameFromID, getEquippedSlotLayout=item_utils.getEquippedSlotLayout, compareSlotAcrossPeers=window_manager.compareSlotAcrossPeers, extractCharacterName=character_utils.extractCharacterName, inventory_actor=inventory_actor, matchesSearch=matchesSearch }
-        local envBags = { ImGui=ImGui, mq=mq, drawItemIcon=shared_ui.drawItemIcon, toggleItemSelection=Util.toggleItemSelection, showContextMenu=Util.showContextMenu, extractCharacterName=character_utils.extractCharacterName, searchText=state.searchText, drawLiveItemSlot=shared_ui.drawLiveItemSlot, drawEmptySlot=shared_ui.drawEmptySlot, drawItemSlot=shared_ui.drawItemSlot, drawSelectionIndicator=shared_ui.drawSelectionIndicator, matchesSearch=matchesSearch }
+        local envBags = {
+            ImGui=ImGui,
+            mq=mq,
+            drawItemIcon=shared_ui.drawItemIcon,
+            toggleItemSelection=Util.toggleItemSelection,
+            showContextMenu=Util.showContextMenu,
+            extractCharacterName=character_utils.extractCharacterName,
+            searchText=state.searchText,
+            drawLiveItemSlot=shared_ui.drawLiveItemSlot,
+            drawEmptySlot=shared_ui.drawEmptySlot,
+            drawItemSlot=shared_ui.drawItemSlot,
+            drawSelectionIndicator=shared_ui.drawSelectionIndicator,
+            matchesSearch=matchesSearch,
+            BAG_CELL_SIZE=40,
+            BAG_MAX_SLOTS_PER_BAG=10,
+            showItemBackground=inventoryUI.showItemBackground,
+        }
         local envBank = { ImGui=ImGui, mq=mq, drawItemIcon=shared_ui.drawItemIcon, showContextMenu=Util.showContextMenu, matchesSearch=matchesSearch }
         local envAll = { ImGui=ImGui, mq=mq, json=json, Banking=Banking, drawItemIcon=shared_ui.drawItemIcon, inventory_actor=inventory_actor, itemGroups=item_utils.itemGroups, itemMatchesGroup=item_utils.itemMatchesGroup, extractCharacterName=character_utils.extractCharacterName, isItemBankFlagged=item_utils.isItemBankFlagged, normalizeChar=character_utils.normalizeChar, Settings=state.Settings, searchText=state.searchText, setSearchText=function(v) state.searchText=v end, showContextMenu=Util.showContextMenu, toggleItemSelection=Util.toggleItemSelection, drawSelectionIndicator=shared_ui.drawSelectionIndicator, matchesSearch=matchesSearch }
         local envAssignment = { ImGui=ImGui, mq=mq, AssignmentManager=AssignmentManager, inventory_actor=inventory_actor, extractCharacterName=character_utils.extractCharacterName }
