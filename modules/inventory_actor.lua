@@ -994,6 +994,42 @@ local function place_cursor_item_in_trade(targetToon, expectedMinFilledSlots)
     return false
 end
 
+local function confirm_trade_until_closed(options)
+    options = options or {}
+
+    local timeoutMs = tonumber(options.timeoutMs) or 15000
+    local clickIntervalMs = tonumber(options.clickIntervalMs) or 750
+    local initialDelayMs = tonumber(options.initialDelayMs) or 0
+    local waitReason = options.waitReason or "trade completion"
+    local clickLabel = options.clickLabel or "Confirming trade."
+    local timeoutLabel = options.timeoutLabel or "Trade window remained open. Possible issue with trade."
+    local onTimeout = options.onTimeout
+
+    local deadline = get_time_ms() + timeoutMs
+    local nextClickAt = get_time_ms() + initialDelayMs
+
+    trade_wait(waitReason)
+    while mq.TLO.Window("TradeWnd").Open() and get_time_ms() < deadline do
+        local now = get_time_ms()
+        if now >= nextClickAt then
+            trade_log("STEP", "%s", clickLabel)
+            mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
+            nextClickAt = now + clickIntervalMs
+        end
+        mq.delay(250)
+    end
+
+    if mq.TLO.Window("TradeWnd").Open() then
+        printf("[WARN] %s", timeoutLabel)
+        if onTimeout then
+            onTimeout()
+        end
+        return false
+    end
+
+    return true
+end
+
 function M.gather_inventory(options)
     options = options or {}
     local includeExtendedStats = options.includeExtendedStats
@@ -2176,14 +2212,15 @@ function M.perform_multi_item_trade_step()
         end
         mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
         M.send_inventory_command(targetToon, "auto_accept_trade", {})
-        state.trade_completion_time = os.time()
+        state.trade_completion_time = get_time_ms()
         state.status = "WAIT_FOR_TRADE_COMPLETION"
         return true
     end
 
     if state.status == "WAIT_FOR_TRADE_COMPLETION" then
         if mq.TLO.Window("TradeWnd").Open() then
-            if (os.time() - state.trade_completion_time) < 10 then
+            if (get_time_ms() - state.trade_completion_time) < 10000 then
+                mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
                 return true
             else
                 printf("[WARN] Trade window remained open for %s. Possible issue with trade. Cancelling.", targetToon)
@@ -2374,17 +2411,19 @@ function M.perform_single_item_trade(request)
     trade_log("STEP", "Clicking Trade button for %s.", request.name)
     mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
 
-    timeout = os.time() + 15
-    trade_wait("recipient to accept trade", "target=%s item=%s", request.toon, request.name)
-    while mq.TLO.Window("TradeWnd").Open() and os.time() < timeout do
-        mq.delay(250)
-    end
+    local completed = confirm_trade_until_closed({
+        timeoutMs = 15000,
+        clickIntervalMs = 750,
+        initialDelayMs = 500,
+        waitReason = string.format("recipient to accept trade | target=%s item=%s", request.toon, request.name),
+        clickLabel = string.format("Re-confirming trade for %s -> %s.", request.name, request.toon),
+        timeoutLabel = string.format("Trade window remained open for %s. Possible issue with trade.", request.name),
+        onTimeout = function()
+            mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
+        end,
+    })
 
-
-    if mq.TLO.Window("TradeWnd").Open() then
-        printf("[WARN] Trade window remained open for %s. Possible issue with trade.", request.name)
-        mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
-    else
+    if completed then
         trade_log("DONE", "Successfully traded %s to %s.", request.name, request.toon)
         -- If auto-exchange is enabled, send exchange command to recipient after successful trade
         if request.autoExchange and request.targetSlot then
@@ -2497,14 +2536,22 @@ local function handle_command_message(message)
     elseif command == "auto_accept_trade" then
         table.insert(M.deferred_tasks, function()
             trade_log("ACCEPT", "Auto-accept task started.")
-            local timeout = os.time() + 10
             trade_wait("incoming trade window", "auto_accept_trade")
-            while not mq.TLO.Window("TradeWnd").Open() and os.time() < timeout do
+            local timeout = get_time_ms() + 10000
+            while not mq.TLO.Window("TradeWnd").Open() and get_time_ms() < timeout do
                 mq.delay(LOOP_POLL_DELAY_MS)
             end
             if mq.TLO.Window("TradeWnd").Open() then
-                trade_log("ACCEPT", "Trade window open. Clicking accept.")
-                mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
+                local accepted = confirm_trade_until_closed({
+                    timeoutMs = 12000,
+                    clickIntervalMs = 750,
+                    initialDelayMs = 500,
+                    waitReason = "sender to finalize trade | auto_accept_trade",
+                    clickLabel = "Trade window open. Clicking accept.",
+                })
+                if not accepted and mq.TLO.Window("TradeWnd").Open() then
+                    mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
+                end
             else
                 mq.cmd("/popcustom 5 TradeWnd did not open for auto-accept")
             end
