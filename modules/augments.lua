@@ -160,6 +160,14 @@ local function add_empty_slots_from_item(results, item, sourceLabel, locationLab
     end
 end
 
+local function annotate_rows_with_peer(rows, peerName, peerServer)
+    for _, row in ipairs(rows or {}) do
+        row.peerName = peerName or row.peerName or ""
+        row.peerServer = peerServer or row.peerServer or ""
+    end
+    return rows
+end
+
 function M.build_inserted_augments(inventoryData, getSlotNameFromID, options)
     options = options or {}
     local includeEquipped = options.includeEquipped ~= false
@@ -304,6 +312,42 @@ function M.build_empty_augment_slots(inventoryData, getSlotNameFromID, options)
     end
 
     table.sort(results, function(a, b)
+        local nameA = (a.parentItemName or ""):lower()
+        local nameB = (b.parentItemName or ""):lower()
+        if nameA ~= nameB then
+            return nameA < nameB
+        end
+
+        local locA = (a.location or ""):lower()
+        local locB = (b.location or ""):lower()
+        if locA ~= locB then
+            return locA < locB
+        end
+
+        return (a.augSlot or 0) < (b.augSlot or 0)
+    end)
+
+    return results
+end
+
+function M.build_empty_augment_slots_for_peers(peerEntries, getSlotNameFromID, options)
+    local results = {}
+
+    for _, entry in ipairs(peerEntries or {}) do
+        local peerRows = M.build_empty_augment_slots(entry.data or {}, getSlotNameFromID, options)
+        annotate_rows_with_peer(peerRows, entry.name, entry.server)
+        for _, row in ipairs(peerRows) do
+            table.insert(results, row)
+        end
+    end
+
+    table.sort(results, function(a, b)
+        local peerA = (a.peerName or ""):lower()
+        local peerB = (b.peerName or ""):lower()
+        if peerA ~= peerB then
+            return peerA < peerB
+        end
+
         local nameA = (a.parentItemName or ""):lower()
         local nameB = (b.parentItemName or ""):lower()
         if nameA ~= nameB then

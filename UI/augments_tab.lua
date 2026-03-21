@@ -21,6 +21,8 @@ local function row_matches_filter(row, filter)
     return true
   end
   return text_matches_filter(row.augmentName, filter)
+      or text_matches_filter(row.peerName, filter)
+      or text_matches_filter(row.peerServer, filter)
       or text_matches_filter(row.location, filter)
       or text_matches_filter(row.insertedIn, filter)
       or text_matches_filter(row.parentItemName, filter)
@@ -61,12 +63,43 @@ function M.renderContent(inventoryUI, env)
   local Augments = env.Augments
   local getSlotNameFromID = env.getSlotNameFromID
   local drawItemIcon = env.drawItemIcon
+
+  local function get_empty_aug_peer_entries()
+    local peerEntries = {}
+    local selectedServer = tostring(inventoryUI.selectedServer or mq.TLO.MacroQuest.Server() or "")
+
+    for _, peer in ipairs(inventoryUI.peers or {}) do
+      if peer
+          and peer.name
+          and peer.server == selectedServer
+          and type(peer.data) == "table"
+          and type(peer.data.equipped) == "table" then
+        table.insert(peerEntries, {
+          name = peer.name,
+          server = peer.server,
+          data = peer.data,
+        })
+      end
+    end
+
+    table.sort(peerEntries, function(a, b)
+      local nameA = tostring(a.name or ""):lower()
+      local nameB = tostring(b.name or ""):lower()
+      if nameA ~= nameB then
+        return nameA < nameB
+      end
+      return tostring(a.server or ""):lower() < tostring(b.server or ""):lower()
+    end)
+
+    return peerEntries
+  end
   
     inventoryUI.augmentsFilter = inventoryUI.augmentsFilter or ""
     inventoryUI.augmentsIncludeEquipped = inventoryUI.augmentsIncludeEquipped ~= false
     inventoryUI.augmentsIncludeInventory = inventoryUI.augmentsIncludeInventory ~= false
     inventoryUI.augmentsIncludeBank = inventoryUI.augmentsIncludeBank ~= false
     inventoryUI.augmentsShowEmptySlots = inventoryUI.augmentsShowEmptySlots == true
+    inventoryUI.augmentsShowEmptySlotsAllPeers = inventoryUI.augmentsShowEmptySlotsAllPeers == true
 
     ImGui.Text("Inserted augment search and placement.")
     inventoryUI.augmentsFilter = ImGui.InputText("Filter##AugmentsFilter", inventoryUI.augmentsFilter)
@@ -78,7 +111,12 @@ function M.renderContent(inventoryUI, env)
       inventoryUI.augmentsIncludeInventory = false
       inventoryUI.augmentsIncludeBank = false
       ImGui.TextColored(0.75, 0.9, 0.75, 1.0, "Source: Equipped only (empty slot view)")
+      inventoryUI.augmentsShowEmptySlotsAllPeers = ImGui.Checkbox("All Peers##EmptyAugAllPeers", inventoryUI.augmentsShowEmptySlotsAllPeers)
+      if ImGui.IsItemHovered() then
+        ImGui.SetTooltip("Aggregate empty augment slots for all cached peers on the selected server.")
+      end
     else
+      inventoryUI.augmentsShowEmptySlotsAllPeers = false
       inventoryUI.augmentsIncludeEquipped = ImGui.Checkbox("Equipped", inventoryUI.augmentsIncludeEquipped)
       ImGui.SameLine()
       inventoryUI.augmentsIncludeInventory = ImGui.Checkbox("Inventory", inventoryUI.augmentsIncludeInventory)
@@ -87,17 +125,34 @@ function M.renderContent(inventoryUI, env)
     end
     ImGui.Separator()
 
+    local emptyAugPeerEntries = nil
+    if inventoryUI.augmentsShowEmptySlots and inventoryUI.augmentsShowEmptySlotsAllPeers then
+      emptyAugPeerEntries = get_empty_aug_peer_entries()
+    end
+
     local augmentRows = {}
     if inventoryUI.augmentsShowEmptySlots then
-      augmentRows = Augments.build_empty_augment_slots(
-        inventoryUI.inventoryData or {},
-        getSlotNameFromID,
-        {
-          includeEquipped = true,
-          includeInventory = false,
-          includeBank = false,
-        }
-      )
+      if inventoryUI.augmentsShowEmptySlotsAllPeers then
+        augmentRows = Augments.build_empty_augment_slots_for_peers(
+          emptyAugPeerEntries,
+          getSlotNameFromID,
+          {
+            includeEquipped = true,
+            includeInventory = false,
+            includeBank = false,
+          }
+        )
+      else
+        augmentRows = Augments.build_empty_augment_slots(
+          inventoryUI.inventoryData or {},
+          getSlotNameFromID,
+          {
+            includeEquipped = true,
+            includeInventory = false,
+            includeBank = false,
+          }
+        )
+      end
     else
       augmentRows = Augments.build_inserted_augments(
         inventoryUI.inventoryData or {},
@@ -119,7 +174,14 @@ function M.renderContent(inventoryUI, env)
     end
 
     if inventoryUI.augmentsShowEmptySlots then
-      ImGui.Text(string.format("Found %d empty augment slots for %s", #filteredRows, inventoryUI.selectedPeer or "Unknown"))
+      if inventoryUI.augmentsShowEmptySlotsAllPeers then
+        ImGui.Text(string.format("Found %d empty augment slots across %d peers on %s",
+          #filteredRows,
+          #(emptyAugPeerEntries or {}),
+          inventoryUI.selectedServer or "Unknown Server"))
+      else
+        ImGui.Text(string.format("Found %d empty augment slots for %s", #filteredRows, inventoryUI.selectedPeer or "Unknown"))
+      end
     else
       ImGui.Text(string.format("Found %d inserted augments for %s", #filteredRows, inventoryUI.selectedPeer or "Unknown"))
     end
@@ -135,13 +197,14 @@ function M.renderContent(inventoryUI, env)
     end
 
     inventoryUI.augmentsCurrentPage = tonumber(inventoryUI.augmentsCurrentPage) or 1
-    local pageStateKey = string.format("%s|%s|%s|%s|%s|%s",
+    local pageStateKey = string.format("%s|%s|%s|%s|%s|%s|%s",
       tostring(filterText),
       tostring(inventoryUI.augmentsShowEmptySlots),
       tostring(inventoryUI.augmentsIncludeEquipped),
       tostring(inventoryUI.augmentsIncludeInventory),
       tostring(inventoryUI.augmentsIncludeBank),
-      tostring(inventoryUI.selectedPeer or "Unknown")
+      tostring(inventoryUI.augmentsShowEmptySlotsAllPeers),
+      tostring(inventoryUI.augmentsShowEmptySlotsAllPeers and inventoryUI.selectedServer or inventoryUI.selectedPeer or "Unknown")
     )
     if inventoryUI.augmentsPrevPageState ~= pageStateKey then
       inventoryUI.augmentsCurrentPage = 1
@@ -185,8 +248,13 @@ function M.renderContent(inventoryUI, env)
 
     local flags = borFlag(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.ScrollY)
     if inventoryUI.augmentsShowEmptySlots then
-      if ImGui.BeginTable("EmptyAugmentSlotsTable", 7, flags) then
+      local showPeerColumn = inventoryUI.augmentsShowEmptySlotsAllPeers
+      local columnCount = showPeerColumn and 8 or 7
+      if ImGui.BeginTable("EmptyAugmentSlotsTable", columnCount, flags) then
         ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 30)
+        if showPeerColumn then
+          ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 110)
+        end
         ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1.0)
         ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthStretch, 1.0)
         ImGui.TableSetupColumn("Aug Slot", ImGuiTableColumnFlags.WidthFixed, 65)
@@ -206,7 +274,14 @@ function M.renderContent(inventoryUI, env)
             ImGui.Text("--")
           end
 
-          ImGui.TableSetColumnIndex(1)
+          local itemColumnIndex = 1
+          if showPeerColumn then
+            ImGui.TableSetColumnIndex(1)
+            ImGui.Text(row.peerName or "--")
+            itemColumnIndex = 2
+          end
+
+          ImGui.TableSetColumnIndex(itemColumnIndex)
           local itemLabel = string.format("%s##empty_aug_item_%d", row.parentItemName or "Unknown", rowIndex)
           if ImGui.Selectable(itemLabel) then
             local links = mq.ExtractLinks(row.parentItemLink or "")
@@ -215,13 +290,13 @@ function M.renderContent(inventoryUI, env)
             end
           end
 
-          ImGui.TableSetColumnIndex(2)
+          ImGui.TableSetColumnIndex(itemColumnIndex + 1)
           ImGui.Text(row.location or "--")
 
-          ImGui.TableSetColumnIndex(3)
+          ImGui.TableSetColumnIndex(itemColumnIndex + 2)
           ImGui.Text(tostring(row.augSlot or "--"))
 
-          ImGui.TableSetColumnIndex(4)
+          ImGui.TableSetColumnIndex(itemColumnIndex + 3)
           ImGui.Text(row.slotTypeDisplay or "--")
           if ImGui.IsItemHovered() and row.slotTypeRaw and row.slotTypeRaw ~= "" then
             ImGui.BeginTooltip()
@@ -229,10 +304,10 @@ function M.renderContent(inventoryUI, env)
             ImGui.EndTooltip()
           end
 
-          ImGui.TableSetColumnIndex(5)
+          ImGui.TableSetColumnIndex(itemColumnIndex + 4)
           ImGui.Text(row.source or "--")
 
-          ImGui.TableSetColumnIndex(6)
+          ImGui.TableSetColumnIndex(itemColumnIndex + 5)
           ImGui.TextColored(0.65, 0.9, 0.65, 1.0, "Empty")
         end
 
