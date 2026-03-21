@@ -85,7 +85,7 @@ function M.renderContent(inventoryUI, env)
     end
     table.sort(peerNames, function(a, b) return a:lower() < b:lower() end)
 
-    ImGui.Text(string.format("Peer Status (%d total):", #peerNames))
+    ImGui.Text("Peer Status (%d total):", #peerNames)
 
     ImGui.Text("Column Visibility:")
     ImGui.SameLine()
@@ -193,17 +193,17 @@ function M.renderContent(inventoryUI, env)
         ImGui.Text("MQ2Mono Status: Loaded")
         local e3Query = "e3,E3Bots.ConnectedClients"
         local peersStr = mq.TLO.MQ2Mono.Query(e3Query)()
-        ImGui.Text(string.format("E3 Connected Clients: %s", peersStr or "(none)"))
+        ImGui.Text("E3 Connected Clients: %s", peersStr or "(none)")
       elseif connectionMethod == "DanNet" then
         ImGui.Text("DanNet Status: Loaded and Connected")
         local peerCount = mq.TLO.DanNet.PeerCount() or 0
-        ImGui.Text(string.format("DanNet Peer Count: %d", peerCount))
+        ImGui.Text("DanNet Peer Count: %d", peerCount)
         local peersStr = mq.TLO.DanNet.Peers() or ""
-        ImGui.Text(string.format("Raw DanNet Peers: %s", peersStr))
+        ImGui.Text("Raw DanNet Peers: %s", peersStr)
       elseif connectionMethod == "EQBC" then
         ImGui.Text("EQBC Status: Loaded and Connected")
         local names = mq.TLO.EQBC.Names() or ""
-        ImGui.Text(string.format("EQBC Names: %s", names))
+        ImGui.Text("EQBC Names: %s", names)
       end
       ImGui.Unindent()
 
@@ -212,8 +212,8 @@ function M.renderContent(inventoryUI, env)
       ImGui.Indent()
       local inventoryPeerCount = 0
       for _ in pairs(ia.peer_inventories) do inventoryPeerCount = inventoryPeerCount + 1 end
-      ImGui.Text(string.format("Known Inventory Peers: %d", inventoryPeerCount))
-      ImGui.Text(string.format("Actor Initialized: %s", ia.is_initialized() and "Yes" or "No"))
+      ImGui.Text("Known Inventory Peers: %d", inventoryPeerCount)
+      ImGui.Text("Actor Initialized: %s", ia.is_initialized() and "Yes" or "No")
       ImGui.Unindent()
     end
 end

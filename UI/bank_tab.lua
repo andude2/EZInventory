@@ -138,8 +138,8 @@ function M.renderContent(inventoryUI, env)
             ImGui.BeginTooltip()
             ImGui.Text(itemName)
             ImGui.Text("Click to examine item")
-            ImGui.Text(string.format("Bank Slot: %s, Item Slot: %s", tostring(item.bankslotid or "N/A"),
-            tostring(item.slotid or "N/A")))
+            ImGui.Text("Bank Slot: %s, Item Slot: %s", tostring(item.bankslotid or "N/A"),
+            tostring(item.slotid or "N/A"))
             ImGui.Text(inventoryUI.bankSortMode == "name" and "Sorted alphabetically" or "Sorted by slot position")
             ImGui.EndTooltip()
           end

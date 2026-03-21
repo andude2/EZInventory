@@ -136,7 +136,7 @@ function M.renderContent(inventoryUI, env)
           end
           local selectedCount = getSelectedItemCount()
           ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
-          ImGui.Text(string.format("Multi-Select Mode: %d items selected", selectedCount))
+          ImGui.Text("Multi-Select Mode: %d items selected", selectedCount)
           ImGui.PopStyleColor()
           ImGui.SameLine()
           if ImGui.Button("Exit Multi-Select") then

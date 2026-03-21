@@ -422,7 +422,7 @@ function M.renderContent(inventoryUI, env)
       end
       local selectedCount = getSelectedItemCount()
       ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
-      ImGui.Text(string.format("Multi-Select Mode: %d items selected", selectedCount))
+      ImGui.Text("Multi-Select Mode: %d items selected", selectedCount)
       ImGui.PopStyleColor()
       ImGui.SameLine()
       if ImGui.Button("Exit Multi-Select") then
@@ -444,7 +444,7 @@ function M.renderContent(inventoryUI, env)
 
     -- Filter Panel in collapsible header
     if ImGui.CollapsingHeader("Filters", ImGuiTreeNodeFlags.DefaultOpen) then
-      ImGui.Text(string.format("Found %d items matching filters:", resultCount))
+      ImGui.Text("Found %d items matching filters:", resultCount)
 
       -- Hide No Drop right-aligned
       local windowWidth = ImGui.GetWindowContentRegionWidth()
@@ -649,8 +649,8 @@ function M.renderContent(inventoryUI, env)
     local endIdx = math.min(startIdx + inventoryUI.pcItemsPerPage - 1, totalItems)
 
     ImGui.Separator()
-    ImGui.Text(string.format("Page %d of %d | Showing items %d-%d of %d",
-      inventoryUI.pcCurrentPage, inventoryUI.pcTotalPages, startIdx, endIdx, totalItems))
+    ImGui.Text("Page %d of %d | Showing items %d-%d of %d",
+      inventoryUI.pcCurrentPage, inventoryUI.pcTotalPages, startIdx, endIdx, totalItems)
     ImGui.SameLine()
     if inventoryUI.pcCurrentPage > 1 then
       if ImGui.Button("< Previous") then inventoryUI.pcCurrentPage = inventoryUI.pcCurrentPage - 1 end
@@ -851,11 +851,11 @@ function M.renderContent(inventoryUI, env)
           local platValue = copperValue / 1000
           if platValue > 0 then
             if platValue >= 1000000 then
-              ImGui.Text(string.format("%.1fM", platValue / 1000000))
+              ImGui.Text("%.1fM", platValue / 1000000)
             elseif platValue >= 10000 then
-              ImGui.Text(string.format("%.1fK", platValue / 1000))
+              ImGui.Text("%.1fK", platValue / 1000)
             else
-              ImGui.Text(string.format("%.0f", platValue))
+              ImGui.Text("%.0f", platValue)
             end
           else
             ImGui.Text("--")

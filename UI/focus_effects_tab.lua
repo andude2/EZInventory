@@ -93,10 +93,10 @@ function M.renderContent(inventoryUI, env)
     )
 
     local groupCount = #(summary.groups or {})
-    ImGui.Text(string.format("Found %d focus entries across %d groups for %s",
+    ImGui.Text("Found %d focus entries across %d groups for %s",
       summary.totalEffects or 0,
       groupCount,
-      inventoryUI.selectedPeer or "Unknown"))
+      inventoryUI.selectedPeer or "Unknown")
     ImGui.Separator()
 
     if (summary.totalEffects or 0) == 0 then

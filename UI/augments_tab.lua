@@ -175,15 +175,15 @@ function M.renderContent(inventoryUI, env)
 
     if inventoryUI.augmentsShowEmptySlots then
       if inventoryUI.augmentsShowEmptySlotsAllPeers then
-        ImGui.Text(string.format("Found %d empty augment slots across %d peers on %s",
+        ImGui.Text("Found %d empty augment slots across %d peers on %s",
           #filteredRows,
           #(emptyAugPeerEntries or {}),
-          inventoryUI.selectedServer or "Unknown Server"))
+          inventoryUI.selectedServer or "Unknown Server")
       else
-        ImGui.Text(string.format("Found %d empty augment slots for %s", #filteredRows, inventoryUI.selectedPeer or "Unknown"))
+        ImGui.Text("Found %d empty augment slots for %s", #filteredRows, inventoryUI.selectedPeer or "Unknown")
       end
     else
-      ImGui.Text(string.format("Found %d inserted augments for %s", #filteredRows, inventoryUI.selectedPeer or "Unknown"))
+      ImGui.Text("Found %d inserted augments for %s", #filteredRows, inventoryUI.selectedPeer or "Unknown")
     end
     ImGui.Separator()
 
@@ -222,8 +222,8 @@ function M.renderContent(inventoryUI, env)
     local startIdx = ((inventoryUI.augmentsCurrentPage - 1) * AUGMENTS_ROWS_PER_PAGE) + 1
     local endIdx = math.min(startIdx + AUGMENTS_ROWS_PER_PAGE - 1, totalRows)
 
-    ImGui.Text(string.format("Page %d of %d | Showing rows %d-%d of %d",
-      inventoryUI.augmentsCurrentPage, totalPages, startIdx, endIdx, totalRows))
+    ImGui.Text("Page %d of %d | Showing rows %d-%d of %d",
+      inventoryUI.augmentsCurrentPage, totalPages, startIdx, endIdx, totalRows)
     ImGui.SameLine()
     if inventoryUI.augmentsCurrentPage > 1 then
       if ImGui.Button("< Previous##AugmentsPagePrev") then
@@ -300,7 +300,7 @@ function M.renderContent(inventoryUI, env)
           ImGui.Text(row.slotTypeDisplay or "--")
           if ImGui.IsItemHovered() and row.slotTypeRaw and row.slotTypeRaw ~= "" then
             ImGui.BeginTooltip()
-            ImGui.Text(string.format("Raw Slot Type: %s", tostring(row.slotTypeRaw)))
+            ImGui.Text("Raw Slot Type: %s", tostring(row.slotTypeRaw))
             ImGui.EndTooltip()
           end
 
@@ -349,7 +349,7 @@ function M.renderContent(inventoryUI, env)
             ImGui.BeginTooltip()
             ImGui.Text(row.augmentName or "Unknown")
             if (row.focusCount or 0) > 0 or (row.wornFocusCount or 0) > 0 then
-              ImGui.Text(string.format("Focus entries: %d  Worn focus entries: %d", row.focusCount or 0, row.wornFocusCount or 0))
+              ImGui.Text("Focus entries: %d  Worn focus entries: %d", row.focusCount or 0, row.wornFocusCount or 0)
             end
             ImGui.EndTooltip()
           end
@@ -373,7 +373,7 @@ function M.renderContent(inventoryUI, env)
           ImGui.Text(row.augmentTypeDisplay or "--")
           if ImGui.IsItemHovered() and row.augmentTypeRaw and row.augmentTypeRaw ~= "" then
             ImGui.BeginTooltip()
-            ImGui.Text(string.format("Raw AugType: %s", tostring(row.augmentTypeRaw)))
+            ImGui.Text("Raw AugType: %s", tostring(row.augmentTypeRaw))
             ImGui.EndTooltip()
           end
 

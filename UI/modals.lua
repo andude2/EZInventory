@@ -421,9 +421,9 @@ function M.renderItemSuggestionsPanel(inventoryUI, env)
   end
 
   if isDrawn then
-    ImGui.Text(string.format("Finding %s items for %s:",
+    ImGui.Text("Finding %s items for %s:",
       tostring(inventoryUI.itemSuggestionsSlotName or getSlotNameFromID(inventoryUI.itemSuggestionsSlot) or inventoryUI.itemSuggestionsSlot),
-      tostring(inventoryUI.itemSuggestionsTarget or "Unknown")))
+      tostring(inventoryUI.itemSuggestionsTarget or "Unknown"))
 
     if currentlyEquipped then
       ImGui.Text("Currently Equipped:")
@@ -526,7 +526,7 @@ function M.renderItemSuggestionsPanel(inventoryUI, env)
       end
 
       ImGui.Spacing()
-      ImGui.Text(string.format("Found %d available items:", #filteredItems))
+      ImGui.Text("Found %d available items:", #filteredItems)
 
       local columnCount = Settings.showDetailedStats and 10 or 6
       if ImGui.BeginTable("AvailableItemsTable", columnCount, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.ScrollY, 0, 300) then
@@ -722,11 +722,11 @@ function M.renderEquipmentComparisonPanel(inventoryUI, env)
       end
     else
       local slotName = item_utils.getSlotNameFromID(comparison.slotID) or ("Slot " .. tostring(comparison.slotID or 0))
-      ImGui.Text(string.format("Comparing %s vs %s", comparison.compareItem.name or "Unknown", slotName))
-      ImGui.Text(string.format("New Item Stats - AC: %d, HP: %d, Mana: %d",
+      ImGui.Text("Comparing %s vs %s", comparison.compareItem.name or "Unknown", slotName)
+      ImGui.Text("New Item Stats - AC: %d, HP: %d, Mana: %d",
         comparison.compareItem.ac or 0,
         comparison.compareItem.hp or 0,
-        comparison.compareItem.mana or 0))
+        comparison.compareItem.mana or 0)
       ImGui.TextColored(0.7, 0.7, 1.0, 1.0,
         string.format("Classes: %s", Suggestions.getItemClassInfo(comparison.compareItem)))
       ImGui.TextColored(0.6, 0.8, 0.6, 1.0, "Only showing characters whose class can use this item")

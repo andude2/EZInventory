@@ -90,7 +90,7 @@ function M.renderContent(inventoryUI, env)
     end
 
     ImGui.TextWrapped("Pick a slot and scan for upgrade candidates across all available inventories.")
-    ImGui.Text(string.format("Target Character: %s", inventoryUI.selectedPeer or "None"))
+    ImGui.Text("Target Character: %s", inventoryUI.selectedPeer or "None")
     ImGui.Separator()
 
     local selectedLabel = tostring(inventoryUI.upgradeCheckSlotId)
@@ -133,10 +133,10 @@ function M.renderContent(inventoryUI, env)
     local last = inventoryUI.upgradeCheckLastResult
     if last and last.slotId then
       ImGui.Spacing()
-      ImGui.Text(string.format("Last check: %s (%d) -> %d candidate item(s)",
+      ImGui.Text("Last check: %s (%d) -> %d candidate item(s)",
         last.slotName or tostring(last.slotId),
         last.slotId,
-        last.count or 0))
+        last.count or 0)
     end
 
     ImGui.Separator()
@@ -262,10 +262,10 @@ function M.renderContent(inventoryUI, env)
       return a.locationLabel < b.locationLabel
     end)
 
-    ImGui.Text(string.format("Showing %d candidate item(s) for %s (%s).",
+    ImGui.Text("Showing %d candidate item(s) for %s (%s).",
       #filteredRows,
       targetCharacter ~= "" and targetCharacter or "Unknown",
-      slotName))
+      slotName)
 
     if #filteredRows == 0 then
       ImGui.TextWrapped("No items matched the current filter settings.")

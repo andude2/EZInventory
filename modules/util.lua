@@ -383,7 +383,7 @@ function M.renderMultiTradePanel()
   if not isOpen then inventoryUI.showMultiTradePanel = false end
   if isShown then
     local selectedCount = M.getSelectedItemCount()
-    ImGui.Text(string.format("Selected Items: %d", selectedCount))
+    ImGui.Text("Selected Items: %d", selectedCount)
     ImGui.Separator()
     local listDrawn = ImGui.BeginChild("SelectedItemsList", 0, 250)
     if listDrawn then

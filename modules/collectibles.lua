@@ -188,8 +188,8 @@ function Collectibles.draw()
             end
         end
 
-        ImGui.Text(string.format("Local: %d | Peers: %d/%d | Total: %d", totalLocal, peerCount, connectedPeerCount,
-            totalLocal + totalPeers))
+        ImGui.Text("Local: %d | Peers: %d/%d | Total: %d", totalLocal, peerCount, connectedPeerCount,
+            totalLocal + totalPeers)
 
         ImGui.EndMenuBar()
     end

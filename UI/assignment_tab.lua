@@ -165,7 +165,7 @@ function M.renderContent(inventoryUI, env)
       ImGui.Text("No character assignments found.")
       ImGui.Text("Right-click items in your inventory and select 'Assign To Character' to create assignments.")
     else
-      ImGui.Text(string.format("Found %d global assignments:", #globalAssignments))
+      ImGui.Text("Found %d global assignments:", #globalAssignments)
       ImGui.Separator()
 
       -- Assignment table
@@ -319,10 +319,10 @@ function M.renderContent(inventoryUI, env)
           
           ImGui.TableSetColumnIndex(2)
           if status.currentJob then
-            ImGui.Text(string.format("%s: %s -> %s", 
+            ImGui.Text("%s: %s -> %s", 
               status.currentJob.itemName or "Unknown",
               status.currentJob.sourceChar or "Unknown",
-              status.currentJob.targetChar or "Unknown"))
+              status.currentJob.targetChar or "Unknown")
           else
             ImGui.Text("None")
           end
@@ -334,17 +334,17 @@ function M.renderContent(inventoryUI, env)
         if AssignmentManager and AssignmentManager.getPendingJobs then
           local pendingJobs = AssignmentManager.getPendingJobs()
           if #pendingJobs > 0 then
-            ImGui.Text(string.format("Pending Jobs (%d):", #pendingJobs))
+            ImGui.Text("Pending Jobs (%d):", #pendingJobs)
             for i, job in ipairs(pendingJobs) do
               if i <= 5 then -- Show first 5 jobs
-                ImGui.Text(string.format("  %d. %s (%s) from %s to %s", 
+                ImGui.Text("  %d. %s (%s) from %s to %s", 
                   i,
                   job.itemName or "Unknown",
                   job.itemLocation and job.itemLocation.location or "Unknown",
                   job.sourceChar or "Unknown",
-                  job.targetChar or "Unknown"))
+                  job.targetChar or "Unknown")
               elseif i == 6 then
-                ImGui.Text(string.format("  ... and %d more jobs", #pendingJobs - 5))
+                ImGui.Text("  ... and %d more jobs", #pendingJobs - 5)
                 break
               end
             end
