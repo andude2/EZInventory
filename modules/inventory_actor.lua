@@ -625,8 +625,12 @@ end
 
 local function scan_augment_links(item, include_effects)
     local data = {}
-    local function safe_aug_get(func, default)
-        default = default or 0
+    local function safe_aug_get(func, ...)
+        local hasDefault = select("#", ...) > 0
+        local default = select(1, ...)
+        if not hasDefault then
+            default = 0
+        end
         local ok, result = pcall(func)
         if ok and result ~= nil then
             return result
@@ -639,7 +643,7 @@ local function scan_augment_links(item, include_effects)
         -- Slot metadata (also used by empty-slot augment views)
         data["aug" .. i .. "SlotVisible"] = safe_aug_get(function() return augSlot.Visible() end, 0)
         data["aug" .. i .. "SlotEmpty"] = safe_aug_get(function() return augSlot.Empty() end, 0)
-        data["aug" .. i .. "SlotType"] = safe_aug_get(function() return augSlot.Type() end, 0)
+        data["aug" .. i .. "SlotType"] = safe_aug_get(function() return augSlot.Type() end, nil)
 
         local augItem = augSlot.Item
         if augItem() then

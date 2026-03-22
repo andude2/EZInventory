@@ -777,9 +777,9 @@ function M.renderEquipmentComparisonPanel(inventoryUI, env)
 
         local function render_delta(value)
           if value > 0 then
-            ImGui.TextColored(0.0, 1.0, 0.0, 1.0, string.format("+%d", value))
+            ImGui.TextColored(0.0, 1.0, 0.0, 1.0, "+%d", value)
           elseif value < 0 then
-            ImGui.TextColored(1.0, 0.0, 0.0, 1.0, string.format("%d", value))
+            ImGui.TextColored(1.0, 0.0, 0.0, 1.0, "%d", value)
           else
             ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "0")
           end

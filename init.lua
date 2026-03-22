@@ -7,6 +7,34 @@ local ImGui = require("ImGui")
 local icons = require("mq.icons")
 local json  = require("dkjson")
 
+local function getModuleName()
+    local info = debug.getinfo(1, "S")
+    if info and info.source then
+        local scriptPath = info.source:sub(2)
+        if scriptPath:match("init%.lua$") then
+            local directory = scriptPath:match("([^/\\]+)[/\\]init%.lua$")
+            if directory then
+                return directory
+            end
+        end
+        local filename = scriptPath:match("([^/\\]+)%.lua$")
+        if filename and filename ~= "init" then
+            return filename
+        end
+    end
+
+    if _G.EZINV_MODULE then
+        return _G.EZINV_MODULE
+    end
+
+    return "EZInventory"
+end
+
+local original_module_name = getModuleName()
+local module_name = original_module_name:lower()
+_G.EZINV_MODULE = module_name
+_G.EZINV_BROADCAST_NAME = original_module_name
+
 -- 1. Load Core Modules
 local State          = require("EZInventory.core.state")
 local NetworkManager = require("EZInventory.core.network_manager")
@@ -279,6 +307,11 @@ local function main()
     Collectibles.init()
     
     UpdateInventoryActorConfig()
+
+    mq.delay(200)
+    if inventoryUI.visible then
+        NetworkManager.autoStartPeers()
+    end
 
     -- Initialize Network Manager (Populates request queue and sets self as selected)
     NetworkManager.init()

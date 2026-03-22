@@ -12,6 +12,14 @@ function M.setup(env)
     character_utils = env.character_utils
 end
 
+local function getBroadcastName()
+    return _G.EZINV_BROADCAST_NAME or "EZInventory"
+end
+
+local function getBroadcastCommand()
+    return string.format("/lua run %s", getBroadcastName())
+end
+
 local EMPTY_INVENTORY_DATA = { equipped = {}, inventory = {}, bags = {}, bank = {}, }
 local inventoryFingerprintCache = setmetatable({}, { __mode = "k" })
 
@@ -360,14 +368,14 @@ function M.updatePeerList()
 end
 
 function M.broadcastLuaRun(connectionMethod)
-    local cmd = "/lua run ezinventory"
+    local cmd = getBroadcastCommand()
     if connectionMethod == "MQ2Mono" then mq.cmd("/e3bcaa " .. cmd)
     elseif connectionMethod == "DanNet" then mq.cmd("/dgaexecute " .. cmd)
     elseif connectionMethod == "EQBC" then mq.cmd("/bca /" .. cmd) end
 end
 
 function M.sendLuaRunToPeer(peerName, connectionMethod)
-    local cmd = "/lua run ezinventory"
+    local cmd = getBroadcastCommand()
 
     if connectionMethod == "DanNet" then
         mq.cmdf("/dgt %s %s", peerName, cmd)
@@ -380,6 +388,22 @@ function M.sendLuaRunToPeer(peerName, connectionMethod)
         printf("Sent to %s via MQ2Mono: %s", peerName, cmd)
     else
         printf("Cannot send to %s - no valid connection method", peerName)
+    end
+end
+
+function M.autoStartPeers()
+    local broadcastName = getBroadcastName()
+    if mq.TLO.Plugin("MQ2Mono").IsLoaded() then
+        mq.cmdf("/e3bca /lua run %s", broadcastName)
+        print("Broadcasting inventory startup via MQ2Mono to all connected clients...")
+    elseif mq.TLO.Plugin("MQ2DanNet").IsLoaded() then
+        mq.cmdf("/dgaexecute /lua run %s", broadcastName)
+        print("Broadcasting inventory startup via DanNet to all connected clients...")
+    elseif mq.TLO.Plugin("MQ2EQBC").IsLoaded() and mq.TLO.EQBC.Connected() then
+        mq.cmdf("/bca //lua run %s", broadcastName)
+        print("Broadcasting inventory startup via EQBC to all connected clients...")
+    else
+        print("\ar[EZInventory] Warning: Neither DanNet nor EQBC is available for broadcasting\ax")
     end
 end
 

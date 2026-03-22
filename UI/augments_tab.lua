@@ -34,6 +34,54 @@ local function row_matches_filter(row, filter)
       or text_matches_filter(row.source, filter)
 end
 
+local function row_matches_slot_type(row, selectedSlotType)
+  if not selectedSlotType or selectedSlotType == "All" then
+    return true
+  end
+
+  local target = tonumber(selectedSlotType)
+  if not target then
+    return true
+  end
+
+  local slotTypes = row.augmentTypeSlots or row.slotTypeSlots or {}
+  for _, slotType in ipairs(slotTypes) do
+    if tonumber(slotType) == target then
+      return true
+    end
+  end
+
+  return false
+end
+
+local function build_slot_type_options(rows, showEmptySlots)
+  local values = { All = true }
+
+  for _, row in ipairs(rows or {}) do
+    local slotTypes = showEmptySlots and row.slotTypeSlots or row.augmentTypeSlots
+    for _, slotType in ipairs(slotTypes or {}) do
+      local numeric = tonumber(slotType)
+      if numeric and numeric > 0 then
+        values[tostring(numeric)] = true
+      end
+    end
+  end
+
+  local options = { "All" }
+  local numericOptions = {}
+  for value, _ in pairs(values) do
+    if value ~= "All" then
+      table.insert(numericOptions, tonumber(value))
+    end
+  end
+  table.sort(numericOptions, function(a, b) return a < b end)
+  for _, value in ipairs(numericOptions) do
+    table.insert(options, tostring(value))
+  end
+
+  return options
+end
+
 local STAT_COLORS = {
   ac = { 1.0, 0.84, 0.0, 1.0 },   -- Gold
   hp = { 0.0, 0.8, 0.0, 1.0 },    -- Green
@@ -100,6 +148,7 @@ function M.renderContent(inventoryUI, env)
     inventoryUI.augmentsIncludeBank = inventoryUI.augmentsIncludeBank ~= false
     inventoryUI.augmentsShowEmptySlots = inventoryUI.augmentsShowEmptySlots == true
     inventoryUI.augmentsShowEmptySlotsAllPeers = inventoryUI.augmentsShowEmptySlotsAllPeers == true
+    inventoryUI.augmentsSlotTypeFilter = inventoryUI.augmentsSlotTypeFilter or "All"
 
     ImGui.Text("Inserted augment search and placement.")
     inventoryUI.augmentsFilter = ImGui.InputText("Filter##AugmentsFilter", inventoryUI.augmentsFilter)
@@ -123,7 +172,6 @@ function M.renderContent(inventoryUI, env)
       ImGui.SameLine()
       inventoryUI.augmentsIncludeBank = ImGui.Checkbox("Bank", inventoryUI.augmentsIncludeBank)
     end
-    ImGui.Separator()
 
     local emptyAugPeerEntries = nil
     if inventoryUI.augmentsShowEmptySlots and inventoryUI.augmentsShowEmptySlotsAllPeers then
@@ -165,10 +213,37 @@ function M.renderContent(inventoryUI, env)
       )
     end
 
+    local slotTypeOptions = build_slot_type_options(augmentRows, inventoryUI.augmentsShowEmptySlots)
+    local hasSelectedSlotType = false
+    for _, option in ipairs(slotTypeOptions) do
+      if option == inventoryUI.augmentsSlotTypeFilter then
+        hasSelectedSlotType = true
+        break
+      end
+    end
+    if not hasSelectedSlotType then
+      inventoryUI.augmentsSlotTypeFilter = "All"
+    end
+
+    ImGui.SameLine()
+    ImGui.Text("Slot Type")
+    ImGui.SameLine()
+    ImGui.SetNextItemWidth(110)
+    if ImGui.BeginCombo("##AugmentsSlotTypeFilter", inventoryUI.augmentsSlotTypeFilter) then
+      for _, option in ipairs(slotTypeOptions) do
+        local selected = inventoryUI.augmentsSlotTypeFilter == option
+        if ImGui.Selectable(option, selected) then
+          inventoryUI.augmentsSlotTypeFilter = option
+        end
+      end
+      ImGui.EndCombo()
+    end
+    ImGui.Separator()
+
     local filteredRows = {}
     local filterText = (inventoryUI.augmentsFilter or ""):lower()
     for _, row in ipairs(augmentRows) do
-      if row_matches_filter(row, filterText) then
+      if row_matches_filter(row, filterText) and row_matches_slot_type(row, inventoryUI.augmentsSlotTypeFilter) then
         table.insert(filteredRows, row)
       end
     end
@@ -197,13 +272,14 @@ function M.renderContent(inventoryUI, env)
     end
 
     inventoryUI.augmentsCurrentPage = tonumber(inventoryUI.augmentsCurrentPage) or 1
-    local pageStateKey = string.format("%s|%s|%s|%s|%s|%s|%s",
+    local pageStateKey = string.format("%s|%s|%s|%s|%s|%s|%s|%s",
       tostring(filterText),
       tostring(inventoryUI.augmentsShowEmptySlots),
       tostring(inventoryUI.augmentsIncludeEquipped),
       tostring(inventoryUI.augmentsIncludeInventory),
       tostring(inventoryUI.augmentsIncludeBank),
       tostring(inventoryUI.augmentsShowEmptySlotsAllPeers),
+      tostring(inventoryUI.augmentsSlotTypeFilter),
       tostring(inventoryUI.augmentsShowEmptySlotsAllPeers and inventoryUI.selectedServer or inventoryUI.selectedPeer or "Unknown")
     )
     if inventoryUI.augmentsPrevPageState ~= pageStateKey then

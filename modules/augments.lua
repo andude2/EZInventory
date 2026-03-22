@@ -134,9 +134,13 @@ local function add_empty_slots_from_item(results, item, sourceLabel, locationLab
         local slotEmptyRaw = item["aug" .. i .. "SlotEmpty"]
         local slotVisible = to_flag(slotVisibleRaw)
         local slotEmpty = to_flag(slotEmptyRaw)
-        local slotTypeRaw = item["aug" .. i .. "SlotType"] or ""
+        local slotTypeRaw = item["aug" .. i .. "SlotType"]
+        local slotTypeValue = tonumber(slotTypeRaw)
+        if slotTypeRaw == nil or slotTypeRaw == "" or slotTypeValue == 0 then
+            goto continue
+        end
         local slotTypeSlots = decode_aug_slot_types(slotTypeRaw)
-        local hasDefinedSlotType = (#slotTypeSlots > 0) or ((tonumber(slotTypeRaw) or 0) > 0)
+        local hasDefinedSlotType = (#slotTypeSlots > 0) or ((slotTypeValue or 0) > 0)
         local hasInsertedAug = item["aug" .. i .. "Name"] and item["aug" .. i .. "Name"] ~= ""
 
         -- Prefer explicit flags when present, but fall back to slot-type + missing augment
@@ -157,6 +161,8 @@ local function add_empty_slots_from_item(results, item, sourceLabel, locationLab
                 location = locationLabel,
             })
         end
+
+        ::continue::
     end
 end
 

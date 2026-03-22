@@ -40,6 +40,14 @@ local function split_source_label(source)
   return text, nil
 end
 
+local function format_max_effect(entry)
+  local value = tonumber(entry.maxEffect) or 0
+  if value == 0 then
+    return "--"
+  end
+  return string.format("%d%%", value)
+end
+
 function M.render(inventoryUI, env)
   if env.ImGui.BeginTabItem("Focus Effects") then
     M.renderContent(inventoryUI, env)
@@ -57,8 +65,12 @@ function M.renderContent(inventoryUI, env)
     inventoryUI.focusEffectsIncludeAugs = inventoryUI.focusEffectsIncludeAugs ~= false
     inventoryUI.focusEffectsIncludeWorn = inventoryUI.focusEffectsIncludeWorn ~= false
     inventoryUI.focusEffectsIncludeEquipped = inventoryUI.focusEffectsIncludeEquipped ~= false
-    inventoryUI.focusEffectsIncludeInventory = inventoryUI.focusEffectsIncludeInventory ~= false
-    inventoryUI.focusEffectsIncludeBank = inventoryUI.focusEffectsIncludeBank ~= false
+    if inventoryUI.focusEffectsIncludeInventory == nil then
+      inventoryUI.focusEffectsIncludeInventory = false
+    end
+    if inventoryUI.focusEffectsIncludeBank == nil then
+      inventoryUI.focusEffectsIncludeBank = false
+    end
 
     ImGui.Text("Analyze focus effects from equipped items, inventory (including bags), bank, and inserted augments.")
     local invConfig = (inventoryUI.inventoryData and inventoryUI.inventoryData.config) or {}
@@ -114,7 +126,7 @@ function M.renderContent(inventoryUI, env)
           local tableFlags = borFlag(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable)
           if ImGui.BeginTable("FocusEffectsTable_" .. tostring(groupIndex), 4, tableFlags) then
             ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthStretch, 1.0)
-            ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 70)
+            ImGui.TableSetupColumn("Max Effect", ImGuiTableColumnFlags.WidthFixed, 90)
             ImGui.TableSetupColumn("Eff Lvl", ImGuiTableColumnFlags.WidthFixed, 60)
             ImGui.TableSetupColumn("Resist", ImGuiTableColumnFlags.WidthFixed, 80)
             ImGui.TableHeadersRow()
@@ -145,15 +157,7 @@ function M.renderContent(inventoryUI, env)
               end
 
               ImGui.TableSetColumnIndex(1)
-              if entry.effectKind == "worn" then
-                if (entry.rank or 0) > 0 then
-                  ImGui.Text("Worn Rk " .. tostring(entry.rank))
-                else
-                  ImGui.Text("Worn")
-                end
-              else
-                ImGui.Text("Focus")
-              end
+              ImGui.Text(format_max_effect(entry))
 
               ImGui.TableSetColumnIndex(2)
               if entry.effectKind == "focus" and (entry.effectiveLevel or 0) > 0 then

@@ -813,7 +813,7 @@ function M.renderContent(inventoryUI, env)
             local mouseX, mouseY = ImGui.GetMousePos()
             showContextMenu(item, item.peerName or (inventoryUI.selectedPeer or ""), mouseX, mouseY)
           end
-          if ImGui.IsItemHovered() then ImGui.SetTooltip(string.format("Source: %s", item.source or "Unknown")) end
+          if ImGui.IsItemHovered() then ImGui.SetTooltip("Source: %s", item.source or "Unknown") end
 
           if (searchText or "") ~= "" and item.matchText and item.matchText ~= "" and (item.matchType == "augment" or item.matchText ~= (item.name or "")) then
             ImGui.SameLine(0, 4)
@@ -842,7 +842,7 @@ function M.renderContent(inventoryUI, env)
           local augTypeDisplay, augTypeRaw = get_augment_type_display(item)
           ImGui.Text(augTypeDisplay)
           if augTypeRaw ~= "" and ImGui.IsItemHovered() then
-            ImGui.SetTooltip(string.format("Raw AugType: %s", augTypeRaw))
+            ImGui.SetTooltip("Raw AugType: %s", augTypeRaw)
           end
 
           -- Value
@@ -944,7 +944,7 @@ function M.renderContent(inventoryUI, env)
                 end
               end
               if ImGui.IsItemHovered() then
-                ImGui.SetTooltip(string.format("Give to %s", inventoryUI.selectedPeer or "Unknown"))
+                ImGui.SetTooltip("Give to %s", inventoryUI.selectedPeer or "Unknown")
               end
               ImGui.PopStyleColor(3)
             else
