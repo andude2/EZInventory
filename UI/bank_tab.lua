@@ -19,6 +19,9 @@ function M.renderContent(inventoryUI, env)
   local drawItemIcon = env.drawItemIcon
   local matchesSearch = env.matchesSearch
   local showContextMenu = env.showContextMenu
+  local toggleItemSelection = env.toggleItemSelection
+  local drawSelectionIndicator = env.drawSelectionIndicator
+  local renderMultiSelectToolbar = env.renderMultiSelectToolbar
 
   local function borFlag(...)
     if bit32 and bit32.bor then return bit32.bor(...) end
@@ -56,6 +59,10 @@ function M.renderContent(inventoryUI, env)
       end
 
       ImGui.Separator()
+
+      if renderMultiSelectToolbar then
+        renderMultiSelectToolbar()
+      end
 
       -- Create a sorted copy of bank items (filtered by search)
       local sortedBankItems = {}
@@ -101,6 +108,11 @@ function M.renderContent(inventoryUI, env)
           local slotId = item.slotid or "noslot"
           local itemName = item.name or "noname"
           local uniqueID = string.format("%s_bank%s_slot%s_%d", itemName, tostring(bankSlotId), tostring(slotId), i)
+          local uniqueKey = string.format("%s_bank_%s_%s_%s",
+            inventoryUI.selectedPeer or "unknown",
+            itemName,
+            tostring(bankSlotId),
+            tostring(slotId))
 
           ImGui.PushID(uniqueID)
 
@@ -126,18 +138,39 @@ function M.renderContent(inventoryUI, env)
           
           local displayName = itemName .. assignmentText
           
-          if ImGui.Selectable(displayName .. "##" .. uniqueID) then
-            local links = mq.ExtractLinks(item.itemlink)
-            if links and #links > 0 then
-              mq.ExecuteTextLink(links[1])
+          local itemClicked = false
+          if inventoryUI.multiSelectMode and inventoryUI.selectedItems[uniqueKey] then
+            ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
+            itemClicked = ImGui.Selectable(displayName .. "##" .. uniqueID)
+            ImGui.PopStyleColor()
+          else
+            itemClicked = ImGui.Selectable(displayName .. "##" .. uniqueID)
+          end
+
+          if itemClicked then
+            if inventoryUI.multiSelectMode and toggleItemSelection then
+              toggleItemSelection(item, uniqueKey, inventoryUI.selectedPeer)
             else
-              print(' No item link found in the database.')
+              local links = mq.ExtractLinks(item.itemlink)
+              if links and #links > 0 then
+                mq.ExecuteTextLink(links[1])
+              else
+                print(' No item link found in the database.')
+              end
             end
+          end
+          if inventoryUI.multiSelectMode and drawSelectionIndicator then
+            drawSelectionIndicator(uniqueKey, ImGui.IsItemHovered())
           end
           if ImGui.IsItemHovered() then
             ImGui.BeginTooltip()
             ImGui.Text(itemName)
-            ImGui.Text("Click to examine item")
+            if inventoryUI.multiSelectMode then
+              ImGui.Text("Left-click to select/deselect")
+              ImGui.Text("Right-click for options")
+            else
+              ImGui.Text("Click to examine item")
+            end
             ImGui.Text("Bank Slot: %s, Item Slot: %s", tostring(item.bankslotid or "N/A"),
             tostring(item.slotid or "N/A"))
             ImGui.Text(inventoryUI.bankSortMode == "name" and "Sorted alphabetically" or "Sorted by slot position")
@@ -165,7 +198,15 @@ function M.renderContent(inventoryUI, env)
 
           -- Action
           ImGui.TableSetColumnIndex(3)
-          if ImGui.Button("Pickup##" .. uniqueID) then
+          if inventoryUI.multiSelectMode then
+            if inventoryUI.selectedItems[uniqueKey] then
+              ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
+              ImGui.Text("Selected")
+              ImGui.PopStyleColor()
+            else
+              ImGui.Text("--")
+            end
+          elseif ImGui.Button("Pickup##" .. uniqueID) then
             local BankSlotId = tonumber(item.bankslotid) or 0
             local SlotId = tonumber(item.slotid) or -1
             if BankSlotId >= 1 and BankSlotId <= 24 then

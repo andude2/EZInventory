@@ -2,6 +2,7 @@
 _G.EZINV_CLEAR_ITEM_ASSIGNMENT = _G.EZINV_CLEAR_ITEM_ASSIGNMENT
 
 local M = {}
+local ASSIGNMENT_CACHE_REFRESH_US = 5000000
 
 -- Assignment Management Tab renderer
 -- env expects:
@@ -26,6 +27,91 @@ function M.renderContent(inventoryUI, env)
     lastUpdate = 0,
     forceRefresh = false
   }
+
+    local function getLocalInventorySnapshot()
+      if inventory_actor and inventory_actor.get_cached_inventory then
+        local cached = inventory_actor.get_cached_inventory(true)
+        if cached then
+          return cached
+        end
+      end
+
+      if inventory_actor and inventory_actor.gather_inventory then
+        return inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
+      end
+
+      return { equipped = {}, bags = {}, bank = {} }
+    end
+
+    local function eachInventoryItem(invData, callback)
+      if type(invData) ~= "table" or type(callback) ~= "function" then
+        return
+      end
+
+      for _, item in ipairs(invData.equipped or {}) do
+        callback(item, "Equipped")
+      end
+
+      for _, bagItems in pairs(invData.bags or {}) do
+        for _, item in ipairs(bagItems or {}) do
+          callback(item, "Inventory")
+        end
+      end
+
+      for _, item in ipairs(invData.bank or {}) do
+        callback(item, "Bank")
+      end
+    end
+
+    local function buildAssignmentInstanceIndex()
+      local index = {}
+
+      local function addInstance(item, location, sourceName)
+        local numericItemID = tonumber(item and item.id)
+        local itemName = item and item.name
+        if not numericItemID and (not itemName or itemName == "") then
+          return
+        end
+
+        local instance = {
+          location = location,
+          item = item,
+          source = sourceName
+        }
+
+        if numericItemID then
+          index.byID = index.byID or {}
+          index.byID[numericItemID] = index.byID[numericItemID] or {}
+          index.byID[numericItemID][sourceName] = index.byID[numericItemID][sourceName] or {}
+          table.insert(index.byID[numericItemID][sourceName], instance)
+        end
+
+        if itemName and itemName ~= "" then
+          index.byName = index.byName or {}
+          index.byName[itemName] = index.byName[itemName] or {}
+          index.byName[itemName][sourceName] = index.byName[itemName][sourceName] or {}
+          table.insert(index.byName[itemName][sourceName], instance)
+        end
+      end
+
+      local localInventory = getLocalInventorySnapshot()
+      local myName = localInventory.name or extractCharacterName(mq.TLO.Me.CleanName())
+      eachInventoryItem(localInventory, function(item, location)
+        addInstance(item, location, myName)
+      end)
+
+      if inventory_actor and inventory_actor.peer_inventories then
+        for _, invData in pairs(inventory_actor.peer_inventories) do
+          if invData and invData.name then
+            eachInventoryItem(invData, function(item, location)
+              addInstance(item, location, invData.name)
+            end)
+          end
+        end
+      end
+
+      return index
+    end
 
     -- Only perform expensive computations when this tab is actually visible
     
@@ -71,64 +157,21 @@ function M.renderContent(inventoryUI, env)
       local globalAssignments = {}
       if AssignmentManager and AssignmentManager.buildGlobalAssignmentPlan then
         globalAssignments = AssignmentManager.buildGlobalAssignmentPlan()
-        
-        -- Use existing inventory data to find instances
+        local instanceIndex = buildAssignmentInstanceIndex()
+
         for _, assignment in ipairs(globalAssignments) do
           local instances = {}
           local totalInstances = 0
-          
-          -- Use existing peer inventory data
-          if inventory_actor and inventory_actor.peer_inventories then
-            for _, invData in pairs(inventory_actor.peer_inventories) do
-              if invData.name then
-                local charInstances = {}
-                
-                -- Helper function to check items in a collection
-                local function checkItems(items, location)
-                  if not items then return end
-                  if location == "Inventory" then
-                    -- Handle bags structure
-                    for _, bagItems in pairs(items) do
-                      for _, item in ipairs(bagItems or {}) do
-                        if (assignment.itemID and tonumber(item.id) == tonumber(assignment.itemID)) or
-                           (assignment.itemName and item.name == assignment.itemName) then
-                          table.insert(charInstances, {
-                            location = location,
-                            item = item,
-                            source = invData.name
-                          })
-                        end
-                      end
-                    end
-                  else
-                    -- Handle equipped/bank structure
-                    for _, item in ipairs(items or {}) do
-                      if (assignment.itemID and tonumber(item.id) == tonumber(assignment.itemID)) or
-                         (assignment.itemName and item.name == assignment.itemName) then
-                        table.insert(charInstances, {
-                          location = location,
-                          item = item,
-                          source = invData.name
-                        })
-                      end
-                    end
-                  end
-                end
-                
-                -- Check all inventory locations for this character
-                checkItems(invData.equipped, "Equipped")
-                checkItems(invData.bags, "Inventory")
-                checkItems(invData.bank, "Bank")
-                
-                -- Add to instances if any found
-                if #charInstances > 0 then
-                  instances[invData.name] = charInstances
-                  totalInstances = totalInstances + #charInstances
-                end
-              end
-            end
+
+          local lookupByID = assignment.itemID and instanceIndex.byID and instanceIndex.byID[tonumber(assignment.itemID)] or nil
+          local lookupByName = assignment.itemName and instanceIndex.byName and instanceIndex.byName[assignment.itemName] or nil
+          local matched = lookupByID or lookupByName or {}
+
+          for sourceName, charInstances in pairs(matched) do
+            instances[sourceName] = charInstances
+            totalInstances = totalInstances + #charInstances
           end
-          
+
           -- Add computed data to assignment
           assignment.instances = instances
           assignment.totalInstances = totalInstances
@@ -146,7 +189,7 @@ function M.renderContent(inventoryUI, env)
       inventoryUI.assignmentResultsCache.forceRefresh = false
     elseif #inventoryUI.assignmentResultsCache.data == 0 then
       shouldRecompute = true
-    elseif (currentTime - inventoryUI.assignmentResultsCache.lastUpdate) > 5000 then -- Refresh every 5 seconds
+    elseif (currentTime - inventoryUI.assignmentResultsCache.lastUpdate) > ASSIGNMENT_CACHE_REFRESH_US then -- Refresh every 5 seconds
       shouldRecompute = true
     end
     

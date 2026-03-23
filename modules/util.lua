@@ -46,6 +46,68 @@ function M.clearItemSelection()
   inventoryUI.selectedItems = {}
 end
 
+function M.applyBankFlagToSelected(flagged)
+  local updatedCount = 0
+  local skippedCount = 0
+
+  for _, selectedData in pairs(inventoryUI.selectedItems or {}) do
+    local item = selectedData.item or {}
+    local sourceChar = selectedData.source or inventoryUI.selectedPeer or extractCharacterName(mq.TLO.Me.CleanName())
+    local itemID = tonumber(item.id) or 0
+
+    if itemID > 0 and sourceChar then
+      setItemBankFlag(sourceChar, itemID, flagged)
+      updatedCount = updatedCount + 1
+    else
+      skippedCount = skippedCount + 1
+    end
+  end
+
+  inventoryUI.needsRefresh = true
+  return updatedCount, skippedCount
+end
+
+function M.renderMultiSelectToolbar()
+  if not inventoryUI.multiSelectMode then
+    return false
+  end
+
+  local selectedCount = M.getSelectedItemCount()
+  ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
+  ImGui.Text("Multi-Select Mode: %d items selected", selectedCount)
+  ImGui.PopStyleColor()
+  ImGui.SameLine()
+  if ImGui.Button("Exit Multi-Select") then
+    inventoryUI.multiSelectMode = false
+    M.clearItemSelection()
+  end
+
+  if selectedCount > 0 then
+    ImGui.SameLine()
+    if ImGui.Button("Mark Selected for Banking") then
+      M.applyBankFlagToSelected(true)
+    end
+
+    ImGui.SameLine()
+    if ImGui.Button("Unmark Selected") then
+      M.applyBankFlagToSelected(false)
+    end
+
+    ImGui.SameLine()
+    if ImGui.Button("Show Trade Panel") then
+      inventoryUI.showMultiTradePanel = true
+    end
+
+    ImGui.SameLine()
+    if ImGui.Button("Clear Selection") then
+      M.clearItemSelection()
+    end
+  end
+
+  ImGui.Separator()
+  return true
+end
+
 function M.toggleItemSelection(item, uniqueKey, sourcePeer)
   if not inventoryUI.selectedItems[uniqueKey] then
     inventoryUI.selectedItems[uniqueKey] = {
@@ -132,6 +194,14 @@ function M.renderContextMenu()
       end
       local selectedCount = M.getSelectedItemCount()
       if selectedCount > 0 then
+        if ImGui.MenuItem("Mark Selected for Banking") then
+          M.applyBankFlagToSelected(true)
+          M.hideContextMenu()
+        end
+        if ImGui.MenuItem("Unmark Selected for Banking") then
+          M.applyBankFlagToSelected(false)
+          M.hideContextMenu()
+        end
         if ImGui.MenuItem(string.format("Trade Selected (%d items)", selectedCount)) then
           inventoryUI.showMultiTradePanel = true
           M.hideContextMenu()

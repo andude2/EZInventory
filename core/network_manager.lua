@@ -4,6 +4,7 @@ local M = {}
 -- Internal state references
 local inventory_actor, inventoryUI, state, character_utils
 local lastPathRequestTime = 0
+local ASSIGNMENT_REQUEST_INTERVAL_US = 60000000
 
 function M.setup(env)
     inventory_actor = env.inventory_actor
@@ -472,8 +473,9 @@ function M.update()
     end
 
     if inventory_actor.request_all_char_assignments then
-        if not inventoryUI._lastAssignmentRequestTime or (currentTime - inventoryUI._lastAssignmentRequestTime) > 60 then
-            inventory_actor.request_all_char_assignments(); inventoryUI._lastAssignmentRequestTime = currentTime
+        if not inventoryUI._lastAssignmentRequestTime or (currentTime - inventoryUI._lastAssignmentRequestTime) > ASSIGNMENT_REQUEST_INTERVAL_US then
+            inventory_actor.request_all_char_assignments()
+            inventoryUI._lastAssignmentRequestTime = currentTime
         end
     end
     inventory_actor.process_pending_requests()

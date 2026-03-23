@@ -8,6 +8,7 @@ local M = {}
 -- Dependencies (set via setup)
 local inventory_actor = nil
 local Settings = nil
+local itemNameCache = {}
 
 -- Trade queue state
 local tradeQueue = {
@@ -30,9 +31,95 @@ local function normalizeChar(name)
     return (name and name ~= "") and (name:sub(1, 1):upper() .. name:sub(2):lower()) or name
 end
 
--- Helper function to get current time in milliseconds
+-- MacroQuest mq.gettime() is microseconds; normalize to milliseconds here.
 local function now_ms()
-    return mq.gettime() or math.floor(os.clock() * 1000)
+    local current = mq.gettime()
+    if current then
+        return math.floor(current / 1000)
+    end
+    return math.floor(os.clock() * 1000)
+end
+
+local function getLocalInventorySnapshot()
+    if not inventory_actor then
+        return { equipped = {}, bags = {}, bank = {} }
+    end
+
+    if inventory_actor.get_cached_inventory then
+        local cached = inventory_actor.get_cached_inventory(true)
+        if cached then
+            return cached
+        end
+    end
+
+    if inventory_actor.gather_inventory then
+        return inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
+    end
+
+    return { equipped = {}, bags = {}, bank = {} }
+end
+
+local function eachInventoryItem(invData, callback)
+    if type(invData) ~= "table" or type(callback) ~= "function" then
+        return
+    end
+
+    for _, item in ipairs(invData.equipped or {}) do
+        callback(item, "Equipped")
+    end
+
+    for _, bagItems in pairs(invData.bags or {}) do
+        for _, item in ipairs(bagItems or {}) do
+            callback(item, "Bags")
+        end
+    end
+
+    for _, item in ipairs(invData.bank or {}) do
+        callback(item, "Bank")
+    end
+end
+
+local function buildItemNameCache()
+    local cache = {}
+
+    local function addFromInventory(invData)
+        eachInventoryItem(invData, function(item)
+            local itemID = tonumber(item and item.id)
+            local itemName = item and item.name
+            if itemID and itemName and itemName ~= "" and not cache[itemID] then
+                cache[itemID] = itemName
+            end
+        end)
+    end
+
+    addFromInventory(getLocalInventorySnapshot())
+
+    if inventory_actor and inventory_actor.peer_inventories then
+        for _, peerInv in pairs(inventory_actor.peer_inventories) do
+            addFromInventory(peerInv)
+        end
+    end
+
+    return cache
+end
+
+local function getInventoryForCharacter(charName)
+    local normalizedTarget = normalizeChar(charName)
+    local myName = normalizeChar(mq.TLO.Me.CleanName())
+
+    if normalizedTarget == myName then
+        return getLocalInventorySnapshot(), myName
+    end
+
+    if inventory_actor and inventory_actor.peer_inventories then
+        for _, invData in pairs(inventory_actor.peer_inventories) do
+            if invData.name and normalizeChar(invData.name) == normalizedTarget then
+                return invData, invData.name
+            end
+        end
+    end
+
+    return nil, charName
 end
 
 -- Check if character is online and available
@@ -59,98 +146,20 @@ end
 
 -- Find item in a character's inventory
 local function findItemInInventory(charName, itemID, itemName)
-    local myName = normalizeChar(mq.TLO.Me.CleanName())
-    
-    if normalizeChar(charName) == myName then
-        -- Search our own inventory
-        local invData = inventory_actor.gather_inventory()
-        
-        -- Check equipped items
-        for _, item in ipairs(invData.equipped or {}) do
-            if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-               (itemName and item.name == itemName) then
-                return {
-                    location = "Equipped",
-                    item = item,
-                    source = myName
-                }
-            end
+    local invData, sourceName = getInventoryForCharacter(charName)
+    local foundItem = nil
+    eachInventoryItem(invData, function(item, location)
+        if (itemID and tonumber(item.id) == tonumber(itemID)) or
+           (itemName and item.name == itemName) then
+            foundItem = {
+                location = location,
+                item = item,
+                source = sourceName
+            }
         end
-        
-        -- Check bags
-        for bagID, bagItems in pairs(invData.bags or {}) do
-            for _, item in ipairs(bagItems) do
-                if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-                   (itemName and item.name == itemName) then
-                    return {
-                        location = "Bags",
-                        item = item,
-                        source = myName
-                    }
-                end
-            end
-        end
-        
-        -- Check bank
-        for _, item in ipairs(invData.bank or {}) do
-            if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-               (itemName and item.name == itemName) then
-                return {
-                    location = "Bank",
-                    item = item,
-                    source = myName
-                }
-            end
-        end
-    else
-        -- Search peer inventory
-        if inventory_actor and inventory_actor.peer_inventories then
-            for _, invData in pairs(inventory_actor.peer_inventories) do
-                if invData.name and normalizeChar(invData.name) == normalizeChar(charName) then
-                    -- Check equipped items
-                    for _, item in ipairs(invData.equipped or {}) do
-                        if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-                           (itemName and item.name == itemName) then
-                            return {
-                                location = "Equipped",
-                                item = item,
-                                source = charName
-                            }
-                        end
-                    end
-                    
-                    -- Check bags
-                    for bagID, bagItems in pairs(invData.bags or {}) do
-                        for _, item in ipairs(bagItems) do
-                            if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-                               (itemName and item.name == itemName) then
-                                return {
-                                    location = "Bags",
-                                    item = item,
-                                    source = charName
-                                }
-                            end
-                        end
-                    end
-                    
-                    -- Check bank
-                    for _, item in ipairs(invData.bank or {}) do
-                        if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-                           (itemName and item.name == itemName) then
-                            return {
-                                location = "Bank",
-                                item = item,
-                                source = charName
-                            }
-                        end
-                    end
-                    break
-                end
-            end
-        end
-    end
-    
-    return nil
+    end)
+
+    return foundItem
 end
 
 -- Create trade jobs for moving all instances of an item to its assigned character
@@ -231,99 +240,19 @@ end
 -- Helper function to find all instances of an item in a character's inventory
 function findAllItemInstances(charName, itemID, itemName)
     local instances = {}
-    local myName = normalizeChar(mq.TLO.Me.CleanName())
-    
-    
-    if normalizeChar(charName) == myName then
-        -- Search our own inventory
-        local invData = inventory_actor.gather_inventory()
-        
-        -- Check equipped items
-        for _, item in ipairs(invData.equipped or {}) do
-            if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-               (itemName and item.name == itemName) then
-                table.insert(instances, {
-                    location = "Equipped",
-                    item = item,
-                    source = myName
-                })
-            end
+    local invData, sourceName = getInventoryForCharacter(charName)
+
+    eachInventoryItem(invData, function(item, location)
+        if (itemID and tonumber(item.id) == tonumber(itemID)) or
+           (itemName and item.name == itemName) then
+            table.insert(instances, {
+                location = location,
+                item = item,
+                source = sourceName
+            })
         end
-        
-        -- Check bags
-        for bagID, bagItems in pairs(invData.bags or {}) do
-            for _, item in ipairs(bagItems) do
-                if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-                   (itemName and item.name == itemName) then
-                    table.insert(instances, {
-                        location = "Bags",
-                        item = item,
-                        source = myName
-                    })
-                end
-            end
-        end
-        
-        -- Check bank
-        for _, item in ipairs(invData.bank or {}) do
-            if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-               (itemName and item.name == itemName) then
-                table.insert(instances, {
-                    location = "Bank",
-                    item = item,
-                    source = myName
-                })
-            end
-        end
-    else
-        -- Search peer inventory
-        if inventory_actor and inventory_actor.peer_inventories then
-            for _, invData in pairs(inventory_actor.peer_inventories) do
-                if invData.name and normalizeChar(invData.name) == normalizeChar(charName) then
-                    -- Check equipped items
-                    for _, item in ipairs(invData.equipped or {}) do
-                        if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-                           (itemName and item.name == itemName) then
-                            table.insert(instances, {
-                                location = "Equipped",
-                                item = item,
-                                source = charName
-                            })
-                        end
-                    end
-                    
-                    -- Check bags
-                    for bagID, bagItems in pairs(invData.bags or {}) do
-                        for _, item in ipairs(bagItems) do
-                            if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-                               (itemName and item.name == itemName) then
-                                table.insert(instances, {
-                                    location = "Bags",
-                                    item = item,
-                                    source = charName
-                                })
-                            end
-                        end
-                    end
-                    
-                    -- Check bank
-                    for _, item in ipairs(invData.bank or {}) do
-                        if (itemID and tonumber(item.id) == tonumber(itemID)) or 
-                           (itemName and item.name == itemName) then
-                            table.insert(instances, {
-                                location = "Bank",
-                                item = item,
-                                source = charName
-                            })
-                        end
-                    end
-                    break
-                end
-            end
-        end
-    end
-    
-    
+    end)
+
     return instances
 end
 
@@ -522,6 +451,7 @@ end
 function M.buildGlobalAssignmentPlan()
     local plan = {}
     local globalAssignments = {}
+    itemNameCache = buildItemNameCache()
     
     -- Collect assignments from local settings
     local localAssignments = Settings.characterAssignments or {}
@@ -568,42 +498,17 @@ end
 
 -- Helper function to find item name by ID across all inventories
 function M.findItemNameByID(itemID)
-    local myName = normalizeChar(mq.TLO.Me.CleanName())
-    local invData = inventory_actor.gather_inventory()
-    
-    local function searchForItem(items)
-        for _, item in ipairs(items or {}) do
-            if tonumber(item.id) == tonumber(itemID) then
-                return item.name
-            end
-        end
+    local numericItemID = tonumber(itemID)
+    if not numericItemID then
         return nil
     end
-    
-    local function searchBags(bags)
-        for _, bagItems in pairs(bags or {}) do
-            local found = searchForItem(bagItems)
-            if found then return found end
-        end
-        return nil
+
+    if itemNameCache[numericItemID] then
+        return itemNameCache[numericItemID]
     end
-    
-    -- Search my inventory
-    local itemName = searchForItem(invData.equipped) or 
-                     searchBags(invData.bags) or 
-                     searchForItem(invData.bank)
-    
-    -- Search peer inventories if not found
-    if not itemName and inventory_actor.peer_inventories then
-        for _, peerInv in pairs(inventory_actor.peer_inventories) do
-            itemName = searchForItem(peerInv.equipped) or 
-                      searchBags(peerInv.bags) or 
-                      searchForItem(peerInv.bank)
-            if itemName then break end
-        end
-    end
-    
-    return itemName
+
+    itemNameCache = buildItemNameCache()
+    return itemNameCache[numericItemID]
 end
 
 -- Execute all character assignments

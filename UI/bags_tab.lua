@@ -22,6 +22,7 @@ function M.renderContent(inventoryUI, env)
   local matchesSearch = env.matchesSearch
   local toggleItemSelection = env.toggleItemSelection
   local drawSelectionIndicator = env.drawSelectionIndicator
+  local renderMultiSelectToolbar = env.renderMultiSelectToolbar
   local showContextMenu = env.showContextMenu
   local extractCharacterName = env.extractCharacterName
   local drawLiveItemSlot = env.drawLiveItemSlot
@@ -110,6 +111,51 @@ function M.renderContent(inventoryUI, env)
     drawFallbackItemSlot(itemLike, cell_id)
   end
 
+  local function buildBagSelectionKey(sourcePeer, item, bagid, slotid)
+    return string.format("%s_%s_%s_%s",
+      sourcePeer or "unknown",
+      (item and item.name) or "unnamed",
+      bagid or "nobag",
+      slotid or "noslot")
+  end
+
+  local function handleVisualItemInteraction(itemData, uniqueKey)
+    if not itemData or not uniqueKey then
+      return
+    end
+
+    if inventoryUI.multiSelectMode and ImGui.IsItemClicked(ImGuiMouseButton.Left) then
+      toggleItemSelection(itemData, uniqueKey, inventoryUI.selectedPeer)
+    elseif (not inventoryUI.multiSelectMode) and ImGui.IsItemClicked(ImGuiMouseButton.Left) then
+      local links = mq.ExtractLinks(itemData.itemlink)
+      if links and #links > 0 then
+        mq.ExecuteTextLink(links[1])
+      end
+    end
+
+    if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
+      local mouseX, mouseY = ImGui.GetMousePos()
+      showContextMenu(itemData, inventoryUI.selectedPeer, mouseX, mouseY)
+    end
+
+    if inventoryUI.multiSelectMode and drawSelectionIndicator then
+      drawSelectionIndicator(uniqueKey, ImGui.IsItemHovered())
+    end
+
+    if ImGui.IsItemHovered() then
+      ImGui.BeginTooltip()
+      ImGui.Text(itemData.name or "Unknown")
+      if itemData.qty then
+        ImGui.Text("Qty: " .. tostring(itemData.qty))
+      end
+      if inventoryUI.multiSelectMode then
+        ImGui.Text("Right-click for options")
+        ImGui.Text("Left-click to select/deselect")
+      end
+      ImGui.EndTooltip()
+    end
+  end
+
   if ImGui.BeginTabBar("BagsViewTabs") then
       -- Table View
       if ImGui.BeginTabItem("Table View") then
@@ -128,33 +174,8 @@ function M.renderContent(inventoryUI, env)
         local searchChanged = env.searchText ~= (inventoryUI.previousSearchText or "")
         inventoryUI.previousSearchText = env.searchText
 
-        if inventoryUI.multiSelectMode then
-          local function getSelectedItemCount()
-            local cnt = 0
-            for _ in pairs(inventoryUI.selectedItems or {}) do cnt = cnt + 1 end
-            return cnt
-          end
-          local selectedCount = getSelectedItemCount()
-          ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
-          ImGui.Text("Multi-Select Mode: %d items selected", selectedCount)
-          ImGui.PopStyleColor()
-          ImGui.SameLine()
-          if ImGui.Button("Exit Multi-Select") then
-            inventoryUI.multiSelectMode = false
-            -- clear selection
-            inventoryUI.selectedItems = {}
-          end
-          if selectedCount > 0 then
-            ImGui.SameLine()
-            if ImGui.Button("Show Trade Panel") then
-              inventoryUI.showMultiTradePanel = true
-            end
-            ImGui.SameLine()
-            if ImGui.Button("Clear Selection") then
-              inventoryUI.selectedItems = {}
-            end
-          end
-          ImGui.Separator()
+        if renderMultiSelectToolbar then
+          renderMultiSelectToolbar()
         end
 
         local checkboxLabel = inventoryUI.globalExpandAll and "Collapse All Bags" or "Expand All Bags"
@@ -197,11 +218,7 @@ function M.renderContent(inventoryUI, env)
                 if matchesSearch(item) then
                   ImGui.TableNextRow()
 
-                  local uniqueKey = string.format("%s_%s_%s_%s",
-                    inventoryUI.selectedPeer or "unknown",
-                    item.name or "unnamed",
-                    bagid,
-                    item.slotid or "noslot")
+                  local uniqueKey = buildBagSelectionKey(inventoryUI.selectedPeer, item, bagid, item.slotid)
 
                   ImGui.TableNextColumn()
                   if item.icon and item.icon > 0 then
@@ -321,6 +338,10 @@ function M.renderContent(inventoryUI, env)
       if ImGui.BeginTabItem("Visual Layout") then
         inventoryUI.bagsView = "visual"
 
+        if renderMultiSelectToolbar then
+          renderMultiSelectToolbar()
+        end
+
         env.showItemBackground = not not env.showItemBackground
         env.showItemBackground = ImGui.Checkbox("Show Item Background", env.showItemBackground)
         inventoryUI.showItemBackground = env.showItemBackground
@@ -343,11 +364,23 @@ function M.renderContent(inventoryUI, env)
               for insideIndex = 1, slot_tlo.Container() do
                 local item_tlo = slot_tlo.Item(insideIndex)
                 local cell_id = string.format("bag_%d_slot_%d", pack_number, insideIndex)
+                local itemData = nil
                 local show_this_item = item_tlo.ID() and
                     (not env.searchText or env.searchText == "" or string.match(string.lower(item_tlo.Name()), string.lower(env.searchText)))
                 ImGui.PushID(cell_id)
                 if show_this_item then
+                  itemData = {
+                    id = item_tlo.ID(),
+                    name = item_tlo.Name(),
+                    icon = item_tlo.Icon(),
+                    qty = item_tlo.Stack() or item_tlo.Count() or item_tlo.Charges(),
+                    itemlink = item_tlo.ItemLink and item_tlo.ItemLink() or nil,
+                    slotid = insideIndex,
+                    bagid = pack_number,
+                    nodrop = item_tlo.NoDrop() and 1 or 0,
+                  }
                   drawLiveItemSlot(item_tlo, cell_id)
+                  handleVisualItemInteraction(itemData, buildBagSelectionKey(inventoryUI.selectedPeer, itemData, pack_number, insideIndex))
                 else
                   drawEmptySlot(cell_id)
                 end
@@ -398,6 +431,7 @@ function M.renderContent(inventoryUI, env)
               ImGui.PushID(cell_id)
               if show_this_item then
                 drawItemSlot(item_db, cell_id)
+                handleVisualItemInteraction(item_db, buildBagSelectionKey(inventoryUI.selectedPeer, item_db, bagid, slotIndex))
               else
                 drawEmptySlot(cell_id)
               end

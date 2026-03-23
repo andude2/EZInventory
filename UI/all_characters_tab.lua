@@ -40,6 +40,7 @@ function M.renderContent(inventoryUI, env)
   local showContextMenu = env.showContextMenu
   local toggleItemSelection = env.toggleItemSelection
   local drawSelectionIndicator = env.drawSelectionIndicator
+  local renderMultiSelectToolbar = env.renderMultiSelectToolbar
   local requestSearchFocus = env.requestSearchFocus == true
   local clearSearchFocusRequest = env.clearSearchFocusRequest
 
@@ -414,32 +415,8 @@ function M.renderContent(inventoryUI, env)
     local resultCount = #results
 
     -- Multi-select mode indicator and controls
-    if inventoryUI.multiSelectMode then
-      local function getSelectedItemCount()
-        local cnt = 0
-        for _ in pairs(inventoryUI.selectedItems or {}) do cnt = cnt + 1 end
-        return cnt
-      end
-      local selectedCount = getSelectedItemCount()
-      ImGui.PushStyleColor(ImGuiCol.Text, 0, 1, 0, 1)
-      ImGui.Text("Multi-Select Mode: %d items selected", selectedCount)
-      ImGui.PopStyleColor()
-      ImGui.SameLine()
-      if ImGui.Button("Exit Multi-Select") then
-        inventoryUI.multiSelectMode = false
-        inventoryUI.selectedItems = {}
-      end
-      if selectedCount > 0 then
-        ImGui.SameLine()
-        if ImGui.Button("Show Trade Panel") then
-          inventoryUI.showMultiTradePanel = true
-        end
-        ImGui.SameLine()
-        if ImGui.Button("Clear Selection") then
-          inventoryUI.selectedItems = {}
-        end
-      end
-      ImGui.Separator()
+    if renderMultiSelectToolbar then
+      renderMultiSelectToolbar()
     end
 
     -- Filter Panel in collapsible header
