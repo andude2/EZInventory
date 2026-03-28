@@ -24,9 +24,61 @@ end
 local EMPTY_INVENTORY_DATA = { equipped = {}, inventory = {}, bags = {}, bank = {}, }
 local inventoryFingerprintCache = setmetatable({}, { __mode = "k" })
 
+local function getSelfInventorySnapshot(preferEnriched, fallbackIncludeExtended)
+    local latestCachedSelf = (inventory_actor and inventory_actor.get_cached_inventory) and inventory_actor.get_cached_inventory(preferEnriched) or nil
+    if latestCachedSelf then
+        return latestCachedSelf
+    end
+
+    return inventory_actor.gather_inventory({
+        includeExtendedStats = not not fallbackIncludeExtended,
+        scanStage = fallbackIncludeExtended and "enriched" or "fast"
+    })
+end
+
+local SCALAR_TYPE_ORDER = {
+    number = 1,
+    string = 2,
+    boolean = 3,
+}
+
+local function compareScalarValues(a, b)
+    if a == b then return false end
+
+    local ta, tb = type(a), type(b)
+    local oa = SCALAR_TYPE_ORDER[ta] or 99
+    local ob = SCALAR_TYPE_ORDER[tb] or 99
+    if oa ~= ob then
+        return oa < ob
+    end
+
+    if ta == "number" then
+        return a < b
+    elseif ta == "string" then
+        return a < b
+    elseif ta == "boolean" then
+        return (a and 1 or 0) < (b and 1 or 0)
+    end
+
+    local sa, sb = tostring(a), tostring(b)
+    if sa ~= sb then
+        return sa < sb
+    end
+
+    return false
+end
+
 local function bagSortKey(a, b)
     local an, bn = tonumber(a), tonumber(b)
-    return (an and bn) and an < bn or tostring(a) < tostring(b)
+    if an ~= nil and bn ~= nil then
+        if an ~= bn then
+            return an < bn
+        end
+    elseif an ~= nil or bn ~= nil then
+        return an ~= nil
+    end
+
+    return compareScalarValues(a, b)
 end
 
 local function mixHash(hash, value)
@@ -51,8 +103,8 @@ local function hashInventoryItem(hash, item)
             if isFlat and #value > 0 then table.insert(flatArrayKeys, key) end
         end
     end
-    table.sort(scalarKeys, function(a, b) return tostring(a) < tostring(b) end)
-    table.sort(flatArrayKeys, function(a, b) return tostring(a) < tostring(b) end)
+    table.sort(scalarKeys, compareScalarValues)
+    table.sort(flatArrayKeys, compareScalarValues)
     for _, key in ipairs(scalarKeys) do hash = mixHash(hash, key); hash = mixHash(hash, item[key]) end
     for _, key in ipairs(flatArrayKeys) do
         hash = mixHash(hash, key); local values = item[key]; hash = mixHash(hash, #values)
@@ -184,8 +236,7 @@ function M.refreshInventoryData()
         if peer.name == selectedPeer then
             if peer.data then selectedData = peer.data
             elseif peer.name == character_utils.extractCharacterName(mq.TLO.Me.CleanName()) then
-                selectedData = (inventory_actor.get_cached_inventory and inventory_actor.get_cached_inventory(true))
-                    or inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
+                selectedData = getSelfInventorySnapshot(true, false)
             end
             break
         end
@@ -203,8 +254,7 @@ function M.loadInventoryData(peer)
     inventoryUI._missingSelectedPeerSince = nil
     if peer and peer.data then M.applyInventoryData(peer.data, peer.name)
     elseif peer and peer.name == character_utils.extractCharacterName(mq.TLO.Me.CleanName()) then
-        local gathered = (inventory_actor.get_cached_inventory and inventory_actor.get_cached_inventory(true))
-            or inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
+        local gathered = getSelfInventorySnapshot(true, false)
         M.applyInventoryData(gathered, peer.name)
     else
         M.applyInventoryData(EMPTY_INVENTORY_DATA, peer and peer.name or inventoryUI.selectedPeer)
@@ -265,8 +315,7 @@ function M.init()
     M.updatePeerList()
     
     -- Immediately gather local inventory to avoid the "Loading" screen on frame 1
-    local latestCachedSelf = (inventory_actor and inventory_actor.get_cached_inventory) and inventory_actor.get_cached_inventory(true) or nil
-    local selfData = latestCachedSelf or inventory_actor.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
+    local selfData = getSelfInventorySnapshot(true, false)
     
     if selfData then
         inventoryUI._selfCache = { data = selfData, time = os.time() }
@@ -295,9 +344,11 @@ function M.updatePeerList()
     local now = os.time()
     
     local latestCachedSelf = (inventory_actor and inventory_actor.get_cached_inventory) and inventory_actor.get_cached_inventory(true) or nil
-    if (now - (inventoryUI._selfCache.time or 0)) > 10 or not inventoryUI._selfCache.data then
-        -- Use includeExtendedStats=true to ensure AC/HP/Mana are available immediately
-        inventoryUI._selfCache.data = latestCachedSelf or inventory_actor.gather_inventory({ includeExtendedStats = true, scanStage = "fast" })
+    if latestCachedSelf then
+        inventoryUI._selfCache.data = latestCachedSelf
+        inventoryUI._selfCache.time = now
+    elseif not inventoryUI._selfCache.data then
+        inventoryUI._selfCache.data = getSelfInventorySnapshot(false, false)
         inventoryUI._selfCache.time = now
     end
 
@@ -426,6 +477,7 @@ end
 
 function M.update()
     local currentTime = os.time()
+    local currentTimeUs = mq.gettime() or 0
     if inventory_actor.inventory_has_changed and inventory_actor.inventory_has_changed() then
         if inventory_actor.publish_inventory() then inventoryUI.lastPublishTime = currentTime end
     end
@@ -473,9 +525,9 @@ function M.update()
     end
 
     if inventory_actor.request_all_char_assignments then
-        if not inventoryUI._lastAssignmentRequestTime or (currentTime - inventoryUI._lastAssignmentRequestTime) > ASSIGNMENT_REQUEST_INTERVAL_US then
+        if not inventoryUI._lastAssignmentRequestTime or (currentTimeUs - inventoryUI._lastAssignmentRequestTime) > ASSIGNMENT_REQUEST_INTERVAL_US then
             inventory_actor.request_all_char_assignments()
-            inventoryUI._lastAssignmentRequestTime = currentTime
+            inventoryUI._lastAssignmentRequestTime = currentTimeUs
         end
     end
     inventory_actor.process_pending_requests()

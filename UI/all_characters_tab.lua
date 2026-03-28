@@ -1,4 +1,5 @@
 local M = {}
+local RESULTS_CACHE_REFRESH_US = 1000000
 
 -- All Characters - PC Tab
 -- env expects:
@@ -50,6 +51,107 @@ function M.renderContent(inventoryUI, env)
       setSearchText(searchText)
     end
     inventoryUI.pcCurrentPage = 1
+  end
+
+  inventoryUI.allCharsResultsCache = inventoryUI.allCharsResultsCache or {
+    data = {},
+    key = "",
+    lastUpdate = 0,
+  }
+
+  local function mixHash(hash, value)
+    local text = tostring(value or "")
+    for i = 1, #text do
+      hash = ((hash * 131) + string.byte(text, i)) % 2147483647
+    end
+    return hash
+  end
+
+  local function buildItemFingerprint(hash, item)
+    if type(item) ~= "table" then
+      return mixHash(hash, item)
+    end
+
+    hash = mixHash(hash, item.id or "")
+    hash = mixHash(hash, item.name or "")
+    hash = mixHash(hash, item.qty or "")
+    hash = mixHash(hash, item.slotid or "")
+    hash = mixHash(hash, item.bagid or "")
+    hash = mixHash(hash, item.bankslotid or "")
+    hash = mixHash(hash, item.value or "")
+    hash = mixHash(hash, item.tribute or "")
+    hash = mixHash(hash, item.itemtype or item.type or "")
+    hash = mixHash(hash, item.nodrop or "")
+    return hash
+  end
+
+  local function buildPeerInventoryFingerprint()
+    local hash = 5381
+    if not inventory_actor or not inventory_actor.peer_inventories then
+      return tostring(hash)
+    end
+
+    local peers = {}
+    for _, invData in pairs(inventory_actor.peer_inventories) do
+      table.insert(peers, invData)
+    end
+    table.sort(peers, function(a, b)
+      local aName = tostring(a and a.name or ""):lower()
+      local bName = tostring(b and b.name or ""):lower()
+      if aName == bName then
+        return tostring(a and a.server or ""):lower() < tostring(b and b.server or ""):lower()
+      end
+      return aName < bName
+    end)
+
+    for _, invData in ipairs(peers) do
+      hash = mixHash(hash, invData.name or "")
+      hash = mixHash(hash, invData.server or "")
+      for _, item in ipairs(invData.equipped or {}) do
+        hash = buildItemFingerprint(hash, item)
+      end
+      for _, item in ipairs(invData.inventory or {}) do
+        hash = buildItemFingerprint(hash, item)
+      end
+      local bagIds = {}
+      for bagId, _ in pairs(invData.bags or {}) do
+        table.insert(bagIds, bagId)
+      end
+      table.sort(bagIds, function(a, b) return tonumber(a) < tonumber(b) end)
+      for _, bagId in ipairs(bagIds) do
+        hash = mixHash(hash, bagId)
+        for _, item in ipairs((invData.bags or {})[bagId] or {}) do
+          hash = buildItemFingerprint(hash, item)
+        end
+      end
+      for _, item in ipairs(invData.bank or {}) do
+        hash = buildItemFingerprint(hash, item)
+      end
+    end
+
+    return tostring(hash)
+  end
+
+  local function buildBankFlagsFingerprint()
+    local hash = 5381
+    local peerFlags = (inventory_actor and inventory_actor.get_peer_bank_flags and inventory_actor.get_peer_bank_flags()) or {}
+    local peers = {}
+    for peerName, _ in pairs(peerFlags) do
+      table.insert(peers, peerName)
+    end
+    table.sort(peers, function(a, b) return tostring(a):lower() < tostring(b):lower() end)
+    for _, peerName in ipairs(peers) do
+      hash = mixHash(hash, peerName)
+      local itemIDs = {}
+      for itemID, flagged in pairs(peerFlags[peerName] or {}) do
+        if flagged then table.insert(itemIDs, itemID) end
+      end
+      table.sort(itemIDs, function(a, b) return tonumber(a) < tonumber(b) end)
+      for _, itemID in ipairs(itemIDs) do
+        hash = mixHash(hash, itemID)
+      end
+    end
+    return tostring(hash)
   end
 
   local function append_unique(values, value)
@@ -411,7 +513,27 @@ function M.renderContent(inventoryUI, env)
     end
     ImGui.Separator()
 
-    local results = enhancedSearchAcrossPeers()
+    local currentTimeUs = mq.gettime() or 0
+    local cacheKey = table.concat({
+      tostring(searchText or ""),
+      currentFilterState,
+      buildPeerInventoryFingerprint(),
+      buildBankFlagsFingerprint(),
+    }, "||")
+
+    local results
+    if inventoryUI.needsRefresh
+        or inventoryUI.allCharsResultsCache.key ~= cacheKey
+        or (currentTimeUs - (inventoryUI.allCharsResultsCache.lastUpdate or 0)) > RESULTS_CACHE_REFRESH_US then
+      results = enhancedSearchAcrossPeers()
+      inventoryUI.allCharsResultsCache.data = results
+      inventoryUI.allCharsResultsCache.key = cacheKey
+      inventoryUI.allCharsResultsCache.lastUpdate = currentTimeUs
+      inventoryUI.needsRefresh = false
+    else
+      results = inventoryUI.allCharsResultsCache.data or {}
+    end
+
     local resultCount = #results
 
     -- Multi-select mode indicator and controls
