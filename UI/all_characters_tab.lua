@@ -227,6 +227,60 @@ function M.renderContent(inventoryUI, env)
     return "--", ""
   end
 
+  local function compareValues(aValue, bValue, direction)
+    if aValue == bValue then return nil end
+    if direction == "desc" then
+      return aValue > bValue
+    end
+    return aValue < bValue
+  end
+
+  local function sortResults(results)
+    if inventoryUI.sortColumn == "none" or #results == 0 then
+      return
+    end
+
+    table.sort(results, function(a, b)
+      local col = inventoryUI.sortColumn
+      local dir = inventoryUI.sortDirection
+      local primary
+
+      if col == "name" then
+        primary = compareValues((a.name or ""):lower(), (b.name or ""):lower(), dir)
+      elseif col == "value" then
+        primary = compareValues(tonumber(a.value) or 0, tonumber(b.value) or 0, dir)
+      elseif col == "tribute" then
+        primary = compareValues(tonumber(a.tribute) or 0, tonumber(b.tribute) or 0, dir)
+      elseif col == "peer" then
+        primary = compareValues((a.peerName or ""):lower(), (b.peerName or ""):lower(), dir)
+      elseif col == "type" then
+        primary = compareValues((a.itemtype or a.type or ""):lower(), (b.itemtype or b.type or ""):lower(), dir)
+      elseif col == "augtype" then
+        local augA = select(1, get_augment_type_display(a))
+        local augB = select(1, get_augment_type_display(b))
+        primary = compareValues(tostring(augA or ""), tostring(augB or ""), dir)
+      elseif col == "qty" then
+        primary = compareValues(tonumber(a.qty) or 0, tonumber(b.qty) or 0, dir)
+      end
+
+      if primary ~= nil then
+        return primary
+      end
+
+      local secondary = compareValues((a.name or ""):lower(), (b.name or ""):lower(), "asc")
+      if secondary ~= nil then
+        return secondary
+      end
+
+      secondary = compareValues((a.peerName or ""):lower(), (b.peerName or ""):lower(), "asc")
+      if secondary ~= nil then
+        return secondary
+      end
+
+      return (tonumber(a.slotid) or 0) < (tonumber(b.slotid) or 0)
+    end)
+  end
+
   -- Periodically refresh bank flags so we can mark flagged items in the list
     local now = os.time()
     inventoryUI.peerBankFlagsLastRequest = inventoryUI.peerBankFlagsLastRequest or 0
@@ -455,34 +509,7 @@ function M.renderContent(inventoryUI, env)
         end
       end
 
-      -- Apply sorting
-      if inventoryUI.sortColumn ~= "none" and #results > 0 then
-        table.sort(results, function(a, b)
-          local col = inventoryUI.sortColumn
-          local dir = inventoryUI.sortDirection
-          local A, B
-          if col == "name" then
-            A, B = (a.name or ""):lower(), (b.name or ""):lower()
-          elseif col == "value" then
-            A, B = tonumber(a.value) or 0, tonumber(b.value) or 0
-          elseif col == "tribute" then
-            A, B = tonumber(a.tribute) or 0, tonumber(b.tribute) or 0
-          elseif col == "peer" then
-            A, B = (a.peerName or ""):lower(), (b.peerName or ""):lower()
-          elseif col == "type" then
-            A, B = (a.itemtype or a.type or ""):lower(), (b.itemtype or b.type or ""):lower()
-          elseif col == "augtype" then
-            local augA = select(1, get_augment_type_display(a))
-            local augB = select(1, get_augment_type_display(b))
-            A, B = tostring(augA or ""), tostring(augB or "")
-          elseif col == "qty" then
-            A, B = tonumber(a.qty) or 0, tonumber(b.qty) or 0
-          else
-            return false
-          end
-          if dir == "asc" then return A < B else return A > B end
-        end)
-      end
+      sortResults(results)
 
       return results
     end
@@ -789,7 +816,7 @@ function M.renderContent(inventoryUI, env)
     local actionButtonWidth = 56
     local actionButtonSpacing = 4
     local actionColumnWidth = (actionButtonWidth * 2) + actionButtonSpacing + 4
-    if ImGui.BeginTable("AllPeersEnhancedTable_v3", 9, borFlag(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.ScrollX, ImGuiTableFlags.ScrollY, ImGuiTableFlags.Hideable, ImGuiTableFlags.ContextMenuInBody, ImGuiTableFlags.NoSavedSettings), 0, 500) then
+    if ImGui.BeginTable("AllPeersEnhancedTable_v3", 9, borFlag(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.ScrollX, ImGuiTableFlags.ScrollY, ImGuiTableFlags.Hideable, ImGuiTableFlags.ContextMenuInBody, ImGuiTableFlags.NoSavedSettings, ImGuiTableFlags.Sortable, ImGuiTableFlags.SortTristate), 0, 500) then
       ImGui.TableSetupColumn("Peer", ImGuiTableColumnFlags.WidthFixed, 90)
       ImGui.TableSetupColumn("Icon", borFlag(ImGuiTableColumnFlags.WidthFixed, ImGuiTableColumnFlags.NoSort), 28)
       ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1.0)
@@ -806,16 +833,27 @@ function M.renderContent(inventoryUI, env)
 
       -- Map header sorting to state
       local sortSpecs = ImGui.TableGetSortSpecs()
-      if sortSpecs and sortSpecs.SpecsDirty and sortSpecs.Specs and sortSpecs.SpecsCount > 0 then
-        local spec = sortSpecs.Specs[1]
-        if spec and spec.ColumnIndex ~= nil and spec.SortDirection ~= nil then
-          local colMap = { [0] = "peer", [2] = "name", [3] = "type", [4] = "augtype", [5] = "value", [6] = "tribute", [7] = "qty" }
-          local col = colMap[spec.ColumnIndex]
-          if col then
-            inventoryUI.sortColumn = col
-            inventoryUI.sortDirection = spec.SortDirection == ImGuiSortDirection.Ascending and "asc" or "desc"
+      if sortSpecs and sortSpecs.SpecsDirty then
+        if sortSpecs.SpecsCount > 0 then
+          local spec = sortSpecs:Specs(1)
+          if spec and spec.ColumnIndex ~= nil and spec.SortDirection ~= nil then
+            local colMap = { [0] = "peer", [2] = "name", [3] = "type", [4] = "augtype", [5] = "value", [6] = "tribute", [7] = "qty" }
+            local col = colMap[spec.ColumnIndex]
+            if col then
+              inventoryUI.sortColumn = col
+              inventoryUI.sortDirection = spec.SortDirection == ImGuiSortDirection.Ascending and "asc" or "desc"
+            else
+              inventoryUI.sortColumn = "none"
+              inventoryUI.sortDirection = "asc"
+            end
           end
+        else
+          inventoryUI.sortColumn = "none"
+          inventoryUI.sortDirection = "asc"
         end
+
+        sortResults(results)
+        inventoryUI.allCharsResultsCache.data = results
         sortSpecs.SpecsDirty = false
       end
 
