@@ -32,6 +32,12 @@ function M.render(inventoryUI, env)
         end
         return 0, 0
     end
+    local function clampInt(value, minValue, maxValue, fallback)
+        local n = math.floor(tonumber(value) or fallback or minValue or 0)
+        if minValue and n < minValue then n = minValue end
+        if maxValue and n > maxValue then n = maxValue end
+        return n
+    end
     
     -- Dashboard Header
     if inventoryUI.selectedPeer then
@@ -60,29 +66,38 @@ function M.render(inventoryUI, env)
         return target
     end
 
-    local tileWidth = 130
-    local tileHeight = 110
+    local tileWidth = clampInt(inventoryUI.launcherTileWidth, 90, 220, 130)
+    local tileHeight = clampInt(inventoryUI.launcherTileHeight, 80, 220, 110)
     local spacing = 12
+
+    inventoryUI.launcherTileWidth = tileWidth
+    inventoryUI.launcherTileHeight = tileHeight
     
     -- Calculate columns based on available width
     local cols = math.floor((windowWidth + spacing) / (tileWidth + spacing))
     if cols < 1 then cols = 1 end
 
     local tiles = {
-        { id = "Equipped", label = "Equipped", icon = icons.FA_USER or "E", color = ImVec4(0.15, 0.35, 0.55, 1.0) },
-        { id = "Inventory", label = "Inventory", icon = icons.FA_BOX_OPEN or "I", color = ImVec4(0.15, 0.45, 0.25, 1.0) },
-        { id = "AllChars", label = "Search All", icon = icons.FA_SEARCH or "S", color = ImVec4(0.35, 0.25, 0.55, 1.0) },
-        { id = "Assignments", label = "Assignments", icon = icons.FA_TASKS or "A", color = ImVec4(0.55, 0.15, 0.15, 1.0) },
+        { id = "Equipped", label = "Equipped", icon = icons.FA_USER or "E", color = ImVec4(0.15, 0.35, 0.55, 1.0), visibleSetting = "launcherShowEquipped" },
+        { id = "Inventory", label = "Inventory", icon = icons.FA_BOX_OPEN or "I", color = ImVec4(0.15, 0.45, 0.25, 1.0), visibleSetting = "launcherShowInventory" },
+        { id = "AllChars", label = "Search All", icon = icons.FA_SEARCH or "S", color = ImVec4(0.35, 0.25, 0.55, 1.0), visibleSetting = "launcherShowAllChars" },
+        { id = "Assignments", label = "Assignments", icon = icons.FA_TASKS or "A", color = ImVec4(0.55, 0.15, 0.15, 1.0), visibleSetting = "launcherShowAssignments" },
         -- Hidden by request: keep module code, remove launcher button.
         -- { id = "Peers", label = "Network", icon = icons.FA_NETWORK_WIRED or "N", color = ImVec4(0.15, 0.45, 0.45, 1.0) },
-        { id = "Augments", label = "Augments", icon = icons.FA_DIAMOND or "AU", color = ImVec4(0.45, 0.15, 0.45, 1.0) },
-        { id = "CheckUpgrades", label = "Upgrades", icon = icons.FA_CHEVRON_CIRCLE_UP or "U", color = ImVec4(0.25, 0.55, 0.15, 1.0) },
-        { id = "FocusEffects", label = "Focus", icon = icons.FA_MAGIC or "F", color = ImVec4(0.25, 0.25, 0.55, 1.0) },
-        { id = "Collectibles", label = "Collectibles", icon = icons.FA_STAR or "C", color = ImVec4(0.65, 0.45, 0.15, 1.0) },
+        { id = "Augments", label = "Augments", icon = icons.FA_DIAMOND or "AU", color = ImVec4(0.45, 0.15, 0.45, 1.0), visibleSetting = "launcherShowAugments" },
+        { id = "CheckUpgrades", label = "Upgrades", icon = icons.FA_CHEVRON_CIRCLE_UP or "U", color = ImVec4(0.25, 0.55, 0.15, 1.0), visibleSetting = "launcherShowCheckUpgrades" },
+        { id = "FocusEffects", label = "Focus", icon = icons.FA_MAGIC or "F", color = ImVec4(0.25, 0.25, 0.55, 1.0), visibleSetting = "launcherShowFocusEffects" },
+        { id = "Collectibles", label = "Collectibles", icon = icons.FA_STAR or "C", color = ImVec4(0.65, 0.45, 0.15, 1.0), visibleSetting = "launcherShowCollectibles" },
         { id = "WindowSettings", label = "Settings", icon = icons.FA_COG or "W", color = ImVec4(0.35, 0.35, 0.35, 1.0) },
         -- Hidden by request: keep module code, remove launcher button.
         -- { id = "Performance", label = "Settings", icon = icons.FA_COG or "S", color = ImVec4(0.35, 0.35, 0.35, 1.0) },
     }
+    local visibleTiles = {}
+    for _, tile in ipairs(tiles) do
+        if not tile.visibleSetting or inventoryUI[tile.visibleSetting] ~= false then
+            table.insert(visibleTiles, tile)
+        end
+    end
 
     local function renderTile(tile)
         inventoryUI.windows = inventoryUI.windows or {}
@@ -239,10 +254,10 @@ function M.render(inventoryUI, env)
     end
 
     local current_col = 0
-    for i, tile in ipairs(tiles) do
+    for i, tile in ipairs(visibleTiles) do
         renderTile(tile)
         current_col = current_col + 1
-        if current_col < cols and i < #tiles then
+        if current_col < cols and i < #visibleTiles then
             ImGui.SameLine(0, spacing)
         else
             current_col = 0
@@ -340,6 +355,39 @@ function M.render(inventoryUI, env)
                 if ImGui.IsItemHovered() then
                     ImGui.SetTooltip("Locks/unlocks moving and resizing the main window.")
                 end
+
+                ImGui.Spacing()
+                ImGui.Text("Launcher Tile Size")
+
+                local tileWidthChanged
+                ui.launcherTileWidth, tileWidthChanged = ImGui.InputInt("Tile Width", ui.launcherTileWidth or 130)
+                ui.launcherTileWidth = clampInt(ui.launcherTileWidth, 90, 220, 130)
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Controls launcher tile width. Range: 90 to 220.")
+                end
+
+                local tileHeightChanged
+                ui.launcherTileHeight, tileHeightChanged = ImGui.InputInt("Tile Height", ui.launcherTileHeight or 110)
+                ui.launcherTileHeight = clampInt(ui.launcherTileHeight, 80, 220, 110)
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip("Controls launcher tile height. Range: 80 to 220.")
+                end
+
+                if tileWidthChanged or tileHeightChanged then
+                    inventoryUI._launcherCardHover = {}
+                end
+
+                ImGui.Spacing()
+                ImGui.Text("Visible Launcher Tiles")
+
+                ui.launcherShowEquipped = ImGui.Checkbox("Equipped", ui.launcherShowEquipped ~= false)
+                ui.launcherShowInventory = ImGui.Checkbox("Inventory", ui.launcherShowInventory ~= false)
+                ui.launcherShowAllChars = ImGui.Checkbox("Search All", ui.launcherShowAllChars ~= false)
+                ui.launcherShowAssignments = ImGui.Checkbox("Assignments", ui.launcherShowAssignments ~= false)
+                ui.launcherShowAugments = ImGui.Checkbox("Augments", ui.launcherShowAugments ~= false)
+                ui.launcherShowCheckUpgrades = ImGui.Checkbox("Upgrades", ui.launcherShowCheckUpgrades ~= false)
+                ui.launcherShowFocusEffects = ImGui.Checkbox("Focus", ui.launcherShowFocusEffects ~= false)
+                ui.launcherShowCollectibles = ImGui.Checkbox("Collectibles", ui.launcherShowCollectibles ~= false)
 
                 if ImGui.Button("Save Config", 120, 0) then
                     if env.actions and env.actions.saveConfig then
