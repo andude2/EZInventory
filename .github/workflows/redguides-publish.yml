@@ -9,10 +9,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Build Zip File
-        run: zip -r release.zip src/
+        shell: bash
+        run: |
+          rm -f release.zip
+          while IFS= read -r -d '' file; do
+            zip -q release.zip "$file"
+          done < <(
+            git ls-files -z -- . \
+              ':(exclude).github/**' \
+              ':(exclude).gitignore'
+          )
 
       - name: Publish to RedGuides
         uses: RedGuides/redguides-publish@v1
@@ -22,4 +31,4 @@ jobs:
           resource_id: '3217'
           description: 'README.md'
           file: 'release.zip'
-          domain: 'https://github.com/andude2/EZInventory'
+          domain: 'https://raw.githubusercontent.com/andude2/EZInventory/main/'
