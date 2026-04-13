@@ -1,57 +1,25 @@
 name: Publish to RedGuides
 
 on:
-  workflow_dispatch:
-    inputs:
-      resource_id:
-        description: 'RedGuides resource ID (the number at the end of the resource URL)'
-        required: true
-        type: string
-      version:
-        description: 'Version label for this update, for example v1.0.0'
-        required: true
-        type: string
-      description_file:
-        description: 'Optional description file to upload as the resource overview'
-        required: false
-        default: 'README.md'
-        type: string
-      message_file:
-        description: 'Optional update/changelog file'
-        required: false
-        default: ''
-        type: string
+  push:
+    branches: [ "main" ]
 
 jobs:
-  publish:
+  redfetch-publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-      - name: Build release zip from tracked files
-        shell: bash
-        run: |
-          rm -f release.zip
-          while IFS= read -r -d '' file; do
-            zip -q release.zip "$file"
-          done < <(
-            git ls-files -z -- . \
-              ':(exclude).github/**' \
-              ':(exclude).gitignore'
-          )
+      - name: Build Zip File
+        run: zip -r release.zip src/
 
       - name: Publish to RedGuides
         uses: RedGuides/redguides-publish@v1
         env:
           REDGUIDES_API_KEY: ${{ secrets.REDGUIDES_API_KEY }}
         with:
-          resource_id: ${{ inputs.resource_id }}
-          description: ${{ inputs.description_file }}
-          version: ${{ inputs.version }}
-          message: ${{ inputs.message_file }}
-          file: release.zip
-          domain: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/
+          resource_id: '3217'
+          description: 'README.md'
+          file: 'release.zip'
+          domain: 'https://github.com/andude2/EZInventory'
