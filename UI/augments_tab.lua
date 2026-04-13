@@ -82,6 +82,95 @@ local function build_slot_type_options(rows, showEmptySlots)
   return options
 end
 
+local function find_peer_entry(inventoryUI, serverName, peerName)
+  local targetServer = tostring(serverName or "")
+  local targetPeer = tostring(peerName or "")
+
+  for _, peer in ipairs(inventoryUI.peers or {}) do
+    if tostring(peer.server or "") == targetServer and tostring(peer.name or "") == targetPeer then
+      return peer
+    end
+  end
+
+  return nil
+end
+
+local function ensure_popout_selection(inventoryUI, mq)
+  local currentServer = tostring(mq.TLO.MacroQuest.Server() or "")
+  local availableServers = inventoryUI.servers or {}
+
+  inventoryUI.augmentsPopoutSelectedServer = inventoryUI.augmentsPopoutSelectedServer or inventoryUI.selectedServer or currentServer
+  if not availableServers[inventoryUI.augmentsPopoutSelectedServer] then
+    inventoryUI.augmentsPopoutSelectedServer = inventoryUI.selectedServer or currentServer
+  end
+
+  local serverPeers = availableServers[inventoryUI.augmentsPopoutSelectedServer] or {}
+  local hasSelectedPeer = false
+  for _, peer in ipairs(serverPeers) do
+    if peer.name == inventoryUI.augmentsPopoutSelectedPeer then
+      hasSelectedPeer = true
+      break
+    end
+  end
+
+  if not hasSelectedPeer then
+    local globalPeerEntry = find_peer_entry(inventoryUI, inventoryUI.augmentsPopoutSelectedServer, inventoryUI.selectedPeer)
+    if globalPeerEntry then
+      inventoryUI.augmentsPopoutSelectedPeer = globalPeerEntry.name
+    else
+      inventoryUI.augmentsPopoutSelectedPeer = serverPeers[1] and serverPeers[1].name or nil
+    end
+  end
+
+  local selectedPeerEntry = find_peer_entry(
+    inventoryUI,
+    inventoryUI.augmentsPopoutSelectedServer,
+    inventoryUI.augmentsPopoutSelectedPeer
+  )
+
+  inventoryUI.augmentsPopoutInventoryData = (selectedPeerEntry and selectedPeerEntry.data) or { equipped = {}, inventory = {}, bags = {}, bank = {} }
+end
+
+local function render_popout_peer_selector(inventoryUI, ImGui, mq)
+  ensure_popout_selection(inventoryUI, mq)
+
+  ImGui.Text("View Character")
+  ImGui.SetNextItemWidth(160)
+  if ImGui.BeginCombo("##AugmentsPopoutServer", inventoryUI.augmentsPopoutSelectedServer or "Server") then
+    local servers = {}
+    for serverName, _ in pairs(inventoryUI.servers or {}) do
+      table.insert(servers, serverName)
+    end
+    table.sort(servers, function(a, b) return tostring(a):lower() < tostring(b):lower() end)
+
+    for _, serverName in ipairs(servers) do
+      local selected = inventoryUI.augmentsPopoutSelectedServer == serverName
+      if ImGui.Selectable(serverName, selected) then
+        inventoryUI.augmentsPopoutSelectedServer = serverName
+        inventoryUI.augmentsPopoutSelectedPeer = nil
+        ensure_popout_selection(inventoryUI, mq)
+      end
+    end
+    ImGui.EndCombo()
+  end
+
+  ImGui.SameLine()
+  ImGui.SetNextItemWidth(180)
+  local peerLabel = inventoryUI.augmentsPopoutSelectedPeer or "Peer"
+  if ImGui.BeginCombo("##AugmentsPopoutPeer", peerLabel) then
+    for _, peer in ipairs(inventoryUI.servers[inventoryUI.augmentsPopoutSelectedServer] or {}) do
+      local selected = inventoryUI.augmentsPopoutSelectedPeer == peer.name
+      if ImGui.Selectable(peer.name, selected) then
+        inventoryUI.augmentsPopoutSelectedPeer = peer.name
+        inventoryUI.augmentsPopoutInventoryData = peer.data or { equipped = {}, inventory = {}, bags = {}, bank = {} }
+      end
+    end
+    ImGui.EndCombo()
+  end
+
+  ImGui.Separator()
+end
+
 local STAT_COLORS = {
   ac = { 1.0, 0.84, 0.0, 1.0 },   -- Gold
   hp = { 0.0, 0.8, 0.0, 1.0 },    -- Green
@@ -111,10 +200,26 @@ function M.renderContent(inventoryUI, env)
   local Augments = env.Augments
   local getSlotNameFromID = env.getSlotNameFromID
   local drawItemIcon = env.drawItemIcon
+  local isPopout = env.isPopout == true
+
+  if isPopout then
+    render_popout_peer_selector(inventoryUI, ImGui, mq)
+  end
+
+  local selectedPeerName = inventoryUI.selectedPeer
+  local selectedServerName = inventoryUI.selectedServer
+  local inventoryData = inventoryUI.inventoryData or {}
+
+  if isPopout then
+    ensure_popout_selection(inventoryUI, mq)
+    selectedPeerName = inventoryUI.augmentsPopoutSelectedPeer
+    selectedServerName = inventoryUI.augmentsPopoutSelectedServer
+    inventoryData = inventoryUI.augmentsPopoutInventoryData or inventoryData
+  end
 
   local function get_empty_aug_peer_entries()
     local peerEntries = {}
-    local selectedServer = tostring(inventoryUI.selectedServer or mq.TLO.MacroQuest.Server() or "")
+    local selectedServer = tostring(selectedServerName or mq.TLO.MacroQuest.Server() or "")
 
     for _, peer in ipairs(inventoryUI.peers or {}) do
       if peer
@@ -192,7 +297,7 @@ function M.renderContent(inventoryUI, env)
         )
       else
         augmentRows = Augments.build_empty_augment_slots(
-          inventoryUI.inventoryData or {},
+          inventoryData,
           getSlotNameFromID,
           {
             includeEquipped = true,
@@ -203,7 +308,7 @@ function M.renderContent(inventoryUI, env)
       end
     else
       augmentRows = Augments.build_inserted_augments(
-        inventoryUI.inventoryData or {},
+        inventoryData,
         getSlotNameFromID,
         {
           includeEquipped = inventoryUI.augmentsIncludeEquipped,
@@ -253,12 +358,12 @@ function M.renderContent(inventoryUI, env)
         ImGui.Text("Found %d empty augment slots across %d peers on %s",
           #filteredRows,
           #(emptyAugPeerEntries or {}),
-          inventoryUI.selectedServer or "Unknown Server")
+          selectedServerName or "Unknown Server")
       else
-        ImGui.Text("Found %d empty augment slots for %s", #filteredRows, inventoryUI.selectedPeer or "Unknown")
+        ImGui.Text("Found %d empty augment slots for %s", #filteredRows, selectedPeerName or "Unknown")
       end
     else
-      ImGui.Text("Found %d inserted augments for %s", #filteredRows, inventoryUI.selectedPeer or "Unknown")
+      ImGui.Text("Found %d inserted augments for %s", #filteredRows, selectedPeerName or "Unknown")
     end
     ImGui.Separator()
 
@@ -280,7 +385,7 @@ function M.renderContent(inventoryUI, env)
       tostring(inventoryUI.augmentsIncludeBank),
       tostring(inventoryUI.augmentsShowEmptySlotsAllPeers),
       tostring(inventoryUI.augmentsSlotTypeFilter),
-      tostring(inventoryUI.augmentsShowEmptySlotsAllPeers and inventoryUI.selectedServer or inventoryUI.selectedPeer or "Unknown")
+      tostring(inventoryUI.augmentsShowEmptySlotsAllPeers and selectedServerName or selectedPeerName or "Unknown")
     )
     if inventoryUI.augmentsPrevPageState ~= pageStateKey then
       inventoryUI.augmentsCurrentPage = 1

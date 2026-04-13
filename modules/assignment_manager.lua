@@ -483,8 +483,6 @@ function M.buildGlobalAssignmentPlan()
                 itemName = itemName,
                 assignedTo = assignedTo,
             })
-        else
-            printf("[Assignment Manager] Warning: Could not find item with ID %s", tostring(itemID))
         end
     end
     
