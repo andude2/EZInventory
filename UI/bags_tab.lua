@@ -31,6 +31,8 @@ function M.renderContent(inventoryUI, env)
   local BAG_CELL_SIZE = tonumber(env.BAG_CELL_SIZE) or 40
   local BAG_MAX_SLOTS_PER_BAG = tonumber(env.BAG_MAX_SLOTS_PER_BAG) or 10
 
+  local animBox = mq.FindTextureAnimation("A_RecessedBox")
+
   local function drawCellFrame(cell_id, hasItem)
     local clicked = ImGui.InvisibleButton("##cell_" .. tostring(cell_id), BAG_CELL_SIZE, BAG_CELL_SIZE)
     local minX, minY = ImGui.GetItemRectMin()
@@ -38,23 +40,28 @@ function M.renderContent(inventoryUI, env)
     local drawList = ImGui.GetWindowDrawList()
     local showBackground = not not env.showItemBackground
 
-    local fillColor
     if showBackground then
+      -- Draw EQ-native recessed box texture as slot background
+      ImGui.SetCursorScreenPos(minX, minY)
+      ImGui.DrawTextureAnimation(animBox, BAG_CELL_SIZE, BAG_CELL_SIZE)
+
+      -- Subtle tint overlay to differentiate empty vs filled slots
+      local tintColor
       if hasItem then
-        fillColor = ImGui.GetColorU32(0.18, 0.22, 0.28, 0.95)
+        tintColor = ImGui.GetColorU32(0.10, 0.14, 0.20, 0.45)
       else
-        fillColor = ImGui.GetColorU32(0.10, 0.10, 0.12, 0.85)
+        tintColor = ImGui.GetColorU32(0.02, 0.02, 0.03, 0.60)
       end
-      drawList:AddRectFilled(ImVec2(minX, minY), ImVec2(maxX, maxY), fillColor, 3)
+      drawList:AddRectFilled(ImVec2(minX, minY), ImVec2(maxX, maxY), tintColor, 3)
     end
 
     local borderColor
     if hasItem then
-      borderColor = ImGui.GetColorU32(0.42, 0.56, 0.72, 1.0)
+      borderColor = ImGui.GetColorU32(0.42, 0.56, 0.72, 0.8)
     else
-      borderColor = ImGui.GetColorU32(0.32, 0.32, 0.36, 1.0)
+      borderColor = ImGui.GetColorU32(0.25, 0.25, 0.30, 0.5)
     end
-    drawList:AddRect(ImVec2(minX, minY), ImVec2(maxX, maxY), borderColor, 3, 0, 1.5)
+    drawList:AddRect(ImVec2(minX, minY), ImVec2(maxX, maxY), borderColor, 3, 0, 1.0)
 
     return clicked, minX, minY, maxX, maxY
   end
@@ -65,6 +72,19 @@ function M.renderContent(inventoryUI, env)
 
   local function drawFallbackItemSlot(itemLike, cell_id)
     local clicked, minX, minY, maxX, maxY = drawCellFrame(cell_id, itemLike ~= nil)
+
+    -- Animated gold border pulse when item matches active search
+    if itemLike and itemLike.name and env.searchText and env.searchText ~= "" then
+      if string.find(itemLike.name:lower(), env.searchText:lower()) then
+        local time = mq.gettime() / 1000
+        local pulse = (math.sin(time * 5) + 1) * 0.5
+        local alpha = 0.25 + (pulse * 0.55)
+        local glowColor = ImGui.GetColorU32(1.0, 0.84, 0.0, alpha)
+        local drawList = ImGui.GetWindowDrawList()
+        drawList:AddRect(ImVec2(minX - 2, minY - 2), ImVec2(maxX + 2, maxY + 2), glowColor, 5, 0, 2.0)
+      end
+    end
+
     ImGui.SetCursorScreenPos(minX, minY)
     if env.drawItemIcon and itemLike and itemLike.icon and itemLike.icon > 0 then
       env.drawItemIcon(itemLike.icon, BAG_CELL_SIZE - 4, BAG_CELL_SIZE - 4)
@@ -73,9 +93,13 @@ function M.renderContent(inventoryUI, env)
       ImGui.Text((itemLike and itemLike.name and itemLike.name:sub(1, 1)) or "?")
     end
     if clicked and itemLike and itemLike.itemlink then
-      local links = mq.ExtractLinks(itemLike.itemlink)
-      if links and #links > 0 then
-        mq.ExecuteTextLink(links[1])
+      if env.openItemInspector then
+        env.openItemInspector(itemLike, { owner = inventoryUI.selectedPeer, location = "Inventory" })
+      else
+        local links = mq.ExtractLinks(itemLike.itemlink)
+        if links and #links > 0 then
+          mq.ExecuteTextLink(links[1])
+        end
       end
     end
     if ImGui.IsItemHovered() and itemLike and itemLike.name then
@@ -127,9 +151,16 @@ function M.renderContent(inventoryUI, env)
     if inventoryUI.multiSelectMode and ImGui.IsItemClicked(ImGuiMouseButton.Left) then
       toggleItemSelection(itemData, uniqueKey, inventoryUI.selectedPeer)
     elseif (not inventoryUI.multiSelectMode) and ImGui.IsItemClicked(ImGuiMouseButton.Left) then
-      local links = mq.ExtractLinks(itemData.itemlink)
-      if links and #links > 0 then
-        mq.ExecuteTextLink(links[1])
+      if env.openItemInspector then
+        env.openItemInspector(itemData, {
+          owner = inventoryUI.selectedPeer,
+          location = string.format("Inventory: Pack %s Slot %s", tostring(itemData.bagid or itemData.packslot or "?"), tostring(itemData.slotid or "?")),
+        })
+      else
+        local links = mq.ExtractLinks(itemData.itemlink)
+        if links and #links > 0 then
+          mq.ExecuteTextLink(links[1])
+        end
       end
     end
 
@@ -261,11 +292,18 @@ function M.renderContent(inventoryUI, env)
                   else
                     -- Normal mode - examine item
                     if ImGui.Selectable(displayName .. "##" .. bagid .. "_" .. i) then
-                      local links = mq.ExtractLinks(item.itemlink)
-                      if links and #links > 0 then
-                        mq.ExecuteTextLink(links[1])
+                      if env.openItemInspector then
+                        env.openItemInspector(item, {
+                          owner = inventoryUI.selectedPeer,
+                          location = string.format("Inventory: Pack %s Slot %s", tostring(bagid), tostring(item.slotid or "?")),
+                        })
                       else
-                        print(' No item link found in the database.')
+                        local links = mq.ExtractLinks(item.itemlink)
+                        if links and #links > 0 then
+                          mq.ExecuteTextLink(links[1])
+                        else
+                          print(' No item link found in the database.')
+                        end
                       end
                     end
                   end

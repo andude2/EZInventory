@@ -2,6 +2,101 @@
 _G.EZINV_GET_ITEM_ASSIGNMENT = _G.EZINV_GET_ITEM_ASSIGNMENT
 
 local M = {}
+local hasImAnim, ImAnim = pcall(require, "ImAnim")
+if not hasImAnim then ImAnim = nil end
+
+local function getSafeDeltaTime(ImGui)
+  local dt = 1.0 / 60.0
+  local ok, io = pcall(ImGui.GetIO)
+  if ok and io and io.DeltaTime then
+    dt = tonumber(io.DeltaTime) or dt
+  end
+  if dt <= 0 then dt = 1.0 / 60.0 end
+  if dt > 0.1 then dt = 0.1 end
+  return dt
+end
+
+local function canUseTweenFloat()
+  return ImAnim
+    and ImAnim.TweenFloat
+    and ImAnim.EasePreset
+    and IamEaseType
+    and IamEaseType.OutCubic
+    and IamPolicy
+    and IamPolicy.Crossfade
+    and ImHashStr
+end
+
+local function tweenFloat(id, key, target, duration, dt)
+  if not canUseTweenFloat() then
+    return target
+  end
+
+  local ok, value = pcall(
+    ImAnim.TweenFloat,
+    id,
+    key,
+    target,
+    duration,
+    ImAnim.EasePreset(IamEaseType.OutCubic),
+    IamPolicy.Crossfade,
+    dt
+  )
+  if ok and type(value) == "number" then
+    return value
+  end
+  return target
+end
+
+local function drawSlotHighlight(ImGui, drawList, minX, minY, maxX, maxY, opts)
+  opts = opts or {}
+  local hovered = opts.hovered == true
+  local selected = opts.selected == true
+  local searchMatch = opts.searchMatch == true
+  local hasItem = opts.hasItem == true
+  local animValue = tonumber(opts.animValue) or (hovered and 1.0 or 0.0)
+  local time = tonumber(opts.time) or 0
+
+  local baseTint
+  if selected then
+    baseTint = ImGui.GetColorU32(0.10, 0.33, 0.55, 0.42)
+  elseif hasItem then
+    baseTint = ImGui.GetColorU32(0.07, 0.11, 0.18, 0.34)
+  else
+    baseTint = ImGui.GetColorU32(0.02, 0.02, 0.03, 0.48)
+  end
+  drawList:AddRectFilled(ImVec2(minX, minY), ImVec2(maxX, maxY), baseTint, 4)
+
+  local borderAlpha = selected and 1.0 or (0.32 + 0.45 * animValue)
+  local borderColor
+  if selected then
+    borderColor = ImGui.GetColorU32(0.25, 0.72, 1.0, borderAlpha)
+  elseif hasItem then
+    borderColor = ImGui.GetColorU32(0.42, 0.56, 0.72, borderAlpha)
+  else
+    borderColor = ImGui.GetColorU32(0.38, 0.38, 0.44, borderAlpha)
+  end
+  drawList:AddRect(ImVec2(minX, minY), ImVec2(maxX, maxY), borderColor, 4, 0, selected and 2.0 or 1.0)
+
+  if hovered then
+    local hoverColor = ImGui.GetColorU32(0.72, 0.88, 1.0, 0.20 + 0.35 * animValue)
+    drawList:AddRectFilled(ImVec2(minX + 1, minY + 1), ImVec2(maxX - 1, maxY - 1), hoverColor, 4)
+    drawList:AddRect(ImVec2(minX - 1, minY - 1), ImVec2(maxX + 1, maxY + 1),
+      ImGui.GetColorU32(0.78, 0.92, 1.0, 0.50 + 0.35 * animValue), 5, 0, 1.5)
+  end
+
+  if searchMatch then
+    local pulse = (math.sin(time * 5.0) + 1.0) * 0.5
+    local searchColor = ImGui.GetColorU32(1.0, 0.78, 0.18, 0.40 + 0.45 * pulse)
+    drawList:AddRect(ImVec2(minX - 3, minY - 3), ImVec2(maxX + 3, maxY + 3), searchColor, 6, 0, 2.0)
+  end
+
+  if selected then
+    local pulse = (math.sin(time * 4.0) + 1.0) * 0.5
+    drawList:AddRect(ImVec2(minX - 2, minY - 2), ImVec2(maxX + 2, maxY + 2),
+      ImGui.GetColorU32(0.20, 0.68, 1.0, 0.45 + 0.35 * pulse), 6, 0, 2.0)
+  end
+end
 
 -- Equipped Tab renderer
 -- Usage: EquippedTab.render(inventoryUI, {
@@ -27,6 +122,7 @@ function M.renderContent(inventoryUI, env)
   local getEquippedSlotLayout = env.getEquippedSlotLayout
   local compareSlotAcrossPeers = env.compareSlotAcrossPeers
   local extractCharacterName = env.extractCharacterName
+  local animBox = mq.FindTextureAnimation("A_RecessedBox")
 
   if ImGui.BeginTabBar("EquippedViewTabs", ImGuiTabBarFlags.Reorderable) then
       local tabBarOk, tabBarErr = pcall(function()
@@ -126,9 +222,13 @@ function M.renderContent(inventoryUI, env)
                 local displayName = (item.name or "Unknown") .. assignmentText
                 
                 if ImGui.Selectable(displayName .. "##" .. rowKey) then
-                  local links = mq.ExtractLinks(item.itemlink)
-                  if links and #links > 0 then mq.ExecuteTextLink(links[1]) else print(
-                    ' No item link found in the database.') end
+                  if env.openItemInspector then
+                    env.openItemInspector(item, { owner = inventoryUI.selectedPeer, location = "Equipped: " .. slotName })
+                  else
+                    local links = mq.ExtractLinks(item.itemlink)
+                    if links and #links > 0 then mq.ExecuteTextLink(links[1]) else print(
+                      ' No item link found in the database.') end
+                  end
                 end
                 for i = 1, 6 do
                   if augVisibility[i] then
@@ -138,9 +238,21 @@ function M.renderContent(inventoryUI, env)
                     if item[augField] and item[augField] ~= "" then
                       local augKey = string.format("%s_%s_aug%d", item.name or "unnamed", tostring(item.slotid or -1), i)
                       if ImGui.Selectable(string.format("%s##%s", item[augField], augKey)) then
-                        local links = mq.ExtractLinks(item[augLinkField])
-                        if links and #links > 0 then mq.ExecuteTextLink(links[1]) else print(
-                          ' No aug link found in the database.') end
+                        if env.openItemInspector then
+                          env.openItemInspector({
+                            name = item[augField],
+                            itemlink = item[augLinkField],
+                            icon = item["aug" .. i .. "icon"],
+                            ac = item["aug" .. i .. "AC"],
+                            hp = item["aug" .. i .. "HP"],
+                            mana = item["aug" .. i .. "Mana"],
+                            augType = item["aug" .. i .. "AugType"] or item["aug" .. i .. "Type"],
+                          }, { owner = inventoryUI.selectedPeer, location = string.format("%s Aug %d", slotName, i) })
+                        else
+                          local links = mq.ExtractLinks(item[augLinkField])
+                          if links and #links > 0 then mq.ExecuteTextLink(links[1]) else print(
+                            ' No aug link found in the database.') end
+                        end
                       end
                     end
                   end
@@ -312,42 +424,42 @@ function M.renderContent(inventoryUI, env)
           end
           ImGui.SetColumnWidth(0, calculateEquippedTableWidth())
 
+          local dt = getSafeDeltaTime(ImGui)
+          local time = mq.gettime() / 1000
+
           local function renderEquippedSlot(slotID, item, slotName)
             local slotButtonID = "slot_" .. tostring(slotID)
-            if item and item.icon and item.icon ~= 0 then
-              local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 45, 45)
-              local rightClicked = ImGui.IsItemClicked(ImGuiMouseButton.Right)
-              local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
+            local hasItem = item and item.icon and item.icon ~= 0
+            local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 45, 45)
+            local rightClicked = ImGui.IsItemClicked(ImGuiMouseButton.Right)
+            local hovered = ImGui.IsItemHovered()
+            local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
+            local buttonMaxX, buttonMaxY = ImGui.GetItemRectMax()
+            local selected = tonumber(inventoryUI.selectedSlotID) == tonumber(slotID)
+            local searchMatch = item and item.name and env.searchText and env.searchText ~= ""
+              and item.name:lower():find(env.searchText:lower(), 1, true) ~= nil
+            local animId = ImHashStr and ImHashStr("ezinv_equipped_slot_" .. tostring(slotID)) or 0
+            local hoverAnim = tweenFloat(animId, ImHashStr and ImHashStr("hover") or 0, hovered and 1.0 or 0.0, 0.16, dt)
+            local drawList = ImGui.GetWindowDrawList()
+
+            if animBox then
+              -- Per lua_ImGuiCustom.cpp: DrawTextureAnimation accepts CTextureAnimation plus width/height.
               ImGui.SetCursorScreenPos(buttonMinX, buttonMinY)
+              ImGui.DrawTextureAnimation(animBox, 45, 45)
+            end
+            drawSlotHighlight(ImGui, drawList, buttonMinX, buttonMinY, buttonMaxX, buttonMaxY, {
+              hovered = hovered,
+              selected = selected,
+              searchMatch = searchMatch,
+              hasItem = hasItem,
+              animValue = hoverAnim,
+              time = time,
+            })
+
+            if hasItem then
+              ImGui.SetCursorScreenPos(buttonMinX + 2, buttonMinY + 2)
               drawItemIcon(item.icon, 40, 40)
-              if clicked then
-                inventoryUI.selectedSlotID = slotID
-                inventoryUI.selectedSlotName = slotName
-                inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
-              end
-              if rightClicked then
-                local targetChar = inventoryUI.selectedPeer or extractCharacterName(mq.TLO.Me.CleanName())
-                inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
-                inventoryUI.filteredItemsCache.lastFilterKey = ""
-                inventoryUI.showItemSuggestions = true
-                inventoryUI.itemSuggestionsTarget = targetChar
-                inventoryUI.itemSuggestionsSlot = slotID
-                inventoryUI.itemSuggestionsSlotName = slotName
-                inventoryUI.selectedComparisonItemId = ""
-                inventoryUI.selectedComparisonItem = nil
-              end
-              if ImGui.IsItemHovered() then
-                ImGui.BeginTooltip()
-                ImGui.Text(item.name or "Unknown Item")
-                ImGui.Text("Left-click: Compare across characters")
-                ImGui.Text("Right-click: Find alternative items")
-                ImGui.EndTooltip()
-              end
             else
-              local clicked = ImGui.InvisibleButton("##" .. slotButtonID, 45, 45)
-              local rightClicked = ImGui.IsItemClicked(ImGuiMouseButton.Right)
-              local buttonMinX, buttonMinY = ImGui.GetItemRectMin()
-              local buttonMaxX, buttonMaxY = ImGui.GetItemRectMax()
               local buttonWidth = buttonMaxX - buttonMinX
               local buttonHeight = buttonMaxY - buttonMinY
               local textSize = ImGui.CalcTextSize(slotName)
@@ -357,36 +469,43 @@ function M.renderContent(inventoryUI, env)
               ImGui.PushStyleColor(ImGuiCol.Text, 0.7, 0.7, 0.7, 1.0)
               ImGui.Text(slotName)
               ImGui.PopStyleColor()
-              if clicked then
-                inventoryUI.selectedSlotID = slotID
-                inventoryUI.selectedSlotName = slotName
-                inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
-              end
-              if rightClicked then
-                local targetChar = inventoryUI.selectedPeer or extractCharacterName(mq.TLO.Me.CleanName())
-                inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
-                inventoryUI.filteredItemsCache.lastFilterKey = ""
-                inventoryUI.showItemSuggestions = true
-                inventoryUI.itemSuggestionsTarget = targetChar
-                inventoryUI.itemSuggestionsSlot = slotID
-                inventoryUI.itemSuggestionsSlotName = slotName
-                inventoryUI.selectedComparisonItemId = ""
-                inventoryUI.selectedComparisonItem = nil
-              end
-              if ImGui.IsItemHovered() then
-                local drawList = ImGui.GetWindowDrawList()
-                drawList:AddRect(ImVec2(buttonMinX, buttonMinY), ImVec2(buttonMaxX, buttonMaxY),
-                  ImGui.GetColorU32(0.5, 0.5, 0.5, 0.3), 2.0)
-                ImGui.BeginTooltip()
+            end
+
+            if clicked then
+              inventoryUI.selectedSlotID = slotID
+              inventoryUI.selectedSlotName = slotName
+              inventoryUI.compareResults = compareSlotAcrossPeers(slotID)
+            end
+            if rightClicked then
+              local targetChar = inventoryUI.selectedPeer or extractCharacterName(mq.TLO.Me.CleanName())
+              inventoryUI.availableItems = Suggestions.getAvailableItemsForSlot(targetChar, slotID)
+              inventoryUI.filteredItemsCache.lastFilterKey = ""
+              inventoryUI.showItemSuggestions = true
+              inventoryUI.itemSuggestionsTarget = targetChar
+              inventoryUI.itemSuggestionsSlot = slotID
+              inventoryUI.itemSuggestionsSlotName = slotName
+              inventoryUI.selectedComparisonItemId = ""
+              inventoryUI.selectedComparisonItem = nil
+            end
+            if hovered then
+              ImGui.BeginTooltip()
+              if hasItem then
+                ImGui.Text(item.name or "Unknown Item")
+                if searchMatch then
+                  ImGui.TextColored(1.0, 0.78, 0.18, 1.0, "Matches current search")
+                end
+                ImGui.Text("Left-click: Compare across characters")
+                ImGui.Text("Right-click: Find alternative items")
+              else
                 ImGui.Text(slotName .. " (Empty)")
                 ImGui.Text("Left-click: Compare across characters")
                 ImGui.Text("Right-click: Find items for this slot")
-                ImGui.EndTooltip()
               end
+              ImGui.EndTooltip()
             end
           end
 
-          if ImGui.BeginTable("EquippedVisualGrid", 4, bit32.bor(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.SizingFixedFit)) then
+          if ImGui.BeginTable("EquippedVisualGrid", 4, ImGuiTableFlags.SizingFixedFit) then
             ImGui.TableSetupColumn(" ", ImGuiTableColumnFlags.WidthFixed, 45)
             ImGui.TableSetupColumn(" ", ImGuiTableColumnFlags.WidthFixed, 45)
             ImGui.TableSetupColumn(" ", ImGuiTableColumnFlags.WidthFixed, 45)
@@ -545,7 +664,9 @@ function M.renderContent(inventoryUI, env)
                     ImGui.TableNextColumn()
                     if result.item then
                       if ImGui.Selectable(result.item.name) then
-                        if result.item.itemlink and result.item.itemlink ~= "" then
+                        if env.openItemInspector then
+                          env.openItemInspector(result.item, { owner = result.peerName, location = "Equipped: " .. inventoryUI.selectedSlotName })
+                        elseif result.item.itemlink and result.item.itemlink ~= "" then
                           local links = mq.ExtractLinks(result.item.itemlink)
                           if links and #links > 0 then mq.ExecuteTextLink(links[1]) end
                         end

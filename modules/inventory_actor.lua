@@ -654,6 +654,36 @@ local function scan_augment_links(item, include_effects)
             data["aug" .. i .. "AC"] = safe_aug_get(function() return augItem.AC() end, 0)
             data["aug" .. i .. "HP"] = safe_aug_get(function() return augItem.HP() end, 0)
             data["aug" .. i .. "Mana"] = safe_aug_get(function() return augItem.Mana() end, 0)
+            -- Per MQ2ItemType.cpp, inserted augments expose the same item stat members as parent items.
+            if include_effects then
+                data["aug" .. i .. "Endurance"] = safe_aug_get(function() return augItem.Endurance() end, 0)
+                data["aug" .. i .. "STR"] = safe_aug_get(function() return augItem.STR() end, 0)
+                data["aug" .. i .. "STA"] = safe_aug_get(function() return augItem.STA() end, 0)
+                data["aug" .. i .. "AGI"] = safe_aug_get(function() return augItem.AGI() end, 0)
+                data["aug" .. i .. "DEX"] = safe_aug_get(function() return augItem.DEX() end, 0)
+                data["aug" .. i .. "WIS"] = safe_aug_get(function() return augItem.WIS() end, 0)
+                data["aug" .. i .. "INT"] = safe_aug_get(function() return augItem.INT() end, 0)
+                data["aug" .. i .. "CHA"] = safe_aug_get(function() return augItem.CHA() end, 0)
+                data["aug" .. i .. "SvMagic"] = safe_aug_get(function() return augItem.svMagic() end, 0)
+                data["aug" .. i .. "SvFire"] = safe_aug_get(function() return augItem.svFire() end, 0)
+                data["aug" .. i .. "SvCold"] = safe_aug_get(function() return augItem.svCold() end, 0)
+                data["aug" .. i .. "SvDisease"] = safe_aug_get(function() return augItem.svDisease() end, 0)
+                data["aug" .. i .. "SvPoison"] = safe_aug_get(function() return augItem.svPoison() end, 0)
+                data["aug" .. i .. "SvCorruption"] = safe_aug_get(function() return augItem.svCorruption() end, 0)
+                data["aug" .. i .. "HeroicStr"] = safe_aug_get(function() return augItem.HeroicSTR() end, 0)
+                data["aug" .. i .. "HeroicSta"] = safe_aug_get(function() return augItem.HeroicSTA() end, 0)
+                data["aug" .. i .. "HeroicAgi"] = safe_aug_get(function() return augItem.HeroicAGI() end, 0)
+                data["aug" .. i .. "HeroicDex"] = safe_aug_get(function() return augItem.HeroicDEX() end, 0)
+                data["aug" .. i .. "HeroicWis"] = safe_aug_get(function() return augItem.HeroicWIS() end, 0)
+                data["aug" .. i .. "HeroicInt"] = safe_aug_get(function() return augItem.HeroicINT() end, 0)
+                data["aug" .. i .. "HeroicCha"] = safe_aug_get(function() return augItem.HeroicCHA() end, 0)
+                data["aug" .. i .. "HeroicSvMagic"] = safe_aug_get(function() return augItem.HeroicSvMagic() end, 0)
+                data["aug" .. i .. "HeroicSvFire"] = safe_aug_get(function() return augItem.HeroicSvFire() end, 0)
+                data["aug" .. i .. "HeroicSvCold"] = safe_aug_get(function() return augItem.HeroicSvCold() end, 0)
+                data["aug" .. i .. "HeroicSvDisease"] = safe_aug_get(function() return augItem.HeroicSvDisease() end, 0)
+                data["aug" .. i .. "HeroicSvPoison"] = safe_aug_get(function() return augItem.HeroicSvPoison() end, 0)
+                data["aug" .. i .. "HeroicSvCorruption"] = safe_aug_get(function() return augItem.HeroicSvCorruption() end, 0)
+            end
             -- Used by Augments tab "Fits Slot Type" column.
             local augType = safe_aug_get(function() return augItem.AugType() end, 0)
             if tonumber(augType) == 0 then
@@ -748,14 +778,14 @@ local function get_basic_item_info(item, include_extended_stats)
     return basic
 end
 
-local function get_detailed_item_stats(item)
+local function get_detailed_item_stats(item, forceDetailed)
     local stats = {}
 
     if not item or not item() then
         return stats
     end
 
-    if not M.config.loadDetailedStats then
+    if not forceDetailed and not M.config.loadDetailedStats then
         return stats
     end
 
@@ -828,7 +858,7 @@ function M.get_item_detailed_stats(itemName, location, slotInfo)
     local function findAndGetStats(item)
         if item() and item.Name() == itemName then
             local basic = get_basic_item_info(item, true)
-            local stats = get_detailed_item_stats(item)
+            local stats = get_detailed_item_stats(item, true)
             for k, v in pairs(stats) do
                 basic[k] = v
             end

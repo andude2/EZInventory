@@ -305,9 +305,16 @@ function M.renderContent(inventoryUI, env)
         ImGui.TableSetColumnIndex(1)
         local itemLabel = string.format("%s##upgrade_item_%s", availableItem.name or "Unknown", uniqueKey)
         if ImGui.Selectable(itemLabel) then
-          local links = mq and mq.ExtractLinks and mq.ExtractLinks(itemInfo.itemlink or "")
-          if links and #links > 0 and mq and mq.ExecuteTextLink then
-            mq.ExecuteTextLink(links[1])
+          if env.openItemInspector then
+            env.openItemInspector(itemInfo, {
+              owner = availableItem.source,
+              location = tostring(availableItem.location or ""),
+            })
+          else
+            local links = mq and mq.ExtractLinks and mq.ExtractLinks(itemInfo.itemlink or "")
+            if links and #links > 0 and mq and mq.ExecuteTextLink then
+              mq.ExecuteTextLink(links[1])
+            end
           end
         end
         if ImGui.IsItemHovered() then

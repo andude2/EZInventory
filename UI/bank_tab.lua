@@ -151,11 +151,18 @@ function M.renderContent(inventoryUI, env)
             if inventoryUI.multiSelectMode and toggleItemSelection then
               toggleItemSelection(item, uniqueKey, inventoryUI.selectedPeer)
             else
-              local links = mq.ExtractLinks(item.itemlink)
-              if links and #links > 0 then
-                mq.ExecuteTextLink(links[1])
+              if env.openItemInspector then
+                local location = slotId ~= "noslot" and tonumber(slotId) and tonumber(slotId) > 0
+                  and string.format("Bank: Slot %s / %s", tostring(bankSlotId), tostring(slotId))
+                  or string.format("Bank: Slot %s", tostring(bankSlotId))
+                env.openItemInspector(item, { owner = inventoryUI.selectedPeer, location = location })
               else
-                print(' No item link found in the database.')
+                local links = mq.ExtractLinks(item.itemlink)
+                if links and #links > 0 then
+                  mq.ExecuteTextLink(links[1])
+                else
+                  print(' No item link found in the database.')
+                end
               end
             end
           end

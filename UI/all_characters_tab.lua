@@ -932,7 +932,12 @@ function M.renderContent(inventoryUI, env)
               end
             else
               -- Normal mode - examine item
-              if mq and mq.ExtractLinks and item.itemlink then
+              if env.openItemInspector then
+                env.openItemInspector(item, {
+                  owner = item.peerName,
+                  location = tostring(item.source or item.location or ""),
+                })
+              elseif mq and mq.ExtractLinks and item.itemlink then
                 local links = mq.ExtractLinks(item.itemlink); if links and #links > 0 and mq.ExecuteTextLink then
                   mq
                       .ExecuteTextLink(links[1])

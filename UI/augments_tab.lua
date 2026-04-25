@@ -465,9 +465,17 @@ function M.renderContent(inventoryUI, env)
           ImGui.TableSetColumnIndex(itemColumnIndex)
           local itemLabel = string.format("%s##empty_aug_item_%d", row.parentItemName or "Unknown", rowIndex)
           if ImGui.Selectable(itemLabel) then
-            local links = mq.ExtractLinks(row.parentItemLink or "")
-            if links and #links > 0 then
-              mq.ExecuteTextLink(links[1])
+            if env.openItemInspector then
+              env.openItemInspector({
+                name = row.parentItemName,
+                itemlink = row.parentItemLink,
+                icon = row.parentItemIcon,
+              }, { owner = row.peerName, location = row.location or "Parent Item" })
+            else
+              local links = mq.ExtractLinks(row.parentItemLink or "")
+              if links and #links > 0 then
+                mq.ExecuteTextLink(links[1])
+              end
             end
           end
 
@@ -521,9 +529,21 @@ function M.renderContent(inventoryUI, env)
           ImGui.TableSetColumnIndex(1)
           local augLabel = string.format("%s##aug_name_%d", row.augmentName or "Unknown", rowIndex)
           if ImGui.Selectable(augLabel) then
-            local links = mq.ExtractLinks(row.augmentLink or "")
-            if links and #links > 0 then
-              mq.ExecuteTextLink(links[1])
+            if env.openItemInspector then
+              env.openItemInspector({
+                name = row.augmentName,
+                itemlink = row.augmentLink,
+                icon = row.augmentIcon,
+                ac = row.ac,
+                hp = row.hp,
+                mana = row.mana,
+                augType = row.augType,
+              }, { owner = row.peerName, location = row.location or "Augment" })
+            else
+              local links = mq.ExtractLinks(row.augmentLink or "")
+              if links and #links > 0 then
+                mq.ExecuteTextLink(links[1])
+              end
             end
           end
           if ImGui.IsItemHovered() then
@@ -538,9 +558,16 @@ function M.renderContent(inventoryUI, env)
           ImGui.TableSetColumnIndex(2)
           local parentLabel = string.format("%s##aug_parent_%d", row.insertedIn or "Unknown", rowIndex)
           if ImGui.Selectable(parentLabel) then
-            local links = mq.ExtractLinks(row.insertedInLink or "")
-            if links and #links > 0 then
-              mq.ExecuteTextLink(links[1])
+            if env.openItemInspector then
+              env.openItemInspector({
+                name = row.insertedIn,
+                itemlink = row.insertedInLink,
+              }, { owner = row.peerName, location = row.location or "Inserted In" })
+            else
+              local links = mq.ExtractLinks(row.insertedInLink or "")
+              if links and #links > 0 then
+                mq.ExecuteTextLink(links[1])
+              end
             end
           end
 

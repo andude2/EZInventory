@@ -88,7 +88,8 @@ function M.render()
         ImGui.Separator()
 
         -- Environments
-        local envEquipped = { ImGui=ImGui, mq=mq, Suggestions=Suggestions, drawItemIcon=shared_ui.drawItemIcon, renderLoadingScreen=shared_ui.renderLoadingScreen, getSlotNameFromID=item_utils.getSlotNameFromID, getEquippedSlotLayout=item_utils.getEquippedSlotLayout, compareSlotAcrossPeers=window_manager.compareSlotAcrossPeers, extractCharacterName=character_utils.extractCharacterName, inventory_actor=inventory_actor, matchesSearch=matchesSearch }
+        local openItemInspector = function(item, opts) Modals.openItemInspectorAtCurrentItem(ImGui, inventoryUI, item, opts) end
+        local envEquipped = { ImGui=ImGui, mq=mq, Suggestions=Suggestions, drawItemIcon=shared_ui.drawItemIcon, renderLoadingScreen=shared_ui.renderLoadingScreen, getSlotNameFromID=item_utils.getSlotNameFromID, getEquippedSlotLayout=item_utils.getEquippedSlotLayout, compareSlotAcrossPeers=window_manager.compareSlotAcrossPeers, extractCharacterName=character_utils.extractCharacterName, inventory_actor=inventory_actor, matchesSearch=matchesSearch, searchText=state.searchText, openItemInspector=openItemInspector }
         local envBags = {
             ImGui=ImGui,
             mq=mq,
@@ -108,9 +109,10 @@ function M.render()
             BAG_CELL_SIZE=40,
             BAG_MAX_SLOTS_PER_BAG=10,
             showItemBackground=inventoryUI.showItemBackground,
+            openItemInspector=openItemInspector,
         }
-        local envBank = { ImGui=ImGui, mq=mq, drawItemIcon=shared_ui.drawItemIcon, showContextMenu=Util.showContextMenu, matchesSearch=matchesSearch, toggleItemSelection=Util.toggleItemSelection, drawSelectionIndicator=shared_ui.drawSelectionIndicator, renderMultiSelectToolbar=Util.renderMultiSelectToolbar, clearItemSelection=Util.clearItemSelection, extractCharacterName=character_utils.extractCharacterName }
-        local envAll = { ImGui=ImGui, mq=mq, json=json, Banking=Banking, drawItemIcon=shared_ui.drawItemIcon, inventory_actor=inventory_actor, itemGroups=item_utils.itemGroups, itemMatchesGroup=item_utils.itemMatchesGroup, extractCharacterName=character_utils.extractCharacterName, isItemBankFlagged=item_utils.isItemBankFlagged, normalizeChar=character_utils.normalizeChar, Settings=state.Settings, searchText=state.searchText, setSearchText=function(v) state.searchText=v end, showContextMenu=Util.showContextMenu, toggleItemSelection=Util.toggleItemSelection, drawSelectionIndicator=shared_ui.drawSelectionIndicator, renderMultiSelectToolbar=Util.renderMultiSelectToolbar, clearItemSelection=Util.clearItemSelection, matchesSearch=matchesSearch }
+        local envBank = { ImGui=ImGui, mq=mq, drawItemIcon=shared_ui.drawItemIcon, showContextMenu=Util.showContextMenu, matchesSearch=matchesSearch, toggleItemSelection=Util.toggleItemSelection, drawSelectionIndicator=shared_ui.drawSelectionIndicator, renderMultiSelectToolbar=Util.renderMultiSelectToolbar, clearItemSelection=Util.clearItemSelection, extractCharacterName=character_utils.extractCharacterName, openItemInspector=openItemInspector }
+        local envAll = { ImGui=ImGui, mq=mq, json=json, Banking=Banking, drawItemIcon=shared_ui.drawItemIcon, inventory_actor=inventory_actor, itemGroups=item_utils.itemGroups, itemMatchesGroup=item_utils.itemMatchesGroup, extractCharacterName=character_utils.extractCharacterName, isItemBankFlagged=item_utils.isItemBankFlagged, normalizeChar=character_utils.normalizeChar, Settings=state.Settings, searchText=state.searchText, setSearchText=function(v) state.searchText=v end, showContextMenu=Util.showContextMenu, toggleItemSelection=Util.toggleItemSelection, drawSelectionIndicator=shared_ui.drawSelectionIndicator, renderMultiSelectToolbar=Util.renderMultiSelectToolbar, clearItemSelection=Util.clearItemSelection, matchesSearch=matchesSearch, openItemInspector=openItemInspector }
         local envAssignment = { ImGui=ImGui, mq=mq, AssignmentManager=AssignmentManager, inventory_actor=inventory_actor, extractCharacterName=character_utils.extractCharacterName }
         local envPeer = { ImGui=ImGui, mq=mq, inventory_actor=inventory_actor, Settings=state.Settings, getPeerConnectionStatus=network_manager.getPeerConnectionStatus, requestPeerPaths=network_manager.requestPeerPaths, extractCharacterName=character_utils.extractCharacterName, sendLuaRunToPeer=network_manager.sendLuaRunToPeer, broadcastLuaRun=network_manager.broadcastLuaRun }
         local envPerf = {
@@ -122,8 +124,8 @@ function M.render()
             SaveConfigWithStatsUpdate=SaveConfigWithStatsUpdate,
             OnStatsLoadingModeChanged=OnStatsLoadingModeChanged,
         }
-        local envAugments = { ImGui=ImGui, mq=mq, Augments=Augments, getSlotNameFromID=item_utils.getSlotNameFromID, drawItemIcon=shared_ui.drawItemIcon }
-        local envCheckUpgrades = { ImGui=ImGui, mq=mq, json=json, CheckUpgrades=CheckUpgrades, Suggestions=Suggestions, getSlotNameFromID=item_utils.getSlotNameFromID, drawItemIcon=shared_ui.drawItemIcon, inventory_actor=inventory_actor, Settings=state.Settings }
+        local envAugments = { ImGui=ImGui, mq=mq, Augments=Augments, getSlotNameFromID=item_utils.getSlotNameFromID, drawItemIcon=shared_ui.drawItemIcon, openItemInspector=openItemInspector }
+        local envCheckUpgrades = { ImGui=ImGui, mq=mq, json=json, CheckUpgrades=CheckUpgrades, Suggestions=Suggestions, getSlotNameFromID=item_utils.getSlotNameFromID, drawItemIcon=shared_ui.drawItemIcon, inventory_actor=inventory_actor, Settings=state.Settings, openItemInspector=openItemInspector }
         local envFocusEffects = { ImGui=ImGui, mq=mq, FocusEffects=FocusEffects, getSlotNameFromID=item_utils.getSlotNameFromID }
 
         ImGui.BeginChild("TabbedContentRegion", 0, 0, true, ImGuiChildFlags.Border)
@@ -150,7 +152,7 @@ function M.render()
         end
         ImGui.EndChild()
     end
-    ImGui.End(); inventoryUI._mainWindowBegan = false; Theme.pop_ezinventory_theme(ImGui, theme_count)
+    ImGui.End(); inventoryUI._mainWindowBegan = false
     Util.renderContextMenu()
     Util.renderMultiTradePanel()
     Modals.renderGiveItemPanel(inventoryUI, {
@@ -183,6 +185,13 @@ function M.render()
         inventory_actor = inventory_actor,
         extractCharacterName = character_utils.extractCharacterName,
     })
+    Modals.renderItemInspector(inventoryUI, {
+        ImGui = ImGui,
+        mq = mq,
+        drawItemIcon = shared_ui.drawItemIcon,
+        inventory_actor = inventory_actor,
+    })
+    Theme.pop_ezinventory_theme(ImGui, theme_count)
 end
 
 return M

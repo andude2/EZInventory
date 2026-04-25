@@ -1,7 +1,20 @@
 local M = {}
+local ItemInspector = require("EZInventory.UI.item_inspector")
 
 -- UI Modals for EZInventory
 -- env: ImGui, inventory_actor, extractCharacterName
+
+function M.openItemInspector(inventoryUI, item, opts)
+  ItemInspector.open(inventoryUI, item, opts)
+end
+
+function M.openItemInspectorAtCurrentItem(ImGui, inventoryUI, item, opts)
+  ItemInspector.openAtCurrentItem(ImGui, inventoryUI, item, opts)
+end
+
+function M.renderItemInspector(inventoryUI, env)
+  ItemInspector.render(inventoryUI, env)
+end
 
 local function build_slot_list(item)
   local slots = {}
@@ -643,12 +656,10 @@ function M.renderItemSuggestionsPanel(inventoryUI, env)
 
           ImGui.TableNextColumn()
           if ImGui.Button("Inspect##" .. idx) then
-            if itemInfo.itemlink and itemInfo.itemlink ~= "" then
-              local links = mq.ExtractLinks(itemInfo.itemlink)
-              if links and #links > 0 then
-                mq.ExecuteTextLink(links[1])
-              end
-            end
+            ItemInspector.openAtCurrentItem(ImGui, inventoryUI, itemInfo, {
+              owner = availableItem.source,
+              location = tostring(availableItem.location or ""),
+            })
           end
 
           ImGui.PopID()
@@ -791,14 +802,14 @@ function M.renderEquipmentComparisonPanel(inventoryUI, env)
           ImGui.Text(tostring(result.characterName))
 
           ImGui.TableNextColumn()
-          if result.currentItem then
-            local itemName = result.currentItem.name or "Unknown"
-            if ImGui.Selectable(itemName .. "##" .. tostring(result.characterName)) then
-              local links = mq.ExtractLinks(result.currentItem.itemlink)
-              if links and #links > 0 then
-                mq.ExecuteTextLink(links[1])
+            if result.currentItem then
+              local itemName = result.currentItem.name or "Unknown"
+              if ImGui.Selectable(itemName .. "##" .. tostring(result.characterName)) then
+                ItemInspector.openAtCurrentItem(ImGui, inventoryUI, result.currentItem, {
+                  owner = result.characterName,
+                  location = "Equipped",
+                })
               end
-            end
           else
             ImGui.TextColored(0.6, 0.6, 0.6, 1.0, "(empty slot)")
           end
