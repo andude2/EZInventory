@@ -1,21 +1,9 @@
 local M = {}
-local hasImAnim, ImAnim = pcall(require, "ImAnim")
-if not hasImAnim then ImAnim = nil end
-
-local function getSafeDeltaTime(ImGui)
-    local dt = 1.0 / 60.0
-    local ok, io = pcall(ImGui.GetIO)
-    if ok and io and io.DeltaTime then
-        dt = tonumber(io.DeltaTime) or dt
-    end
-    if dt <= 0 then dt = 1.0 / 60.0 end
-    if dt > 0.1 then dt = 0.1 end
-    return dt
-end
 
 function M.render(inventoryUI, env)
     local ImGui = env.ImGui
     local icons = require("mq.icons")
+
     local function asWidth(value)
         if type(value) == "number" then return value end
         if type(value) == "table" then
@@ -23,75 +11,34 @@ function M.render(inventoryUI, env)
         end
         return 0
     end
-    local function asXY(v1, v2)
-        if type(v1) == "number" then
-            return v1, v2 or 0
-        end
-        if type(v1) == "table" then
-            return tonumber(v1.x or v1.X or v1[1]) or 0, tonumber(v1.y or v1.Y or v1[2]) or 0
-        end
-        return 0, 0
-    end
-    local function clampInt(value, minValue, maxValue, fallback)
-        local n = math.floor(tonumber(value) or fallback or minValue or 0)
-        if minValue and n < minValue then n = minValue end
-        if maxValue and n > maxValue then n = maxValue end
-        return n
-    end
-    
-    -- Dashboard Header
-    if inventoryUI.selectedPeer then
-        ImGui.PushStyleColor(ImGuiCol.Text, ImVec4(0.4, 0.8, 1.0, 1.0))
-        ImGui.Text(icons.FA_USER .. " Active Character: " .. inventoryUI.selectedPeer)
-        ImGui.PopStyleColor()
-        ImGui.Separator()
-        ImGui.Spacing()
-    end
 
     local windowWidth = asWidth(ImGui.GetContentRegionAvail())
     if windowWidth <= 0 then
         windowWidth = math.max(0, (ImGui.GetWindowWidth() or 0) - 20)
     end
-    local dt = getSafeDeltaTime(ImGui)
-    inventoryUI._launcherCardHover = inventoryUI._launcherCardHover or {}
 
-    local function tweenFloat(id, key, target, duration)
-        if not (ImAnim and ImAnim.TweenFloat and ImAnim.EasePreset and IamEaseType and IamEaseType.OutCubic and IamPolicy and IamPolicy.Crossfade) then
-            return target
-        end
-        local ok, value = pcall(ImAnim.TweenFloat, id, key, target, duration, ImAnim.EasePreset(IamEaseType.OutCubic), IamPolicy.Crossfade, dt)
-        if ok and type(value) == "number" then
-            return value
-        end
-        return target
+    if inventoryUI.selectedPeer then
+        ImGui.PushStyleColor(ImGuiCol.Text, ImVec4(0.4, 0.8, 1.0, 1.0))
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + windowWidth)
+        ImGui.Text(icons.FA_USER .. " Active Character: " .. inventoryUI.selectedPeer)
+        ImGui.PopTextWrapPos()
+        ImGui.PopStyleColor()
+        ImGui.Separator()
+        ImGui.Spacing()
     end
 
-    local tileWidth = clampInt(inventoryUI.launcherTileWidth, 90, 220, 130)
-    local tileHeight = clampInt(inventoryUI.launcherTileHeight, 80, 220, 110)
-    local spacing = 12
-
-    inventoryUI.launcherTileWidth = tileWidth
-    inventoryUI.launcherTileHeight = tileHeight
-    
-    -- Calculate columns based on available width
-    local cols = math.floor((windowWidth + spacing) / (tileWidth + spacing))
-    if cols < 1 then cols = 1 end
-
     local tiles = {
-        { id = "Equipped", label = "Equipped", icon = icons.FA_USER or "E", color = ImVec4(0.15, 0.35, 0.55, 1.0), visibleSetting = "launcherShowEquipped" },
-        { id = "Inventory", label = "Inventory", icon = icons.FA_BOX_OPEN or "I", color = ImVec4(0.15, 0.45, 0.25, 1.0), visibleSetting = "launcherShowInventory" },
-        { id = "AllChars", label = "Search All", icon = icons.FA_SEARCH or "S", color = ImVec4(0.35, 0.25, 0.55, 1.0), visibleSetting = "launcherShowAllChars" },
-        { id = "Assignments", label = "Assignments", icon = icons.FA_TASKS or "A", color = ImVec4(0.55, 0.15, 0.15, 1.0), visibleSetting = "launcherShowAssignments" },
-        -- Hidden by request: keep module code, remove launcher button.
-        -- { id = "Peers", label = "Network", icon = icons.FA_NETWORK_WIRED or "N", color = ImVec4(0.15, 0.45, 0.45, 1.0) },
-        { id = "Augments", label = "Augments", icon = icons.FA_DIAMOND or "AU", color = ImVec4(0.45, 0.15, 0.45, 1.0), visibleSetting = "launcherShowAugments" },
-        { id = "CheckUpgrades", label = "Upgrades", icon = icons.FA_CHEVRON_CIRCLE_UP or "U", color = ImVec4(0.25, 0.55, 0.15, 1.0), visibleSetting = "launcherShowCheckUpgrades" },
-        { id = "FocusEffects", label = "Focus", icon = icons.FA_MAGIC or "F", color = ImVec4(0.25, 0.25, 0.55, 1.0), visibleSetting = "launcherShowFocusEffects" },
-        { id = "Collectibles", label = "Collectibles", icon = icons.FA_STAR or "C", color = ImVec4(0.65, 0.45, 0.15, 1.0), visibleSetting = "launcherShowCollectibles" },
-        { id = "WindowSettings", label = "Settings", icon = icons.FA_COG or "W", color = ImVec4(0.35, 0.35, 0.35, 1.0) },
-        -- Hidden by request: keep module code, remove launcher button.
-        -- { id = "Performance", label = "Settings", icon = icons.FA_COG or "S", color = ImVec4(0.35, 0.35, 0.35, 1.0) },
+        { id = "Equipped", label = "Equipped", icon = icons.FA_USER or "E", visibleSetting = "launcherShowEquipped" },
+        { id = "Inventory", label = "Inventory", icon = icons.FA_BOX_OPEN or "I", visibleSetting = "launcherShowInventory" },
+        { id = "AllChars", label = "Search All", icon = icons.FA_SEARCH or "S", visibleSetting = "launcherShowAllChars" },
+        { id = "Assignments", label = "Assignments", icon = icons.FA_TASKS or "A", visibleSetting = "launcherShowAssignments" },
+        { id = "Augments", label = "Augments", icon = icons.FA_DIAMOND or "AU", visibleSetting = "launcherShowAugments" },
+        { id = "CheckUpgrades", label = "Upgrades", icon = icons.FA_CHEVRON_CIRCLE_UP or "U", visibleSetting = "launcherShowCheckUpgrades" },
+        { id = "FocusEffects", label = "Focus", icon = icons.FA_MAGIC or "F", visibleSetting = "launcherShowFocusEffects" },
+        { id = "Collectibles", label = "Collectibles", icon = icons.FA_STAR or "C", visibleSetting = "launcherShowCollectibles" },
+        { id = "WindowSettings", label = "Settings", icon = icons.FA_COG or "W" },
     }
+
     local visibleTiles = {}
     for _, tile in ipairs(tiles) do
         if not tile.visibleSetting or inventoryUI[tile.visibleSetting] ~= false then
@@ -99,174 +46,210 @@ function M.render(inventoryUI, env)
         end
     end
 
-    local function renderTile(tile)
-        inventoryUI.windows = inventoryUI.windows or {}
-        local childOpen = false
-        local styleColorPushed = false
-        local styleVarPushed = false
-        local lift = 0.0
+    if #visibleTiles == 0 then return end
 
-        local tile_ok, tile_err = xpcall(function()
-            local isActive = inventoryUI.windows[tile.id]
-            if tile.id == "Collectibles" and env.collectibles and env.collectibles.isVisible then
-                isActive = env.collectibles.isVisible()
-            end
-            local hoveredTarget = inventoryUI._launcherCardHover[tile.id] == true
-            local animId = ImHashStr("ezinv_launcher_tile_" .. tile.id)
-            lift = tweenFloat(animId, ImHashStr(tile.id .. "_lift"), hoveredTarget and -8.0 or 0.0, 0.22)
-            local shadowStrength = tweenFloat(animId, ImHashStr(tile.id .. "_shadow"), hoveredTarget and 1.0 or 0.0, 0.22)
-            local borderAnim = tweenFloat(animId, ImHashStr(tile.id .. "_border"), hoveredTarget and 1.0 or 0.0, 0.18)
-            local hoverDescription = isActive and ("Hide " .. tile.label) or ("Show " .. tile.label)
-            local descAnim = tweenFloat(animId, ImHashStr(tile.id .. "_desc"), hoveredTarget and 1.0 or 0.0, 0.2)
-
-            local function withAlpha(vec4, alpha)
-                if type(vec4) == "table" then
-                    local r = tonumber(vec4.x or vec4.r or vec4[1]) or 0.3
-                    local g = tonumber(vec4.y or vec4.g or vec4[2]) or 0.3
-                    local b = tonumber(vec4.z or vec4.b or vec4[3]) or 0.3
-                    return ImVec4(r, g, b, alpha)
-                end
-                return ImVec4(0.3, 0.3, 0.3, alpha)
-            end
-
-            local color = tile.color
-            local baseAlpha = 1.0
-            if not isActive then
-                -- Dim the background if window is closed
-                baseAlpha = 0.3
-            end
-            color = withAlpha(tile.color, math.min(1.0, baseAlpha + shadowStrength * 0.12))
-
-            local cursorX, cursorY = ImGui.GetCursorPos()
-            ImGui.SetCursorPos(cursorX, cursorY + lift)
-
-            local startX, startY = asXY(ImGui.GetCursorScreenPos())
-            if shadowStrength > 0.01 then
-                local parentDrawList = ImGui.GetWindowDrawList()
-                for s = 3, 1, -1 do
-                    local spread = (2.0 + s * 2.0) * shadowStrength
-                    local alpha = math.min(0.22, (0.02 * s + 0.02) * shadowStrength)
-                    parentDrawList:AddRectFilled(
-                        ImVec2(startX + spread * 0.35, startY + spread),
-                        ImVec2(startX + tileWidth + spread * 0.35, startY + tileHeight + spread),
-                        ImGui.GetColorU32(0.0, 0.0, 0.0, alpha), 10.0)
-                end
-            end
-
-            ImGui.PushStyleColor(ImGuiCol.ChildBg, color)
-            styleColorPushed = true
-            ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 10.0)
-            styleVarPushed = true
-
-            local tileChildDrawn = ImGui.BeginChild("Tile_" .. tile.id, tileWidth, tileHeight, true, ImGuiWindowFlags.NoScrollbar)
-            childOpen = true
-            if tileChildDrawn then
-                -- Center Icon
-                local iconText = tile.icon
-                ImGui.SetWindowFontScale(2.5)
-                local iconWidth = asWidth(ImGui.CalcTextSize(iconText))
-                ImGui.SetCursorPos((tileWidth - iconWidth) / 2, 15)
-                ImGui.Text(iconText)
-                ImGui.SetWindowFontScale(1.0)
-
-                -- Label
-                local labelWidth = asWidth(ImGui.CalcTextSize(tile.label))
-                local labelYOffset = descAnim * 10.0
-                ImGui.SetCursorPos((tileWidth - labelWidth) / 2, tileHeight - 35 - labelYOffset)
-                ImGui.Text(tile.label)
-
-                -- Hover description (same text used for tooltip)
-                if descAnim > 0.01 then
-                    local descY = tileHeight - 22 + (1.0 - descAnim) * 6.0
-                    local descW = asWidth(ImGui.CalcTextSize(hoverDescription))
-                    local descX = math.max(6, (tileWidth - descW) / 2)
-                    ImGui.SetCursorPos(descX, descY)
-                    ImGui.PushStyleColor(ImGuiCol.Text, ImVec4(0.9, 0.95, 1.0, math.min(1.0, descAnim)))
-                    ImGui.Text(hoverDescription)
-                    ImGui.PopStyleColor()
-                end
-
-                -- Active dot
-                if isActive then
-                    ImGui.SetCursorPos(tileWidth - 20, 5)
-                    ImGui.TextColored(0.2, 1.0, 0.2, 1.0, icons.FA_CIRCLE or "*")
-                end
-
-                -- Overlay button
-                ImGui.SetCursorPos(0, 0)
-                if ImGui.InvisibleButton("Btn_" .. tile.id, tileWidth, tileHeight) then
-                    if tile.id == "Collectibles" then
-                        if env.collectibles and env.collectibles.toggle then
-                            env.collectibles.toggle()
-                        end
-                    else
-                        inventoryUI.windows[tile.id] = not inventoryUI.windows[tile.id]
-                    end
-                end
-
-                local hoveredNow = ImGui.IsItemHovered()
-                inventoryUI._launcherCardHover[tile.id] = hoveredNow
-
-                local drawList = ImGui.GetWindowDrawList()
-                local minX, minY = asXY(ImGui.GetItemRectMin())
-                local maxX, maxY = asXY(ImGui.GetItemRectMax())
-                local borderStrength = math.max(borderAnim, hoveredNow and 1.0 or 0.0)
-                if borderStrength > 0.01 then
-                    local borderAlpha = math.floor(70 + 170 * borderStrength)
-                    local thickness = 1.5 + borderStrength * 1.5
-                    drawList:AddRect(
-                        ImVec2(minX, minY), ImVec2(maxX, maxY),
-                        ImGui.GetColorU32(1.0, 1.0, 1.0, math.min(1.0, borderAlpha / 255.0)),
-                        10.0, 0, thickness)
-                end
-
-                if hoveredNow then
-                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand)
-                end
-            else
-                inventoryUI._launcherCardHover[tile.id] = false
-            end
-        end, debug.traceback)
-
-        if childOpen then
-            local endChildOk, endChildErr = pcall(ImGui.EndChild)
-            if not endChildOk then
-                print(string.format("[EZInventory] Launcher tile EndChild failed (%s): %s", tostring(tile.id), tostring(endChildErr)))
-            end
-            childOpen = false
-        end
-        if lift < 0 then
-            local afterX, afterY = ImGui.GetCursorPos()
-            ImGui.SetCursorPos(afterX, afterY - lift)
-        end
-        if styleVarPushed then
-            pcall(ImGui.PopStyleVar)
-            styleVarPushed = false
-        end
-        if styleColorPushed then
-            pcall(ImGui.PopStyleColor)
-            styleColorPushed = false
-        end
-
-        if not tile_ok then
-            print(string.format("[EZInventory] Launcher tile render failed (%s): %s", tostring(tile.id), tostring(tile_err)))
-        end
-    end
-
-    local current_col = 0
-    for i, tile in ipairs(visibleTiles) do
-        renderTile(tile)
-        current_col = current_col + 1
-        if current_col < cols and i < #visibleTiles then
-            ImGui.SameLine(0, spacing)
-        else
-            current_col = 0
-            ImGui.Spacing()
-        end
-    end
-
-    -- Render Pop-out Windows
     inventoryUI.windows = inventoryUI.windows or {}
+    inventoryUI.launcherSelectedPanel = inventoryUI.launcherSelectedPanel or visibleTiles[1].id
+
+    local selectedTile = visibleTiles[1]
+    for _, tile in ipairs(visibleTiles) do
+        if tile.id == inventoryUI.launcherSelectedPanel then
+            selectedTile = tile
+            break
+        end
+    end
+    inventoryUI.launcherSelectedPanel = selectedTile.id
+
+    local function renderWindowSettings(ui)
+        ImGui.Text("Settings")
+        ImGui.Separator()
+
+        local floatLabel = ui.showToggleButton and "Hide Floating Button" or "Show Floating Button"
+        if ImGui.Button(floatLabel, 210, 0) then
+            ui.showToggleButton = not ui.showToggleButton
+        end
+        if ImGui.IsItemHovered() then
+            ImGui.SetTooltip("Toggles the EZInventory floating eye button.")
+        end
+
+        local lockLabel = ui.windowLocked and "Unlock Main Window" or "Lock Main Window"
+        if ImGui.Button(lockLabel, 210, 0) then
+            ui.windowLocked = not ui.windowLocked
+        end
+        if ImGui.IsItemHovered() then
+            ImGui.SetTooltip("Locks/unlocks moving and resizing the main window.")
+        end
+
+        ImGui.Spacing()
+        ImGui.Text("Visible Launcher Buttons")
+
+        ui.launcherShowEquipped = ImGui.Checkbox("Equipped", ui.launcherShowEquipped ~= false)
+        ui.launcherShowInventory = ImGui.Checkbox("Inventory", ui.launcherShowInventory ~= false)
+        ui.launcherShowAllChars = ImGui.Checkbox("Search All", ui.launcherShowAllChars ~= false)
+        ui.launcherShowAssignments = ImGui.Checkbox("Assignments", ui.launcherShowAssignments ~= false)
+        ui.launcherShowAugments = ImGui.Checkbox("Augments", ui.launcherShowAugments ~= false)
+        ui.launcherShowCheckUpgrades = ImGui.Checkbox("Upgrades", ui.launcherShowCheckUpgrades ~= false)
+        ui.launcherShowFocusEffects = ImGui.Checkbox("Focus", ui.launcherShowFocusEffects ~= false)
+        ui.launcherShowCollectibles = ImGui.Checkbox("Collectibles", ui.launcherShowCollectibles ~= false)
+
+        if ImGui.Button("Save Config", 120, 0) then
+            if env.actions and env.actions.saveConfig then
+                env.actions.saveConfig()
+            end
+        end
+
+        ImGui.Spacing()
+        local viewLabel = (ui.viewMode == "launcher") and "Tabs" or "Launcher"
+        if ImGui.Button(viewLabel, 120, 0) then
+            ui.viewMode = (ui.viewMode == "launcher") and "tabbed" or "launcher"
+        end
+        if ImGui.IsItemHovered() then
+            ImGui.SetTooltip("Switch between Tabbed View and Launcher View")
+        end
+    end
+
+    local inventoryCombined = {
+        renderContent = function(ui, _)
+            local tabBarOpen = ImGui.BeginTabBar("InventoryCombinedTabs")
+            if tabBarOpen then
+                local equippedOpen = ImGui.BeginTabItem("Equipped")
+                if equippedOpen then
+                    if env.modules.EquippedTab and env.modules.EquippedTab.renderContent then
+                        env.modules.EquippedTab.renderContent(ui, env.envs.Equipped)
+                    else
+                        ImGui.TextColored(1, 0, 0, 1, "Error: Equipped tab not available")
+                    end
+                    ImGui.EndTabItem()
+                end
+
+                local bagsOpen = ImGui.BeginTabItem("Bags")
+                if bagsOpen then
+                    if env.modules.BagsTab and env.modules.BagsTab.renderContent then
+                        env.modules.BagsTab.renderContent(ui, env.envs.Bags)
+                    else
+                        ImGui.TextColored(1, 0, 0, 1, "Error: Bags tab not available")
+                    end
+                    ImGui.EndTabItem()
+                end
+
+                local bankOpen = ImGui.BeginTabItem("Bank")
+                if bankOpen then
+                    if env.modules.BankTab and env.modules.BankTab.renderContent then
+                        env.modules.BankTab.renderContent(ui, env.envs.Bank)
+                    else
+                        ImGui.TextColored(1, 0, 0, 1, "Error: Bank tab not available")
+                    end
+                    ImGui.EndTabItem()
+                end
+
+                ImGui.EndTabBar()
+            end
+        end
+    }
+
+    local contentModules = {
+        Equipped = { title = "Equipped Items", module = env.modules and env.modules.EquippedTab, moduleEnv = env.envs and env.envs.Equipped, popout = true },
+        Inventory = { title = "Inventory", module = inventoryCombined, moduleEnv = nil, popout = true },
+        AllChars = { title = "All Characters Search", module = env.modules and env.modules.AllCharsTab, moduleEnv = env.envs and env.envs.AllChars, popout = true },
+        Assignments = { title = "Character Assignments", module = env.modules and env.modules.AssignmentTab, moduleEnv = env.envs and env.envs.Assignment, popout = true },
+        Augments = { title = "Augment Search", module = env.modules and env.modules.AugmentsTab, moduleEnv = env.envs and setmetatable({ isPopout = true }, { __index = env.envs.Augments }), popout = true },
+        CheckUpgrades = { title = "Upgrade Check", module = env.modules and env.modules.CheckUpgradesTab, moduleEnv = env.envs and env.envs.CheckUpgrades, popout = true },
+        FocusEffects = { title = "Focus Effects Analysis", module = env.modules and env.modules.FocusEffectsTab, moduleEnv = env.envs and env.envs.FocusEffects, popout = true },
+        Collectibles = { title = "Collectibles", render = function()
+            if env.collectibles and env.collectibles.renderContent then
+                env.collectibles.renderContent()
+            else
+                ImGui.TextColored(1, 0, 0, 1, "Error: Collectibles view not available")
+            end
+        end },
+        WindowSettings = { title = "Settings", render = function() renderWindowSettings(inventoryUI) end },
+    }
+
+    local function renderSelectedContent()
+        local panel = contentModules[selectedTile.id]
+        if not panel then
+            ImGui.TextColored(1, 0, 0, 1, "Unknown launcher panel: " .. tostring(selectedTile.id))
+            return
+        end
+
+        if panel.render then
+            panel.render()
+            return
+        end
+
+        local ok, err = pcall(function()
+            if panel.module and panel.module.renderContent then
+                panel.module.renderContent(inventoryUI, panel.moduleEnv)
+            else
+                ImGui.TextColored(1, 0, 0, 1, "Error: renderContent not found for " .. panel.title)
+            end
+        end)
+        if not ok then
+            ImGui.TextColored(1, 0, 0, 1, "Render error in " .. panel.title)
+            print(string.format("[EZInventory] Launcher panel render failed (%s): %s", tostring(selectedTile.id), tostring(err)))
+        end
+    end
+
+    local railWidth = math.min(132, math.max(104, math.floor(windowWidth * 0.32)))
+    local gap = 10
+    local panelWidth = math.max(120, windowWidth - railWidth - gap)
+    local contentHeight = 0
+
+    local railOpen = ImGui.BeginChild("LauncherRail##EZInventory", railWidth, 0, true)
+    if railOpen then
+        for _, tile in ipairs(visibleTiles) do
+            local active = tile.id == selectedTile.id
+            if active then
+                ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.18, 0.36, 0.58, 1.0))
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.22, 0.45, 0.70, 1.0))
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImVec4(0.16, 0.32, 0.50, 1.0))
+            end
+
+            local buttonLabel = string.format("%s %s##LauncherRail_%s", tile.icon, tile.label, tile.id)
+            if ImGui.Button(buttonLabel, railWidth - 14, 34) then
+                inventoryUI.launcherSelectedPanel = tile.id
+                selectedTile = tile
+            end
+            if ImGui.IsItemHovered() then
+                ImGui.SetTooltip(tile.label)
+            end
+
+            if active then
+                ImGui.PopStyleColor(3)
+            end
+        end
+    end
+    ImGui.EndChild()
+
+    ImGui.SameLine(0, gap)
+
+    ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 8.0)
+    local panelOpen = ImGui.BeginChild("LauncherContent##EZInventory", panelWidth, contentHeight, true)
+    if panelOpen then
+        local panel = contentModules[selectedTile.id]
+        ImGui.Text((selectedTile.icon or "") .. " " .. (panel and panel.title or selectedTile.label))
+
+        if panel and panel.popout then
+            ImGui.SameLine()
+            local buttonWidth = 28
+            local availWidth = asWidth(ImGui.GetContentRegionAvail())
+            if availWidth > buttonWidth then
+                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + math.max(0, availWidth - buttonWidth))
+            end
+            if ImGui.Button((icons.FA_EXTERNAL_LINK_ALT or "^") .. "##Popout_" .. selectedTile.id, buttonWidth, 0) then
+                inventoryUI.windows[selectedTile.id] = true
+            end
+            if ImGui.IsItemHovered() then
+                ImGui.SetTooltip("Open in separate window")
+            end
+        end
+
+        ImGui.Separator()
+        renderSelectedContent()
+    end
+    ImGui.EndChild()
+    ImGui.PopStyleVar()
+
     if inventoryUI.windows.Bags or inventoryUI.windows.Bank then
         inventoryUI.windows.Inventory = true
         inventoryUI.windows.Bags = false
@@ -274,23 +257,22 @@ function M.render(inventoryUI, env)
     end
     inventoryUI.windows.Peers = false
     inventoryUI.windows.Performance = false
-    
+
     local function renderWindow(key, title, module, moduleEnv)
         if inventoryUI.windows[key] then
-             -- Use a unique ID for the window; bump Augments ID to clear stale dock state.
-             local windowId = title .. "##PopOut_" .. key
-             if key == "Augments" then
-                 windowId = title .. "##PopOut_Augments_v2"
-             end
-             local popoutFlags = ImGuiWindowFlags.NoDocking
-             local open, show = ImGui.Begin(windowId, true, popoutFlags)
-             if not open then
-                 inventoryUI.windows[key] = false
-             end
+            local windowId = title .. "##PopOut_" .. key
+            if key == "Augments" then
+                windowId = title .. "##PopOut_Augments_v2"
+            end
+            local popoutFlags = ImGuiWindowFlags.NoDocking
+            local open, show = ImGui.Begin(windowId, true, popoutFlags)
+            if not open then
+                inventoryUI.windows[key] = false
+            end
             if show then
                 local closeButtonWidth = 72
                 local giveButtonWidth = 90
-                local gap = 6
+                local gapWidth = 6
                 local availWidth = asWidth(ImGui.GetContentRegionAvail())
 
                 if key == "AllChars" and env.actions and env.actions.openGiveItem then
@@ -306,174 +288,44 @@ function M.render(inventoryUI, env)
                 if availWidth > closeButtonWidth then
                     local consumed = 0
                     if key == "AllChars" and env.actions and env.actions.openGiveItem then
-                        consumed = giveButtonWidth + gap
+                        consumed = giveButtonWidth + gapWidth
                     end
                     ImGui.SetCursorPosX(ImGui.GetCursorPosX() + math.max(0, availWidth - closeButtonWidth - consumed))
-                 end
-                 if ImGui.Button("Close##PopoutClose_" .. key, closeButtonWidth, 0) then
-                     inventoryUI.windows[key] = false
-                 end
-                 ImGui.Separator()
-
-                 local window_ok, window_err = pcall(function()
-                     if module and module.renderContent then
-                         module.renderContent(inventoryUI, moduleEnv)
-                     else
-                         ImGui.TextColored(1, 0, 0, 1, "Error: renderContent not found for " .. title)
-                     end
-                 end)
-                 if not window_ok then
-                     ImGui.TextColored(1, 0, 0, 1, "Render error in " .. title)
-                     print(string.format("[EZInventory] Pop-out render failed (%s): %s", tostring(key), tostring(window_err)))
-                 end
-             end
-             local end_ok, end_err = pcall(ImGui.End)
-             if not end_ok then
-                 print(string.format("[EZInventory] Pop-out end failed (%s): %s", tostring(key), tostring(end_err)))
-             end
-        end
-    end
-    
-    if env.modules and env.envs then
-        local windowSettingsModule = {
-            renderContent = function(ui, _)
-                ImGui.Text("Settings")
+                end
+                if ImGui.Button("Close##PopoutClose_" .. key, closeButtonWidth, 0) then
+                    inventoryUI.windows[key] = false
+                end
                 ImGui.Separator()
 
-                local floatLabel = ui.showToggleButton and "Hide Floating Button" or "Show Floating Button"
-                if ImGui.Button(floatLabel, 210, 0) then
-                    ui.showToggleButton = not ui.showToggleButton
-                end
-                if ImGui.IsItemHovered() then
-                    ImGui.SetTooltip("Toggles the EZInventory floating eye button.")
-                end
-
-                local lockLabel = ui.windowLocked and "Unlock Main Window" or "Lock Main Window"
-                if ImGui.Button(lockLabel, 210, 0) then
-                    ui.windowLocked = not ui.windowLocked
-                end
-                if ImGui.IsItemHovered() then
-                    ImGui.SetTooltip("Locks/unlocks moving and resizing the main window.")
-                end
-
-                ImGui.Spacing()
-                ImGui.Text("Launcher Tile Size")
-
-                local tileWidthChanged
-                ui.launcherTileWidth, tileWidthChanged = ImGui.InputInt("Tile Width", ui.launcherTileWidth or 130)
-                ui.launcherTileWidth = clampInt(ui.launcherTileWidth, 90, 220, 130)
-                if ImGui.IsItemHovered() then
-                    ImGui.SetTooltip("Controls launcher tile width. Range: 90 to 220.")
-                end
-
-                local tileHeightChanged
-                ui.launcherTileHeight, tileHeightChanged = ImGui.InputInt("Tile Height", ui.launcherTileHeight or 110)
-                ui.launcherTileHeight = clampInt(ui.launcherTileHeight, 80, 220, 110)
-                if ImGui.IsItemHovered() then
-                    ImGui.SetTooltip("Controls launcher tile height. Range: 80 to 220.")
-                end
-
-                if tileWidthChanged or tileHeightChanged then
-                    inventoryUI._launcherCardHover = {}
-                end
-
-                ImGui.Spacing()
-                ImGui.Text("Visible Launcher Tiles")
-
-                ui.launcherShowEquipped = ImGui.Checkbox("Equipped", ui.launcherShowEquipped ~= false)
-                ui.launcherShowInventory = ImGui.Checkbox("Inventory", ui.launcherShowInventory ~= false)
-                ui.launcherShowAllChars = ImGui.Checkbox("Search All", ui.launcherShowAllChars ~= false)
-                ui.launcherShowAssignments = ImGui.Checkbox("Assignments", ui.launcherShowAssignments ~= false)
-                ui.launcherShowAugments = ImGui.Checkbox("Augments", ui.launcherShowAugments ~= false)
-                ui.launcherShowCheckUpgrades = ImGui.Checkbox("Upgrades", ui.launcherShowCheckUpgrades ~= false)
-                ui.launcherShowFocusEffects = ImGui.Checkbox("Focus", ui.launcherShowFocusEffects ~= false)
-                ui.launcherShowCollectibles = ImGui.Checkbox("Collectibles", ui.launcherShowCollectibles ~= false)
-
-                if ImGui.Button("Save Config", 120, 0) then
-                    if env.actions and env.actions.saveConfig then
-                        env.actions.saveConfig()
+                local ok, err = pcall(function()
+                    if module and module.renderContent then
+                        module.renderContent(inventoryUI, moduleEnv)
+                    else
+                        ImGui.TextColored(1, 0, 0, 1, "Error: renderContent not found for " .. title)
                     end
-                end
-
-                ImGui.Spacing()
-                local viewLabel = (ui.viewMode == "launcher") and "Tabs" or "Launcher"
-                if ImGui.Button(viewLabel, 120, 0) then
-                    ui.viewMode = (ui.viewMode == "launcher") and "tabbed" or "launcher"
-                end
-                if ImGui.IsItemHovered() then
-                    ImGui.SetTooltip("Switch between Tabbed View and Launcher View")
+                end)
+                if not ok then
+                    ImGui.TextColored(1, 0, 0, 1, "Render error in " .. title)
+                    print(string.format("[EZInventory] Pop-out render failed (%s): %s", tostring(key), tostring(err)))
                 end
             end
-        }
-
-        local inventoryCombined = {
-            renderContent = function(ui, _)
-                local tabBarOpen = ImGui.BeginTabBar("InventoryCombinedTabs")
-                if tabBarOpen then
-                    local equippedOpen = ImGui.BeginTabItem("Equipped")
-                    if equippedOpen then
-                        local eqOk, eqErr = pcall(function()
-                            if env.modules.EquippedTab and env.modules.EquippedTab.renderContent then
-                                env.modules.EquippedTab.renderContent(ui, env.envs.Equipped)
-                            else
-                                ImGui.TextColored(1, 0, 0, 1, "Error: Equipped tab not available")
-                            end
-                        end)
-                        if not eqOk then
-                            print(string.format("[EZInventory] Inventory pop-out Equipped render failed: %s", tostring(eqErr)))
-                            ImGui.TextColored(1, 0, 0, 1, "Equipped render error")
-                        end
-                        ImGui.EndTabItem()
-                    end
-
-                    local bagsOpen = ImGui.BeginTabItem("Bags")
-                    if bagsOpen then
-                        local bagsOk, bagsErr = pcall(function()
-                            if env.modules.BagsTab and env.modules.BagsTab.renderContent then
-                                env.modules.BagsTab.renderContent(ui, env.envs.Bags)
-                            else
-                                ImGui.TextColored(1, 0, 0, 1, "Error: Bags tab not available")
-                            end
-                        end)
-                        if not bagsOk then
-                            print(string.format("[EZInventory] Inventory pop-out Bags render failed: %s", tostring(bagsErr)))
-                            ImGui.TextColored(1, 0, 0, 1, "Bags render error")
-                        end
-                        ImGui.EndTabItem()
-                    end
-
-                    local bankOpen = ImGui.BeginTabItem("Bank")
-                    if bankOpen then
-                        local bankOk, bankErr = pcall(function()
-                            if env.modules.BankTab and env.modules.BankTab.renderContent then
-                                env.modules.BankTab.renderContent(ui, env.envs.Bank)
-                            else
-                                ImGui.TextColored(1, 0, 0, 1, "Error: Bank tab not available")
-                            end
-                        end)
-                        if not bankOk then
-                            print(string.format("[EZInventory] Inventory pop-out Bank render failed: %s", tostring(bankErr)))
-                            ImGui.TextColored(1, 0, 0, 1, "Bank render error")
-                        end
-                        ImGui.EndTabItem()
-                    end
-
-                    ImGui.EndTabBar()
-                end
+            local endOk, endErr = pcall(ImGui.End)
+            if not endOk then
+                print(string.format("[EZInventory] Pop-out end failed (%s): %s", tostring(key), tostring(endErr)))
             end
-        }
-
-        renderWindow("Equipped", "Equipped Items", env.modules.EquippedTab, env.envs.Equipped)
-        renderWindow("Inventory", "Inventory", inventoryCombined, nil)
-        renderWindow("AllChars", "All Characters Search", env.modules.AllCharsTab, env.envs.AllChars)
-        renderWindow("Assignments", "Character Assignments", env.modules.AssignmentTab, env.envs.Assignment)
-        renderWindow("Peers", "Peer Management", env.modules.PeerTab, env.envs.Peer)
-        renderWindow("Augments", "Augment Search", env.modules.AugmentsTab, setmetatable({ isPopout = true }, { __index = env.envs.Augments }))
-        renderWindow("CheckUpgrades", "Upgrade Check", env.modules.CheckUpgradesTab, env.envs.CheckUpgrades)
-        renderWindow("FocusEffects", "Focus Effects Analysis", env.modules.FocusEffectsTab, env.envs.FocusEffects)
-        renderWindow("WindowSettings", "Settings", windowSettingsModule, nil)
-        renderWindow("Performance", "Performance & Settings", env.modules.PerformanceTab, env.envs.Performance)
+        end
     end
+
+    renderWindow("Equipped", "Equipped Items", env.modules.EquippedTab, env.envs.Equipped)
+    renderWindow("Inventory", "Inventory", inventoryCombined, nil)
+    renderWindow("AllChars", "All Characters Search", env.modules.AllCharsTab, env.envs.AllChars)
+    renderWindow("Assignments", "Character Assignments", env.modules.AssignmentTab, env.envs.Assignment)
+    renderWindow("Peers", "Peer Management", env.modules.PeerTab, env.envs.Peer)
+    renderWindow("Augments", "Augment Search", env.modules.AugmentsTab, setmetatable({ isPopout = true }, { __index = env.envs.Augments }))
+    renderWindow("CheckUpgrades", "Upgrade Check", env.modules.CheckUpgradesTab, env.envs.CheckUpgrades)
+    renderWindow("FocusEffects", "Focus Effects Analysis", env.modules.FocusEffectsTab, env.envs.FocusEffects)
+    renderWindow("WindowSettings", "Settings", { renderContent = function() renderWindowSettings(inventoryUI) end }, nil)
+    renderWindow("Performance", "Performance & Settings", env.modules.PerformanceTab, env.envs.Performance)
 end
 
 return M

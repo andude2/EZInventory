@@ -53,6 +53,65 @@ function M.renderContent(inventoryUI, env)
     inventoryUI.pcCurrentPage = 1
   end
 
+  local function asWidth(value)
+    if type(value) == "number" then return value end
+    if type(value) == "table" then
+      return tonumber(value.x or value.X or value[1]) or 0
+    end
+    return 0
+  end
+
+  local function availWidth()
+    return asWidth(ImGui.GetContentRegionAvail())
+  end
+
+  local function textWidth(text)
+    return asWidth(ImGui.CalcTextSize(text or ""))
+  end
+
+  local function fitWidth(preferred, minimum)
+    local available = availWidth()
+    minimum = minimum or 80
+    if available <= 0 then return preferred or minimum end
+    return math.max(minimum, math.min(preferred or available, available))
+  end
+
+  local function sameLineIfFits(nextWidth, spacing)
+    spacing = spacing or 8
+    if availWidth() > ((nextWidth or 0) + spacing) then
+      ImGui.SameLine(0, spacing)
+      return true
+    end
+    return false
+  end
+
+  local function comboField(label, id, value, options, width, onSelect)
+    ImGui.BeginGroup()
+    ImGui.Text(label)
+    ImGui.SetNextItemWidth(fitWidth(width, 82))
+    if ImGui.BeginCombo(id, value) then
+      for _, option in ipairs(options) do
+        local optionValue = type(option) == "table" and option[1] or option
+        local optionLabel = type(option) == "table" and option[2] or option
+        local sel = (value == optionValue)
+        if ImGui.Selectable(optionLabel, sel) and onSelect then
+          onSelect(optionValue)
+        end
+      end
+      ImGui.EndCombo()
+    end
+    ImGui.EndGroup()
+  end
+
+  local function inputIntField(label, id, value, width)
+    ImGui.BeginGroup()
+    ImGui.Text(label)
+    ImGui.SetNextItemWidth(fitWidth(width, 82))
+    local newValue = ImGui.InputInt(id, value)
+    ImGui.EndGroup()
+    return newValue
+  end
+
   inventoryUI.allCharsResultsCache = inventoryUI.allCharsResultsCache or {
     data = {},
     key = "",
@@ -515,8 +574,10 @@ function M.renderContent(inventoryUI, env)
     end
 
     ImGui.Text("Search:")
-    ImGui.SameLine()
-    ImGui.SetNextItemWidth(320)
+    local clearWidth = 70
+    local resetWidth = 70
+    local searchWidth = math.max(120, availWidth() - clearWidth - resetWidth - 20)
+    ImGui.SetNextItemWidth(fitWidth(searchWidth, 100))
     if requestSearchFocus and ImGui.SetKeyboardFocusHere then
       ImGui.SetKeyboardFocusHere()
       if clearSearchFocusRequest then
@@ -530,12 +591,12 @@ function M.renderContent(inventoryUI, env)
     elseif submitted then
       inventoryUI.pcCurrentPage = 1
     end
-    ImGui.SameLine()
-    if ImGui.Button("Clear##AllCharsSearch", 70, 0) then
+    sameLineIfFits(clearWidth)
+    if ImGui.Button("Clear##AllCharsSearch", fitWidth(clearWidth, 56), 0) then
       applySearchValue("")
     end
-    ImGui.SameLine()
-    if ImGui.Button("Reset##AllCharsSearch", 70, 0) then
+    sameLineIfFits(resetWidth)
+    if ImGui.Button("Reset##AllCharsSearch", fitWidth(resetWidth, 56), 0) then
       resetAllFilters(true)
     end
     ImGui.Separator()
@@ -572,82 +633,49 @@ function M.renderContent(inventoryUI, env)
     if ImGui.CollapsingHeader("Filters", ImGuiTreeNodeFlags.DefaultOpen) then
       ImGui.Text("Found %d items matching filters:", resultCount)
 
-      -- Hide No Drop right-aligned
-      local windowWidth = ImGui.GetWindowContentRegionWidth()
-      local checkboxWidth = ImGui.CalcTextSize("Hide No Drop") + 20
-      ImGui.SameLine(windowWidth - checkboxWidth)
+      local checkboxWidth = textWidth("Hide No Drop") + 26
+      sameLineIfFits(checkboxWidth)
       inventoryUI.filterNoDrop = ImGui.Checkbox("Hide No Drop", inventoryUI.filterNoDrop)
 
       ImGui.Separator()
 
-      -- Row 1: Source, Item Type, Auto-Bank
-      ImGui.PushItemWidth(120)
-      ImGui.Text("Source:")
-      ImGui.SameLine(100)
-      ImGui.SetNextItemWidth(120)
-      if ImGui.BeginCombo("##SourceFilter", inventoryUI.sourceFilter) then
-        for _, option in ipairs(filterOptions) do
-          local sel = (inventoryUI.sourceFilter == option)
-          if ImGui.Selectable(option, sel) then
-            inventoryUI.sourceFilter = option
-            inventoryUI.pcCurrentPage = 1
-          end
-        end
-        ImGui.EndCombo()
-      end
+      local baseWidth = math.max(96, math.min(150, math.floor((availWidth() - 24) / 3)))
+      local wideWidth = math.max(baseWidth, math.min(210, math.floor((availWidth() - 12) / 2)))
+      local buttonWidth = 120
 
-      ImGui.SameLine(250)
-      ImGui.Text("Item Type:")
-      ImGui.SameLine(340)
-      ImGui.SetNextItemWidth(120)
-      if ImGui.BeginCombo("##ItemTypeFilter", inventoryUI.itemTypeFilter) then
-        local itemGroupOptions = { "All", "Weapon", "Armor", "Jewelry", "Consumable", "Scrolls", "Tradeskills" }
-        for _, group in ipairs(itemGroupOptions) do
-          local sel = (inventoryUI.itemTypeFilter == group)
-          if ImGui.Selectable(group, sel) then inventoryUI.itemTypeFilter = group end
-        end
-        ImGui.EndCombo()
-      end
+      comboField("Source", "##SourceFilter", inventoryUI.sourceFilter, filterOptions, baseWidth, function(option)
+        inventoryUI.sourceFilter = option
+        inventoryUI.pcCurrentPage = 1
+      end)
 
-      ImGui.SameLine()
-      local btnWidth = 120
-      ImGui.SetCursorPosX(windowWidth - btnWidth)
-      if ImGui.Button("Auto-Bank", btnWidth, 0) then
+      sameLineIfFits(baseWidth)
+      comboField("Item Type", "##ItemTypeFilter", inventoryUI.itemTypeFilter,
+        { "All", "Weapon", "Armor", "Jewelry", "Consumable", "Scrolls", "Tradeskills" }, baseWidth, function(group)
+          inventoryUI.itemTypeFilter = group
+        end)
+
+      sameLineIfFits(buttonWidth)
+      ImGui.BeginGroup()
+      ImGui.Text("Actions")
+      if ImGui.Button("Auto-Bank", fitWidth(buttonWidth, 90), 0) then
         if Banking and Banking.start then Banking.start() end
       end
+      ImGui.EndGroup()
 
-      -- Row 2: Class, Race, Exclude, Sort
-      ImGui.Text("Class:")
-      ImGui.SameLine(100)
-      ImGui.SetNextItemWidth(120)
-      if ImGui.BeginCombo("##ClassFilter", inventoryUI.classFilter) then
-        local classes = { "All", "WAR", "CLR", "PAL", "RNG", "SHD", "DRU", "MNK", "BRD", "ROG", "SHM", "NEC", "WIZ",
-          "MAG", "ENC", "BST", "BER" }
-        for _, c in ipairs(classes) do
-          local sel = (inventoryUI.classFilter == c)
-          if ImGui.Selectable(c, sel) then inventoryUI.classFilter = c end
-        end
-        ImGui.EndCombo()
-      end
+      comboField("Class", "##ClassFilter", inventoryUI.classFilter,
+        { "All", "WAR", "CLR", "PAL", "RNG", "SHD", "DRU", "MNK", "BRD", "ROG", "SHM", "NEC", "WIZ", "MAG", "ENC", "BST", "BER" },
+        baseWidth, function(c)
+          inventoryUI.classFilter = c
+        end)
 
-      ImGui.SameLine(250)
-      ImGui.Text("Race:")
-      ImGui.SameLine(340)
-      ImGui.SetNextItemWidth(120)
-      if ImGui.BeginCombo("##RaceFilter", inventoryUI.raceFilter) then
-        local races = { "All", "HUM", "BAR", "ERU", "ELF", "HIE", "DEF", "HEL", "DWF", "TRL", "OGR", "HFL", "GNM", "IKS",
-          "VAH", "FRG", "DRK" }
-        for _, r in ipairs(races) do
-          local sel = (inventoryUI.raceFilter == r)
-          if ImGui.Selectable(r, sel) then inventoryUI.raceFilter = r end
-        end
-        ImGui.EndCombo()
-      end
+      sameLineIfFits(baseWidth)
+      comboField("Race", "##RaceFilter", inventoryUI.raceFilter,
+        { "All", "HUM", "BAR", "ERU", "ELF", "HIE", "DEF", "HEL", "DWF", "TRL", "OGR", "HFL", "GNM", "IKS", "VAH", "FRG", "DRK" },
+        baseWidth, function(r)
+          inventoryUI.raceFilter = r
+        end)
 
-      ImGui.SameLine(500)
-      ImGui.Text("Exclude:")
-      ImGui.SameLine(580)
-      ImGui.SetNextItemWidth(180)
+      sameLineIfFits(wideWidth)
       do
         local excludeTypes = { "Weapon", "Armor", "Jewelry", "Consumable", "Scrolls", "Tradeskills" }
         local selectedNames = {}
@@ -659,6 +687,9 @@ function M.renderContent(inventoryUI, env)
           end
         end
         local preview = (#selectedNames > 0) and table.concat(selectedNames, ", ") or "None"
+        ImGui.BeginGroup()
+        ImGui.Text("Exclude")
+        ImGui.SetNextItemWidth(fitWidth(wideWidth, 110))
         if ImGui.BeginCombo("##ExcludeTypes", preview) then
           for _, t in ipairs(excludeTypes) do
             local isExcluded = false
@@ -698,14 +729,11 @@ function M.renderContent(inventoryUI, env)
           end
           ImGui.EndCombo()
         end
+        ImGui.EndGroup()
       end
 
-      ImGui.SameLine(780)
-      ImGui.Text("Sort by:")
-      ImGui.SameLine(855)
-      ImGui.SetNextItemWidth(120)
-      if ImGui.BeginCombo("##SortColumn", inventoryUI.sortColumn) then
-        local sortOptions = {
+      sameLineIfFits(baseWidth)
+      comboField("Sort by", "##SortColumn", inventoryUI.sortColumn, {
           { "none",    "None" },
           { "name",    "Item Name" },
           { "value",   "Value" },
@@ -714,40 +742,41 @@ function M.renderContent(inventoryUI, env)
           { "type",    "Item Type" },
           { "augtype", "Aug Type" },
           { "qty",     "Quantity" },
-        }
-        for _, opt in ipairs(sortOptions) do
-          local sel = (inventoryUI.sortColumn == opt[1])
-          if ImGui.Selectable(opt[2], sel) then inventoryUI.sortColumn = opt[1] end
-        end
-        ImGui.EndCombo()
-      end
+        }, baseWidth, function(sortColumn)
+          inventoryUI.sortColumn = sortColumn
+        end)
+
       if inventoryUI.sortColumn ~= "none" then
-        ImGui.SameLine()
+        sameLineIfFits(64)
+        ImGui.BeginGroup()
+        ImGui.Text("Direction")
         if ImGui.Button(inventoryUI.sortDirection == "asc" and "Asc" or "Desc") then
           inventoryUI.sortDirection = inventoryUI.sortDirection == "asc" and "desc" or "asc"
         end
+        ImGui.EndGroup()
       end
 
-      ImGui.SameLine()
-      ImGui.SetCursorPosX(windowWidth - 120)
-      if ImGui.Button("Peer Banking", 120, 0) then
+      sameLineIfFits(buttonWidth)
+      ImGui.BeginGroup()
+      ImGui.Text("Banking")
+      if ImGui.Button("Peer Banking", fitWidth(buttonWidth, 96), 0) then
         inventoryUI.showPeerBankingUI = true
       end
+      ImGui.EndGroup()
 
       -- Row 3: Value Filters and Clear Button
+      ImGui.Spacing()
       inventoryUI.showValueFilters = ImGui.Checkbox("Value Filters", inventoryUI.showValueFilters)
       if inventoryUI.showValueFilters then
-        ImGui.SameLine(); ImGui.Dummy(10, 0); ImGui.SameLine();
-        ImGui.Text("Min Value:"); ImGui.SameLine(); ImGui.SetNextItemWidth(100)
-        inventoryUI.minValueFilter = ImGui.InputInt("##MinValue", inventoryUI.minValueFilter)
-        ImGui.SameLine(); ImGui.Text("Max Value:"); ImGui.SameLine(); ImGui.SetNextItemWidth(100)
-        inventoryUI.maxValueFilter = ImGui.InputInt("##MaxValue", inventoryUI.maxValueFilter)
-        ImGui.SameLine(); ImGui.Text("Min Tribute:"); ImGui.SameLine(); ImGui.SetNextItemWidth(100)
-        inventoryUI.minTributeFilter = ImGui.InputInt("##MinTribute", inventoryUI.minTributeFilter)
+        sameLineIfFits(baseWidth)
+        inventoryUI.minValueFilter = inputIntField("Min Value", "##MinValue", inventoryUI.minValueFilter, baseWidth)
+        sameLineIfFits(baseWidth)
+        inventoryUI.maxValueFilter = inputIntField("Max Value", "##MaxValue", inventoryUI.maxValueFilter, baseWidth)
+        sameLineIfFits(baseWidth)
+        inventoryUI.minTributeFilter = inputIntField("Min Tribute", "##MinTribute", inventoryUI.minTributeFilter, baseWidth)
       end
-      ImGui.SameLine()
-      ImGui.SetCursorPosX(windowWidth - 120)
-      if ImGui.Button("Clear All Filters", 120, 0) then
+      sameLineIfFits(120)
+      if ImGui.Button("Clear All Filters", fitWidth(120, 96), 0) then
         resetAllFilters(false)
       end
     end

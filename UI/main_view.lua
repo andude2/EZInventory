@@ -30,10 +30,14 @@ local function widthOf(v) return type(v) == "number" and v or (type(v) == "table
 local function availWidth() return widthOf(ImGui.GetContentRegionAvail()) end
 local function fitWidth(pref, min) local av = availWidth(); min = min or 80; if av <= 0 then return pref or min end; return math.max(min, math.min(pref or av, av)) end
 local function inlineOrWrap(nw, sp) sp = sp or 6; if availWidth() > ((nw or 0) + sp) then ImGui.SameLine(0, sp); return true end; return false end
+local function textWidth(text) return widthOf(ImGui.CalcTextSize(text or "")) end
+
+local headerCloseWidth = 28
 
 local function renderHeaderCloseButton()
     ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.2, 0.8, 0.2, 1.0)); ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
-    if ImGui.Button("Close", 65, 0) then window_manager.setMainWindowVisible(false) end
+    if ImGui.Button(icons.FA_TIMES .. "##CloseMainWindow", headerCloseWidth, 0) then window_manager.setMainWindowVisible(false) end
+    if ImGui.IsItemHovered() then ImGui.SetTooltip("Close inventory window") end
     ImGui.PopStyleVar(); ImGui.PopStyleColor(1)
 end
 
@@ -48,8 +52,10 @@ function M.render()
 
     if open and show then
         -- Header
-        ImGui.SetNextItemWidth(fitWidth(140, 100))
-        if ImGui.BeginCombo("##ServerCombo", icons.FA_SERVER .. " " .. (inventoryUI.selectedServer or "Server")) then
+        local serverLabel = icons.FA_SERVER .. " " .. (inventoryUI.selectedServer or "Server")
+        local peerLabel = icons.FA_USER .. " " .. (inventoryUI.selectedPeer or "Peer")
+        ImGui.SetNextItemWidth(fitWidth(math.max(120, textWidth(serverLabel) + 42), 95))
+        if ImGui.BeginCombo("##ServerCombo", serverLabel) then
             local sl = {}; for s, _ in pairs(inventoryUI.servers or {}) do table.insert(sl, s) end; table.sort(sl)
             for _, s in ipairs(sl) do
                 if ImGui.Selectable(s, inventoryUI.selectedServer == s) then
@@ -63,8 +69,8 @@ function M.render()
             end
             ImGui.EndCombo()
         end
-        inlineOrWrap(160, 8); ImGui.SetNextItemWidth(fitWidth(160, 120))
-        if inventoryUI.selectedServer and ImGui.BeginCombo("##PeerCombo", icons.FA_USER .. " " .. (inventoryUI.selectedPeer or "Peer")) then
+        inlineOrWrap(math.max(130, textWidth(peerLabel) + 42), 8); ImGui.SetNextItemWidth(fitWidth(math.max(130, textWidth(peerLabel) + 42), 105))
+        if inventoryUI.selectedServer and ImGui.BeginCombo("##PeerCombo", peerLabel) then
             for _, p in ipairs(inventoryUI.peers or {}) do
                 if p.server == inventoryUI.selectedServer then
                     if ImGui.Selectable(p.name, inventoryUI.selectedPeer == p.name) then
@@ -75,16 +81,20 @@ function M.render()
             end
             ImGui.EndCombo()
         end
-        inlineOrWrap(145, 8); if ImGui.Button(inventoryUI.viewMode == "launcher" and "Tabs" or "Launch", 74, 0) then inventoryUI.viewMode = inventoryUI.viewMode == "launcher" and "tabbed" or "launcher" end
-        inlineOrWrap(70, 6); renderHeaderCloseButton()
+        local viewButtonWidth = 74
+        inlineOrWrap(viewButtonWidth + headerCloseWidth + 14, 8); if ImGui.Button(inventoryUI.viewMode == "launcher" and "Tabs" or "Launch", viewButtonWidth, 0) then inventoryUI.viewMode = inventoryUI.viewMode == "launcher" and "tabbed" or "launcher" end
+        inlineOrWrap(headerCloseWidth, 6); renderHeaderCloseButton()
         ImGui.Spacing(); ImGui.Separator(); ImGui.Spacing()
 
-        local cbw = 170; ImGui.SetNextItemWidth(fitWidth(availWidth() - cbw - 40, 100))
+        local cbw = 120
+        local clearWidth = 28
+        local searchPref = math.max(120, availWidth() - cbw - clearWidth - 20)
+        ImGui.SetNextItemWidth(fitWidth(searchPref, 90))
         local st, sub = ImGui.InputTextWithHint("##Search", icons.FA_SEARCH .. " Search...", state.searchText or "", ImGuiInputTextFlags.EnterReturnsTrue)
         state.searchText = st
         if sub and st ~= "" then inventoryUI.requestAllCharsSearchFocus = true; if inventoryUI.viewMode == "launcher" then inventoryUI.windows.AllChars = true else inventoryUI.selectAllCharsTab = true end end
-        ImGui.SameLine(); if ImGui.Button(icons.FA_TIMES, 28, 0) then state.searchText = "" end
-        ImGui.SameLine(); if ImGui.Button("Clean Up", cbw, 0) then AssignmentManager.executeAssignments(); local mn = character_utils.extractCharacterName(mq.TLO.Me.CleanName()); if state.Settings.bankFlags[mn] and Banking.start then Banking.start() end end
+        inlineOrWrap(clearWidth, 6); if ImGui.Button(icons.FA_TIMES, clearWidth, 0) then state.searchText = "" end
+        inlineOrWrap(cbw, 6); if ImGui.Button("Clean Up", fitWidth(cbw, 90), 0) then AssignmentManager.executeAssignments(); local mn = character_utils.extractCharacterName(mq.TLO.Me.CleanName()); if state.Settings.bankFlags[mn] and Banking.start then Banking.start() end end
         ImGui.Separator()
 
         -- Environments
@@ -131,7 +141,7 @@ function M.render()
         ImGui.BeginChild("TabbedContentRegion", 0, 0, true, ImGuiChildFlags.Border)
         local tab_ok, tab_err = pcall(function()
             if inventoryUI.viewMode == "launcher" then
-                LauncherView.render(inventoryUI, { ImGui=ImGui, modules={ EquippedTab=EquippedTab, BagsTab=BagsTab, BankTab=BankTab, AllCharsTab=AllCharsTab, AssignmentTab=AssignmentTab, PeerTab=PeerTab, PerformanceTab=PerformanceTab, AugmentsTab=AugmentsTab, CheckUpgradesTab=CheckUpgradesTab, FocusEffectsTab=FocusEffectsTab }, envs={ Equipped=envEquipped, Bags=envBags, Bank=envBank, AllChars=envAll, Assignment=envAssignment, Peer=envPeer, Performance=envPerf, Augments=envAugments, CheckUpgrades=envCheckUpgrades, FocusEffects=envFocusEffects }, collectibles={ isVisible=function() return Collectibles.visible==true end, toggle=Collectibles.toggle }, actions={ saveConfig=SaveConfigWithStatsUpdate, openGiveItem=function() inventoryUI.showGiveItemPanel=true end } })
+                LauncherView.render(inventoryUI, { ImGui=ImGui, modules={ EquippedTab=EquippedTab, BagsTab=BagsTab, BankTab=BankTab, AllCharsTab=AllCharsTab, AssignmentTab=AssignmentTab, PeerTab=PeerTab, PerformanceTab=PerformanceTab, AugmentsTab=AugmentsTab, CheckUpgradesTab=CheckUpgradesTab, FocusEffectsTab=FocusEffectsTab }, envs={ Equipped=envEquipped, Bags=envBags, Bank=envBank, AllChars=envAll, Assignment=envAssignment, Peer=envPeer, Performance=envPerf, Augments=envAugments, CheckUpgrades=envCheckUpgrades, FocusEffects=envFocusEffects }, collectibles={ isVisible=function() return Collectibles.visible==true end, toggle=Collectibles.toggle, renderContent=Collectibles.renderContent }, actions={ saveConfig=SaveConfigWithStatsUpdate, openGiveItem=function() inventoryUI.showGiveItemPanel=true end } })
             elseif ImGui.BeginTabBar("InventoryTabs", ImGuiTabBarFlags.Reorderable) then
                 EquippedTab.render(inventoryUI, envEquipped)
                 BagsTab.render(inventoryUI, envBags)

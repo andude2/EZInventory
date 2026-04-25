@@ -8,6 +8,24 @@ local Theme = require("EZInventory.modules.theme")
 
 local Collectibles = {}
 
+local function getAvailHeight()
+    local avail = ImGui.GetContentRegionAvail()
+    if type(avail) == "number" then return avail end
+    if type(avail) == "table" then
+        return tonumber(avail.y or avail.Y or avail[2]) or 0
+    end
+    return 0
+end
+
+local function getTextWidth(text)
+    local size = ImGui.CalcTextSize(text or "")
+    if type(size) == "number" then return size end
+    if type(size) == "table" then
+        return tonumber(size.x or size.X or size[1]) or 0
+    end
+    return 0
+end
+
 -- UI state
 Collectibles.visible = false
 Collectibles.items = {}
@@ -140,84 +158,63 @@ function Collectibles.toggle()
     if Collectibles.visible then
         Collectibles.loadCollectibleItems()
         Collectibles.requestPeerCollectibles()
+        Collectibles._launcherLoaded = true
     end
 end
 
--- Draw the collectibles UI
-function Collectibles.draw()
-    if not Collectibles.visible then return end
-    local themeCount = Theme.push_ezinventory_theme(ImGui)
-    local function endCollectiblesWindow()
-        ImGui.End()
-        Theme.pop_ezinventory_theme(ImGui, themeCount)
+function Collectibles.renderContent(options)
+    options = options or {}
+    if not Collectibles._launcherLoaded then
+        Collectibles.loadCollectibleItems()
+        Collectibles.requestPeerCollectibles()
+        Collectibles._launcherLoaded = true
     end
 
-    local windowFlags = bit32.bor(
-        ImGuiWindowFlags.MenuBar
-    )
-
-    ImGui.SetNextWindowSize(600, 400, ImGuiCond.FirstUseEver)
-
-    local visible, should_draw = ImGui.Begin("Collectibles##EZInventoryCollectibles", true, windowFlags)
-    if not visible then
-        Collectibles.visible = false
-        endCollectiblesWindow()
-        return
+    local totalLocal = #Collectibles.items
+    local totalPeers = 0
+    local peerCount = 0
+    for _, items in pairs(Collectibles.peerItems) do
+        totalPeers = totalPeers + #items
+        peerCount = peerCount + 1
     end
 
-    if not should_draw then
-        endCollectiblesWindow()
-        return
-    end
-
-    -- Menu bar
-    if ImGui.BeginMenuBar() then
-        local totalLocal = #Collectibles.items
-        local totalPeers = 0
-        local peerCount = 0
-        for peerName, items in pairs(Collectibles.peerItems) do
-            totalPeers = totalPeers + #items
-            peerCount = peerCount + 1
+    -- Check connected peers from inventory actor
+    local connectedPeerCount = 0
+    if inventory_actor.peer_inventories then
+        for _ in pairs(inventory_actor.peer_inventories) do
+            connectedPeerCount = connectedPeerCount + 1
         end
-
-        -- Check connected peers from inventory actor
-        local connectedPeerCount = 0
-        if inventory_actor.peer_inventories then
-            for _ in pairs(inventory_actor.peer_inventories) do
-                connectedPeerCount = connectedPeerCount + 1
-            end
-        end
-
-        ImGui.Text("Local: %d | Peers: %d/%d | Total: %d", totalLocal, peerCount, connectedPeerCount,
-            totalLocal + totalPeers)
-
-        ImGui.EndMenuBar()
     end
+
+    ImGui.Text("Local: %d | Peers: %d/%d | Total: %d", totalLocal, peerCount, connectedPeerCount,
+        totalLocal + totalPeers)
+    ImGui.Separator()
 
     if ImGui.Button("Refresh##Collectibles", 90, 0) then
         Collectibles.loadCollectibleItems()
         Collectibles.requestPeerCollectibles()
     end
 
-    ImGui.SameLine()
-    if ImGui.Button("Close##Collectibles", 72, 0) then
-        Collectibles.visible = false
-        endCollectiblesWindow()
-        return
+    if options.showCloseButton then
+        ImGui.SameLine()
+        if ImGui.Button("Close##Collectibles", 72, 0) then
+            Collectibles.visible = false
+            if options.onClose then options.onClose() end
+            return
+        end
     end
     ImGui.Separator()
 
     -- Loading indicator
     if Collectibles.isLoading then
         local windowWidth = ImGui.GetWindowWidth()
-        local availableHeight = ImGui.GetContentRegionAvail()
+        local availableHeight = getAvailHeight()
         ImGui.SetCursorPosY(ImGui.GetCursorPosY() + availableHeight * 0.4)
 
         local loadingText = "Loading collectibles..."
-        local textWidth = ImGui.CalcTextSize(loadingText)
+        local textWidth = getTextWidth(loadingText)
         ImGui.SetCursorPosX((windowWidth - textWidth) * 0.5)
         ImGui.Text(loadingText)
-        endCollectiblesWindow()
         return
     end
 
@@ -331,14 +328,40 @@ function Collectibles.draw()
         end
     else
         local windowWidth = ImGui.GetWindowWidth()
-        local availableHeight = ImGui.GetContentRegionAvail()
+        local availableHeight = getAvailHeight()
         ImGui.SetCursorPosY(ImGui.GetCursorPosY() + availableHeight * 0.4)
 
         local noItemsText = "No collectible items found"
-        local textWidth = ImGui.CalcTextSize(noItemsText)
+        local textWidth = getTextWidth(noItemsText)
         ImGui.SetCursorPosX((windowWidth - textWidth) * 0.5)
         ImGui.Text(noItemsText)
     end
+end
+
+-- Draw the collectibles UI
+function Collectibles.draw()
+    if not Collectibles.visible then return end
+    local themeCount = Theme.push_ezinventory_theme(ImGui)
+    local function endCollectiblesWindow()
+        ImGui.End()
+        Theme.pop_ezinventory_theme(ImGui, themeCount)
+    end
+
+    ImGui.SetNextWindowSize(600, 400, ImGuiCond.FirstUseEver)
+
+    local visible, should_draw = ImGui.Begin("Collectibles##EZInventoryCollectibles", true)
+    if not visible then
+        Collectibles.visible = false
+        endCollectiblesWindow()
+        return
+    end
+
+    if not should_draw then
+        endCollectiblesWindow()
+        return
+    end
+
+    Collectibles.renderContent({ showCloseButton = true })
 
     endCollectiblesWindow()
 end
