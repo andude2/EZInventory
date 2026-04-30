@@ -353,7 +353,7 @@ function M.renderGiveItemPanel(inventoryUI, env)
           fromBank = false,
         }
 
-        inventory_actor.send_inventory_command(inventoryUI.selectedGiveSource, "proxy_give", { json.encode(peerRequest) })
+        inventory_actor.send_inventory_command(inventoryUI.selectedGiveSource, "proxy_give", { peerRequest })
 
         printf("Requesting %s to give %s to %s",
           tostring(inventoryUI.selectedGiveSource),
@@ -631,7 +631,7 @@ function M.renderItemSuggestionsPanel(inventoryUI, env)
                   targetSlot = inventoryUI.itemSuggestionsSlot,
                   targetSlotName = inventoryUI.itemSuggestionsSlotName,
                 }
-                inventory_actor.send_inventory_command(availableItem.source, "perform_auto_exchange", { json.encode(exchangeData) })
+                inventory_actor.send_inventory_command(availableItem.source, "perform_auto_exchange", { exchangeData })
               end
               inventoryUI.showItemSuggestions = false
             end
@@ -649,7 +649,7 @@ function M.renderItemSuggestionsPanel(inventoryUI, env)
                 targetSlot = inventoryUI.itemSuggestionsSlot,
                 targetSlotName = inventoryUI.itemSuggestionsSlotName,
               }
-              inventory_actor.send_inventory_command(availableItem.source, "proxy_give", { json.encode(peerRequest) })
+              inventory_actor.send_inventory_command(availableItem.source, "proxy_give", { peerRequest })
               inventoryUI.showItemSuggestions = false
             end
           end

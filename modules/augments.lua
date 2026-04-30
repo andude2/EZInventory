@@ -71,6 +71,79 @@ local function decode_aug_slot_types(rawValue)
     return slotTypes
 end
 
+local function slot_types_intersect(a, b)
+    for _, aType in ipairs(a or {}) do
+        for _, bType in ipairs(b or {}) do
+            if tonumber(aType) == tonumber(bType) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function get_item_aug_type_raw(item)
+    if not item then
+        return nil
+    end
+    return item.augType
+        or item.augtype
+        or item.AugType
+        or item.augmentType
+        or item.AugmentType
+        or item.augmenttype
+        or item.aug_slot_type
+end
+
+local function item_is_loose_augment(item, augTypeSlots)
+    if not item then
+        return false
+    end
+
+    local itemType = tostring(item.itemtype or item.type or ""):lower()
+    return itemType:find("augment", 1, true) ~= nil or #(augTypeSlots or {}) > 0
+end
+
+local function add_loose_augment_candidate(results, item, sourceLabel, locationLabel, peerName, peerServer, targetSlot)
+    if not item then
+        return
+    end
+
+    local augTypeRaw = get_item_aug_type_raw(item)
+    local augTypeSlots = decode_aug_slot_types(augTypeRaw)
+    if not item_is_loose_augment(item, augTypeSlots) then
+        return
+    end
+
+    if targetSlot and not slot_types_intersect(targetSlot.slotTypeSlots or {}, augTypeSlots) then
+        return
+    end
+
+    table.insert(results, {
+        augmentName = item.name or "Unknown Augment",
+        augmentId = tonumber(item.id) or 0,
+        augmentLink = item.itemlink or "",
+        augmentIcon = tonumber(item.icon) or 0,
+        augmentTypeRaw = tostring(augTypeRaw or ""),
+        augmentTypeSlots = augTypeSlots,
+        augmentTypeDisplay = (#augTypeSlots > 0) and table.concat(augTypeSlots, ", ") or "--",
+        ac = tonumber(item.ac) or 0,
+        hp = tonumber(item.hp) or 0,
+        mana = tonumber(item.mana) or 0,
+        qty = tonumber(item.qty) or 1,
+        nodrop = tonumber(item.nodrop) or 0,
+        source = sourceLabel,
+        location = locationLabel,
+        peerName = peerName or "",
+        peerServer = peerServer or "",
+        bagid = item.bagid,
+        slotid = item.slotid,
+        bankslotid = item.bankslotid,
+        packslot = item.packslot,
+        inventorySlot = item.inventorySlot,
+    })
+end
+
 local function add_augments_from_item(results, item, sourceLabel, locationLabel)
     if not item then
         return
@@ -136,33 +209,30 @@ local function add_empty_slots_from_item(results, item, sourceLabel, locationLab
         local slotEmpty = to_flag(slotEmptyRaw)
         local slotTypeRaw = item["aug" .. i .. "SlotType"]
         local slotTypeValue = tonumber(slotTypeRaw)
-        if slotTypeRaw == nil or slotTypeRaw == "" or slotTypeValue == 0 then
-            goto continue
+        if slotTypeRaw ~= nil and slotTypeRaw ~= "" and slotTypeValue ~= 0 then
+            local slotTypeSlots = decode_aug_slot_types(slotTypeRaw)
+            local hasDefinedSlotType = (#slotTypeSlots > 0) or ((slotTypeValue or 0) > 0)
+            local hasInsertedAug = item["aug" .. i .. "Name"] and item["aug" .. i .. "Name"] ~= ""
+
+            -- Prefer explicit flags when present, but fall back to slot-type + missing augment
+            -- for servers/builds that don't provide SlotVisible/SlotEmpty reliably.
+            local isVisible = (slotVisible == 1) or ((slotVisible == nil or slotVisible == 0) and hasDefinedSlotType)
+            local isEmpty = (slotEmpty == 1) or ((slotEmpty == nil or slotEmpty == 0) and hasDefinedSlotType and not hasInsertedAug)
+
+            if isVisible and isEmpty then
+                table.insert(results, {
+                    parentItemName = item.name or "Unknown Item",
+                    parentItemLink = item.itemlink or "",
+                    parentItemIcon = tonumber(item.icon) or 0,
+                    augSlot = i,
+                    slotTypeRaw = tostring(slotTypeRaw or ""),
+                    slotTypeSlots = slotTypeSlots,
+                    slotTypeDisplay = (#slotTypeSlots > 0) and table.concat(slotTypeSlots, ", ") or "--",
+                    source = sourceLabel,
+                    location = locationLabel,
+                })
+            end
         end
-        local slotTypeSlots = decode_aug_slot_types(slotTypeRaw)
-        local hasDefinedSlotType = (#slotTypeSlots > 0) or ((slotTypeValue or 0) > 0)
-        local hasInsertedAug = item["aug" .. i .. "Name"] and item["aug" .. i .. "Name"] ~= ""
-
-        -- Prefer explicit flags when present, but fall back to slot-type + missing augment
-        -- for servers/builds that don't provide SlotVisible/SlotEmpty reliably.
-        local isVisible = (slotVisible == 1) or ((slotVisible == nil or slotVisible == 0) and hasDefinedSlotType)
-        local isEmpty = (slotEmpty == 1) or ((slotEmpty == nil or slotEmpty == 0) and hasDefinedSlotType and not hasInsertedAug)
-
-        if isVisible and isEmpty then
-            table.insert(results, {
-                parentItemName = item.name or "Unknown Item",
-                parentItemLink = item.itemlink or "",
-                parentItemIcon = tonumber(item.icon) or 0,
-                augSlot = i,
-                slotTypeRaw = tostring(slotTypeRaw or ""),
-                slotTypeSlots = slotTypeSlots,
-                slotTypeDisplay = (#slotTypeSlots > 0) and table.concat(slotTypeSlots, ", ") or "--",
-                source = sourceLabel,
-                location = locationLabel,
-            })
-        end
-
-        ::continue::
     end
 end
 
@@ -367,6 +437,132 @@ function M.build_empty_augment_slots_for_peers(peerEntries, getSlotNameFromID, o
         end
 
         return (a.augSlot or 0) < (b.augSlot or 0)
+    end)
+
+    return results
+end
+
+function M.build_loose_augments(inventoryData, targetSlot, options)
+    options = options or {}
+    local includeEquipped = options.includeEquipped == true
+    local includeInventory = options.includeInventory ~= false
+    local includeBank = options.includeBank ~= false
+    local peerName = options.peerName or ""
+    local peerServer = options.peerServer or ""
+
+    local data = inventoryData
+    if type(data) ~= "table" or data.equipped == nil then
+        data = { equipped = inventoryData or {} }
+    end
+
+    local results = {}
+
+    if includeEquipped then
+        for _, item in ipairs(data.equipped or {}) do
+            add_loose_augment_candidate(results, item, "Equipped", "Equipped", peerName, peerServer, targetSlot)
+        end
+    end
+
+    if includeInventory then
+        for _, item in ipairs(data.inventory or {}) do
+            local slotName = tostring(item.packslot or item.inventorySlot or item.slotid or "?")
+            add_loose_augment_candidate(results, item, "Inventory", string.format("Inventory Slot %s", slotName), peerName, peerServer, targetSlot)
+        end
+
+        local bagIds = {}
+        for bagId, _ in pairs(data.bags or {}) do
+            table.insert(bagIds, tonumber(bagId) or bagId)
+        end
+        table.sort(bagIds, function(a, b)
+            local an = tonumber(a)
+            local bn = tonumber(b)
+            if an and bn then
+                return an < bn
+            end
+            return tostring(a) < tostring(b)
+        end)
+
+        for _, bagId in ipairs(bagIds) do
+            local bagItems = (data.bags or {})[bagId] or (data.bags or {})[tostring(bagId)] or {}
+            for _, item in ipairs(bagItems) do
+                local slot = tostring(item.slotid or "?")
+                add_loose_augment_candidate(results, item, "Inventory", string.format("Pack %s Slot %s", tostring(bagId), slot), peerName, peerServer, targetSlot)
+            end
+        end
+    end
+
+    if includeBank then
+        for _, item in ipairs(data.bank or {}) do
+            local bankSlot = tostring(item.bankslotid or "?")
+            local slot = tonumber(item.slotid or -1) or -1
+            local locationLabel = slot > 0
+                and string.format("Bank %s Slot %d", bankSlot, slot)
+                or string.format("Bank %s", bankSlot)
+            add_loose_augment_candidate(results, item, "Bank", locationLabel, peerName, peerServer, targetSlot)
+        end
+    end
+
+    table.sort(results, function(a, b)
+        local nameA = (a.augmentName or ""):lower()
+        local nameB = (b.augmentName or ""):lower()
+        if nameA ~= nameB then
+            return nameA < nameB
+        end
+
+        local peerA = (a.peerName or ""):lower()
+        local peerB = (b.peerName or ""):lower()
+        if peerA ~= peerB then
+            return peerA < peerB
+        end
+
+        local locA = (a.location or ""):lower()
+        local locB = (b.location or ""):lower()
+        if locA ~= locB then
+            return locA < locB
+        end
+
+        return (tonumber(a.augmentId) or 0) < (tonumber(b.augmentId) or 0)
+    end)
+
+    return results
+end
+
+function M.build_loose_augments_for_peers(peerEntries, targetSlot, options)
+    local results = {}
+
+    for _, entry in ipairs(peerEntries or {}) do
+        local peerRows = M.build_loose_augments(entry.data or {}, targetSlot, {
+            includeEquipped = options and options.includeEquipped,
+            includeInventory = not options or options.includeInventory ~= false,
+            includeBank = not options or options.includeBank ~= false,
+            peerName = entry.name,
+            peerServer = entry.server,
+        })
+        for _, row in ipairs(peerRows) do
+            table.insert(results, row)
+        end
+    end
+
+    table.sort(results, function(a, b)
+        local nameA = (a.augmentName or ""):lower()
+        local nameB = (b.augmentName or ""):lower()
+        if nameA ~= nameB then
+            return nameA < nameB
+        end
+
+        local peerA = (a.peerName or ""):lower()
+        local peerB = (b.peerName or ""):lower()
+        if peerA ~= peerB then
+            return peerA < peerB
+        end
+
+        local locA = (a.location or ""):lower()
+        local locB = (b.location or ""):lower()
+        if locA ~= locB then
+            return locA < locB
+        end
+
+        return (tonumber(a.augmentId) or 0) < (tonumber(b.augmentId) or 0)
     end)
 
     return results

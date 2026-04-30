@@ -16,6 +16,15 @@ local function text_matches_filter(value, filter)
   return hay:find(filter, 1, true) ~= nil
 end
 
+local function get_content_avail_size(ImGui)
+  local availX, availY = ImGui.GetContentRegionAvail()
+  if type(availX) == "table" then
+    return tonumber(availX.x or availX.X or availX[1]) or 0,
+        tonumber(availX.y or availX.Y or availX[2]) or 0
+  end
+  return tonumber(availX) or 0, tonumber(availY) or 0
+end
+
 local function row_matches_filter(row, filter)
   if not filter or filter == "" then
     return true
@@ -178,12 +187,250 @@ local STAT_COLORS = {
   empty = { 0.5, 0.5, 0.5, 1.0 }, -- Gray
 }
 local AUGMENTS_ROWS_PER_PAGE = 25
+local AUGMENT_MATCH_ROWS_PER_PAGE = 20
+
+local function mix_hash(hash, value)
+  local text = tostring(value or "")
+  for i = 1, #text do
+    hash = ((hash * 131) + string.byte(text, i)) % 2147483647
+  end
+  return hash
+end
+
+local function build_rows_cache_key(inventoryUI, inventoryData, emptyAugPeerEntries, isPopout)
+  local hash = 5381
+  hash = mix_hash(hash, isPopout and "popout" or "main")
+  hash = mix_hash(hash, inventoryUI.augmentsShowEmptySlots)
+  hash = mix_hash(hash, inventoryUI.augmentsShowEmptySlotsAllPeers)
+  hash = mix_hash(hash, inventoryUI.augmentsIncludeEquipped)
+  hash = mix_hash(hash, inventoryUI.augmentsIncludeInventory)
+  hash = mix_hash(hash, inventoryUI.augmentsIncludeBank)
+
+  if inventoryUI.augmentsShowEmptySlots and inventoryUI.augmentsShowEmptySlotsAllPeers then
+    hash = mix_hash(hash, #(emptyAugPeerEntries or {}))
+    for _, entry in ipairs(emptyAugPeerEntries or {}) do
+      hash = mix_hash(hash, entry.name)
+      hash = mix_hash(hash, entry.server)
+      hash = mix_hash(hash, tostring(entry.data or "no-data"))
+    end
+  else
+    hash = mix_hash(hash, tostring(inventoryData or "no-data"))
+  end
+
+  return tostring(hash)
+end
 
 local function renderStatValue(ImGui, value, color)
   if value and value ~= 0 then
     ImGui.TextColored(color[1], color[2], color[3], color[4], tostring(value))
   else
     ImGui.TextColored(STAT_COLORS.empty[1], STAT_COLORS.empty[2], STAT_COLORS.empty[3], STAT_COLORS.empty[4], "--")
+  end
+end
+
+local function make_empty_slot_key(row)
+  return string.format("%s|%s|%s|%s|%s|%s",
+    tostring(row.peerServer or ""),
+    tostring(row.peerName or ""),
+    tostring(row.parentItemName or ""),
+    tostring(row.location or ""),
+    tostring(row.augSlot or ""),
+    tostring(row.slotTypeRaw or ""))
+end
+
+local function copy_selected_slot(row, selectedPeerName, selectedServerName)
+  local copy = {}
+  for k, v in pairs(row or {}) do
+    copy[k] = v
+  end
+  copy.peerName = copy.peerName or selectedPeerName or ""
+  copy.peerServer = copy.peerServer or selectedServerName or ""
+  copy.key = make_empty_slot_key(copy)
+  return copy
+end
+
+local function render_matching_augments(inventoryUI, env, selectedSlot, peerEntries)
+  local ImGui = env.ImGui
+  local mq = env.mq
+  local Augments = env.Augments
+  local drawItemIcon = env.drawItemIcon
+  local inventory_actor = env.inventory_actor
+
+  ImGui.Separator()
+  ImGui.Text("Fitting Augments for %s: %s Aug %s (Type %s)",
+    selectedSlot.peerName or "Unknown",
+    selectedSlot.parentItemName or "Unknown",
+    tostring(selectedSlot.augSlot or "--"),
+    selectedSlot.slotTypeDisplay or "--")
+  ImGui.TextColored(0.75, 0.9, 0.75, 1.0, "Searching cached peer inventory, bags, and bank on %s.", selectedSlot.peerServer or "Unknown")
+
+  local candidateRows = Augments.build_loose_augments_for_peers(peerEntries, selectedSlot, {
+    includeEquipped = false,
+    includeInventory = true,
+    includeBank = true,
+  })
+
+  inventoryUI.augmentsCandidateFilter = ImGui.InputText("Filter Matches##AugmentCandidateFilter", inventoryUI.augmentsCandidateFilter or "")
+  inventoryUI.augmentsHideNoDropCandidates = inventoryUI.augmentsHideNoDropCandidates == true
+  ImGui.SameLine()
+  inventoryUI.augmentsHideNoDropCandidates = ImGui.Checkbox("Hide No Drop##AugmentCandidateHideNoDrop", inventoryUI.augmentsHideNoDropCandidates)
+  local filterText = tostring(inventoryUI.augmentsCandidateFilter or ""):lower()
+
+  local filteredCandidates = {}
+  for _, row in ipairs(candidateRows) do
+    local hiddenByNoDrop = inventoryUI.augmentsHideNoDropCandidates and tonumber(row.nodrop) ~= 0
+    if not hiddenByNoDrop and row_matches_filter(row, filterText) then
+      table.insert(filteredCandidates, row)
+    end
+  end
+
+  ImGui.Text("Found %d fitting augments across %d peers", #filteredCandidates, #(peerEntries or {}))
+  if #filteredCandidates == 0 then
+    ImGui.TextWrapped("No cached loose augment items fit the selected slot type.")
+    return
+  end
+
+  inventoryUI.augmentsCandidateCurrentPage = tonumber(inventoryUI.augmentsCandidateCurrentPage) or 1
+  local pageStateKey = string.format("%s|%s|%d", tostring(selectedSlot.key or ""), tostring(filterText), #candidateRows)
+  if inventoryUI.augmentsCandidatePrevPageState ~= pageStateKey then
+    inventoryUI.augmentsCandidateCurrentPage = 1
+    inventoryUI.augmentsCandidatePrevPageState = pageStateKey
+  end
+
+  local totalRows = #filteredCandidates
+  local totalPages = math.max(1, math.ceil(totalRows / AUGMENT_MATCH_ROWS_PER_PAGE))
+  if inventoryUI.augmentsCandidateCurrentPage > totalPages then
+    inventoryUI.augmentsCandidateCurrentPage = totalPages
+  elseif inventoryUI.augmentsCandidateCurrentPage < 1 then
+    inventoryUI.augmentsCandidateCurrentPage = 1
+  end
+
+  local startIdx = ((inventoryUI.augmentsCandidateCurrentPage - 1) * AUGMENT_MATCH_ROWS_PER_PAGE) + 1
+  local endIdx = math.min(startIdx + AUGMENT_MATCH_ROWS_PER_PAGE - 1, totalRows)
+
+  ImGui.Text("Page %d of %d | Showing rows %d-%d of %d",
+    inventoryUI.augmentsCandidateCurrentPage, totalPages, startIdx, endIdx, totalRows)
+  ImGui.SameLine()
+  if inventoryUI.augmentsCandidateCurrentPage > 1 then
+    if ImGui.Button("< Previous##AugmentCandidatePagePrev") then
+      inventoryUI.augmentsCandidateCurrentPage = inventoryUI.augmentsCandidateCurrentPage - 1
+    end
+  else
+    ImGui.BeginDisabled()
+    ImGui.Button("< Previous##AugmentCandidatePagePrevDisabled")
+    ImGui.EndDisabled()
+  end
+  ImGui.SameLine()
+  if inventoryUI.augmentsCandidateCurrentPage < totalPages then
+    if ImGui.Button("Next >##AugmentCandidatePageNext") then
+      inventoryUI.augmentsCandidateCurrentPage = inventoryUI.augmentsCandidateCurrentPage + 1
+    end
+  else
+    ImGui.BeginDisabled()
+    ImGui.Button("Next >##AugmentCandidatePageNextDisabled")
+    ImGui.EndDisabled()
+  end
+
+  local _, availY = get_content_avail_size(ImGui)
+  local tableHeight = math.max(180, availY - 8)
+  local flags = borFlag(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.ScrollY)
+  if ImGui.BeginTable("FittingAugmentsTable", 9, flags, 0, tableHeight) then
+    ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 30)
+    ImGui.TableSetupColumn("Augment", ImGuiTableColumnFlags.WidthStretch, 1.0)
+    ImGui.TableSetupColumn("Owner", ImGuiTableColumnFlags.WidthFixed, 95)
+    ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthStretch, 1.0)
+    ImGui.TableSetupColumn("Fits Type", ImGuiTableColumnFlags.WidthFixed, 80)
+    ImGui.TableSetupColumn("AC", ImGuiTableColumnFlags.WidthFixed, 45)
+    ImGui.TableSetupColumn("HP", ImGuiTableColumnFlags.WidthFixed, 55)
+    ImGui.TableSetupColumn("Mana", ImGuiTableColumnFlags.WidthFixed, 60)
+    ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 70)
+    ImGui.TableHeadersRow()
+
+    for rowIndex = startIdx, endIdx do
+      local row = filteredCandidates[rowIndex]
+      ImGui.TableNextRow()
+
+      ImGui.TableSetColumnIndex(0)
+      if row.augmentIcon and row.augmentIcon > 0 then
+        drawItemIcon(row.augmentIcon, 18, 18)
+      else
+        ImGui.Text("--")
+      end
+
+      ImGui.TableSetColumnIndex(1)
+      local augLabel = string.format("%s##fitting_aug_%d", row.augmentName or "Unknown", rowIndex)
+      if ImGui.Selectable(augLabel) then
+        if env.openItemInspector then
+          env.openItemInspector({
+            name = row.augmentName,
+            itemlink = row.augmentLink,
+            icon = row.augmentIcon,
+            ac = row.ac,
+            hp = row.hp,
+            mana = row.mana,
+            augType = row.augmentTypeRaw,
+          }, { owner = row.peerName, location = row.location or "Augment" })
+        else
+          local links = mq.ExtractLinks(row.augmentLink or "")
+          if links and #links > 0 then
+            mq.ExecuteTextLink(links[1])
+          end
+        end
+      end
+
+      ImGui.TableSetColumnIndex(2)
+      ImGui.Text(row.peerName or "--")
+
+      ImGui.TableSetColumnIndex(3)
+      ImGui.Text(row.location or "--")
+
+      ImGui.TableSetColumnIndex(4)
+      ImGui.Text(row.augmentTypeDisplay or "--")
+      if ImGui.IsItemHovered() and row.augmentTypeRaw and row.augmentTypeRaw ~= "" then
+        ImGui.SetTooltip("Raw AugType: %s", tostring(row.augmentTypeRaw))
+      end
+
+      ImGui.TableSetColumnIndex(5)
+      renderStatValue(ImGui, row.ac, STAT_COLORS.ac)
+
+      ImGui.TableSetColumnIndex(6)
+      renderStatValue(ImGui, row.hp, STAT_COLORS.hp)
+
+      ImGui.TableSetColumnIndex(7)
+      renderStatValue(ImGui, row.mana, STAT_COLORS.mana)
+
+      ImGui.TableSetColumnIndex(8)
+      if tonumber(row.nodrop) == 0 then
+        if ImGui.Button("Give##fitting_aug_give_" .. tostring(rowIndex), 62, 0) then
+          local giveRequest = {
+            name = row.augmentName,
+            to = selectedSlot.peerName,
+            fromBank = row.source == "Bank",
+            bagid = row.bagid,
+            slotid = row.slotid,
+            bankslotid = row.bankslotid,
+          }
+          if inventory_actor and inventory_actor.send_inventory_command then
+            inventory_actor.send_inventory_command(row.peerName, "proxy_give", { giveRequest })
+          end
+          if mq and mq.cmdf then
+            printf("Requested %s to give %s to %s for %s Aug %s",
+              tostring(row.peerName),
+              tostring(row.augmentName),
+              tostring(selectedSlot.peerName),
+              tostring(selectedSlot.parentItemName),
+              tostring(selectedSlot.augSlot))
+          end
+        end
+        if ImGui.IsItemHovered() then
+          ImGui.SetTooltip("Ask %s to give this augment to %s", row.peerName or "owner", selectedSlot.peerName or "target")
+        end
+      else
+        ImGui.TextColored(0.8, 0.3, 0.3, 1.0, "No Drop")
+      end
+    end
+
+    ImGui.EndTable()
   end
 end
 
@@ -282,40 +529,48 @@ function M.renderContent(inventoryUI, env)
     if inventoryUI.augmentsShowEmptySlots and inventoryUI.augmentsShowEmptySlotsAllPeers then
       emptyAugPeerEntries = get_empty_aug_peer_entries()
     end
+    local augmentCandidatePeerEntries = get_empty_aug_peer_entries()
 
-    local augmentRows = {}
-    if inventoryUI.augmentsShowEmptySlots then
-      if inventoryUI.augmentsShowEmptySlotsAllPeers then
-        augmentRows = Augments.build_empty_augment_slots_for_peers(
-          emptyAugPeerEntries,
-          getSlotNameFromID,
-          {
-            includeEquipped = true,
-            includeInventory = false,
-            includeBank = false,
-          }
-        )
+    local rowsCacheField = isPopout and "augmentsPopoutRowsCache" or "augmentsRowsCache"
+    inventoryUI[rowsCacheField] = inventoryUI[rowsCacheField] or { key = "", rows = {} }
+    local rowsCacheKey = build_rows_cache_key(inventoryUI, inventoryData, emptyAugPeerEntries, isPopout)
+    local augmentRows = inventoryUI[rowsCacheField].rows or {}
+    if inventoryUI[rowsCacheField].key ~= rowsCacheKey then
+      if inventoryUI.augmentsShowEmptySlots then
+        if inventoryUI.augmentsShowEmptySlotsAllPeers then
+          augmentRows = Augments.build_empty_augment_slots_for_peers(
+            emptyAugPeerEntries,
+            getSlotNameFromID,
+            {
+              includeEquipped = true,
+              includeInventory = false,
+              includeBank = false,
+            }
+          )
+        else
+          augmentRows = Augments.build_empty_augment_slots(
+            inventoryData,
+            getSlotNameFromID,
+            {
+              includeEquipped = true,
+              includeInventory = false,
+              includeBank = false,
+            }
+          )
+        end
       else
-        augmentRows = Augments.build_empty_augment_slots(
+        augmentRows = Augments.build_inserted_augments(
           inventoryData,
           getSlotNameFromID,
           {
-            includeEquipped = true,
-            includeInventory = false,
-            includeBank = false,
+            includeEquipped = inventoryUI.augmentsIncludeEquipped,
+            includeInventory = inventoryUI.augmentsIncludeInventory,
+            includeBank = inventoryUI.augmentsIncludeBank,
           }
         )
       end
-    else
-      augmentRows = Augments.build_inserted_augments(
-        inventoryData,
-        getSlotNameFromID,
-        {
-          includeEquipped = inventoryUI.augmentsIncludeEquipped,
-          includeInventory = inventoryUI.augmentsIncludeInventory,
-          includeBank = inventoryUI.augmentsIncludeBank,
-        }
-      )
+      inventoryUI[rowsCacheField].key = rowsCacheKey
+      inventoryUI[rowsCacheField].rows = augmentRows
     end
 
     local slotTypeOptions = build_slot_type_options(augmentRows, inventoryUI.augmentsShowEmptySlots)
@@ -430,8 +685,13 @@ function M.renderContent(inventoryUI, env)
     local flags = borFlag(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.ScrollY)
     if inventoryUI.augmentsShowEmptySlots then
       local showPeerColumn = inventoryUI.augmentsShowEmptySlotsAllPeers
-      local columnCount = showPeerColumn and 8 or 7
-      if ImGui.BeginTable("EmptyAugmentSlotsTable", columnCount, flags) then
+      local columnCount = showPeerColumn and 9 or 8
+      local emptySlotTableHeight = 0
+      if inventoryUI.augmentsSelectedEmptySlot then
+        local _, availableHeight = get_content_avail_size(ImGui)
+        emptySlotTableHeight = math.max(170, math.min(280, availableHeight * 0.45))
+      end
+      if ImGui.BeginTable("EmptyAugmentSlotsTable", columnCount, flags, 0, emptySlotTableHeight) then
         ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 30)
         if showPeerColumn then
           ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 110)
@@ -442,6 +702,7 @@ function M.renderContent(inventoryUI, env)
         ImGui.TableSetupColumn("Fits Slot Type", ImGuiTableColumnFlags.WidthFixed, 120)
         ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 85)
         ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 90)
+        ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 70)
         ImGui.TableHeadersRow()
 
         for rowIndex = startIdx, endIdx do
@@ -498,9 +759,33 @@ function M.renderContent(inventoryUI, env)
 
           ImGui.TableSetColumnIndex(itemColumnIndex + 5)
           ImGui.TextColored(0.65, 0.9, 0.65, 1.0, "Empty")
+
+          ImGui.TableSetColumnIndex(itemColumnIndex + 6)
+          local selectedSlotKey = inventoryUI.augmentsSelectedEmptySlot and inventoryUI.augmentsSelectedEmptySlot.key
+          local rowWithPeer = copy_selected_slot(row, selectedPeerName, selectedServerName)
+          if selectedSlotKey == rowWithPeer.key then
+            ImGui.TextColored(0.65, 0.9, 0.65, 1.0, "Selected")
+          else
+            if ImGui.Button("Find##empty_aug_find_" .. tostring(rowIndex), 62, 0) then
+              inventoryUI.augmentsSelectedEmptySlot = rowWithPeer
+              inventoryUI.augmentsCandidateCurrentPage = 1
+            end
+            if ImGui.IsItemHovered() then
+              ImGui.SetTooltip("Find loose augments across cached peers that fit this slot.")
+            end
+          end
         end
 
         ImGui.EndTable()
+      end
+
+      if inventoryUI.augmentsSelectedEmptySlot then
+        if ImGui.Button("Clear Selected Slot##AugmentClearSelectedSlot") then
+          inventoryUI.augmentsSelectedEmptySlot = nil
+        end
+        if inventoryUI.augmentsSelectedEmptySlot then
+          render_matching_augments(inventoryUI, env, inventoryUI.augmentsSelectedEmptySlot, augmentCandidatePeerEntries)
+        end
       end
     else
       if ImGui.BeginTable("InsertedAugmentsTable", 9, flags) then

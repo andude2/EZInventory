@@ -108,6 +108,7 @@ M.inventoryUI = {
     comparisonShowClickies        = false,
     windowLocked                  = false,
     equipView                     = "table",
+    showVisualFilters             = false,
     selectedSlotID                = nil,
     selectedSlotName              = nil,
     compareResults                = {},

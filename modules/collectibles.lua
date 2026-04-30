@@ -318,7 +318,7 @@ function Collectibles.renderContent(options)
                             }
 
                             inventory_actor.send_inventory_command(item.character, "proxy_give",
-                                { json.encode(peerRequest) })
+                                { peerRequest })
                         end
                     end
                 end

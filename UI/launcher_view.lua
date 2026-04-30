@@ -112,16 +112,6 @@ function M.render(inventoryUI, env)
         renderContent = function(ui, _)
             local tabBarOpen = ImGui.BeginTabBar("InventoryCombinedTabs")
             if tabBarOpen then
-                local equippedOpen = ImGui.BeginTabItem("Equipped")
-                if equippedOpen then
-                    if env.modules.EquippedTab and env.modules.EquippedTab.renderContent then
-                        env.modules.EquippedTab.renderContent(ui, env.envs.Equipped)
-                    else
-                        ImGui.TextColored(1, 0, 0, 1, "Error: Equipped tab not available")
-                    end
-                    ImGui.EndTabItem()
-                end
-
                 local bagsOpen = ImGui.BeginTabItem("Bags")
                 if bagsOpen then
                     if env.modules.BagsTab and env.modules.BagsTab.renderContent then
@@ -228,6 +218,15 @@ function M.render(inventoryUI, env)
     if panelOpen then
         local panel = contentModules[selectedTile.id]
         ImGui.Text((selectedTile.icon or "") .. " " .. (panel and panel.title or selectedTile.label))
+
+        local isEquipped = selectedTile.id == "Equipped"
+        if isEquipped then
+            ImGui.SameLine(0, 12)
+            inventoryUI.showVisualFilters = ImGui.Checkbox("Filters", inventoryUI.showVisualFilters)
+            if ImGui.IsItemHovered() then
+                ImGui.SetTooltip("Toggle visual filter controls (AC/HP/Mana)")
+            end
+        end
 
         if panel and panel.popout then
             ImGui.SameLine()

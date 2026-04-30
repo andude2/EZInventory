@@ -1107,8 +1107,8 @@ function M.renderContent(inventoryUI, env)
                   slotid = item.slotid,
                   bankslotid = item.bankslotid,
                 }
-                if inventory_actor and inventory_actor.send_inventory_command and json and json.encode then
-                  inventory_actor.send_inventory_command(item.peerName, "proxy_give", { json.encode(giveRequest), })
+                if inventory_actor and inventory_actor.send_inventory_command then
+                  inventory_actor.send_inventory_command(item.peerName, "proxy_give", { giveRequest })
                 end
                 if mq and mq.cmdf then
                   printf("Requested %s to give %s to %s", item.peerName, itemName, inventoryUI.selectedPeer)

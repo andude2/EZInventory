@@ -360,20 +360,20 @@ function M.renderContent(inventoryUI, env)
           local isSwap = availableItem.location == "Equipped"
           local buttonLabel = (isSwap and "Swap" or "Equip") .. "##upgrade_action_" .. uniqueKey
           if ImGui.Button(buttonLabel) then
-            if inventory_actor and inventory_actor.send_inventory_command and json and json.encode then
+            if inventory_actor and inventory_actor.send_inventory_command then
               local exchangeData = {
                 itemName = availableItem.name,
                 targetSlot = slotId,
                 targetSlotName = slotName,
               }
-              inventory_actor.send_inventory_command(row.source, "perform_auto_exchange", { json.encode(exchangeData) })
+              inventory_actor.send_inventory_command(row.source, "perform_auto_exchange", { exchangeData })
             end
           end
         else
           local tradeLabel = (Settings.autoExchangeEnabled and "Trade+Equip" or "Trade") ..
               "##upgrade_trade_" .. uniqueKey
           if ImGui.Button(tradeLabel) then
-            if inventory_actor and inventory_actor.send_inventory_command and json and json.encode then
+            if inventory_actor and inventory_actor.send_inventory_command then
               local peerRequest = {
                 name = availableItem.name,
                 to = targetCharacter,
@@ -385,7 +385,7 @@ function M.renderContent(inventoryUI, env)
                 targetSlot = slotId,
                 targetSlotName = slotName,
               }
-              inventory_actor.send_inventory_command(row.source, "proxy_give", { json.encode(peerRequest) })
+              inventory_actor.send_inventory_command(row.source, "proxy_give", { peerRequest })
             end
           end
         end

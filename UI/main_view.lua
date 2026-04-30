@@ -32,11 +32,11 @@ local function fitWidth(pref, min) local av = availWidth(); min = min or 80; if 
 local function inlineOrWrap(nw, sp) sp = sp or 6; if availWidth() > ((nw or 0) + sp) then ImGui.SameLine(0, sp); return true end; return false end
 local function textWidth(text) return widthOf(ImGui.CalcTextSize(text or "")) end
 
-local headerCloseWidth = 28
+local headerCloseWidth = 55
 
 local function renderHeaderCloseButton()
     ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.2, 0.8, 0.2, 1.0)); ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0)
-    if ImGui.Button(icons.FA_TIMES .. "##CloseMainWindow", headerCloseWidth, 0) then window_manager.setMainWindowVisible(false) end
+    if ImGui.Button("Close##CloseMainWindow", headerCloseWidth, 0) then window_manager.setMainWindowVisible(false) end
     if ImGui.IsItemHovered() then ImGui.SetTooltip("Close inventory window") end
     ImGui.PopStyleVar(); ImGui.PopStyleColor(1)
 end
@@ -82,18 +82,21 @@ function M.render()
             ImGui.EndCombo()
         end
         local viewButtonWidth = 74
-        inlineOrWrap(viewButtonWidth + headerCloseWidth + 14, 8); if ImGui.Button(inventoryUI.viewMode == "launcher" and "Tabs" or "Launch", viewButtonWidth, 0) then inventoryUI.viewMode = inventoryUI.viewMode == "launcher" and "tabbed" or "launcher" end
-        inlineOrWrap(headerCloseWidth, 6); renderHeaderCloseButton()
+        local rightButtonsWidth = viewButtonWidth + headerCloseWidth + 6
+        local contentMaxX = widthOf(ImGui.GetContentRegionMax())
+        ImGui.SameLine(contentMaxX - rightButtonsWidth)
+        if ImGui.Button(inventoryUI.viewMode == "launcher" and "Tabs" or "Launch", viewButtonWidth, 0) then inventoryUI.viewMode = inventoryUI.viewMode == "launcher" and "tabbed" or "launcher" end
+        ImGui.SameLine(0, 6); renderHeaderCloseButton()
         ImGui.Spacing(); ImGui.Separator(); ImGui.Spacing()
 
         local cbw = 120
-        local clearWidth = 28
+        local clearWidth = 45
         local searchPref = math.max(120, availWidth() - cbw - clearWidth - 20)
         ImGui.SetNextItemWidth(fitWidth(searchPref, 90))
         local st, sub = ImGui.InputTextWithHint("##Search", icons.FA_SEARCH .. " Search...", state.searchText or "", ImGuiInputTextFlags.EnterReturnsTrue)
         state.searchText = st
         if sub and st ~= "" then inventoryUI.requestAllCharsSearchFocus = true; if inventoryUI.viewMode == "launcher" then inventoryUI.windows.AllChars = true else inventoryUI.selectAllCharsTab = true end end
-        inlineOrWrap(clearWidth, 6); if ImGui.Button(icons.FA_TIMES, clearWidth, 0) then state.searchText = "" end
+        inlineOrWrap(clearWidth, 6); if ImGui.Button("Clear", clearWidth, 0) then state.searchText = "" end
         inlineOrWrap(cbw, 6); if ImGui.Button("Clean Up", fitWidth(cbw, 90), 0) then AssignmentManager.executeAssignments(); local mn = character_utils.extractCharacterName(mq.TLO.Me.CleanName()); if state.Settings.bankFlags[mn] and Banking.start then Banking.start() end end
         ImGui.Separator()
 
@@ -134,7 +137,7 @@ function M.render()
             SaveConfigWithStatsUpdate=SaveConfigWithStatsUpdate,
             OnStatsLoadingModeChanged=OnStatsLoadingModeChanged,
         }
-        local envAugments = { ImGui=ImGui, mq=mq, Augments=Augments, getSlotNameFromID=item_utils.getSlotNameFromID, drawItemIcon=shared_ui.drawItemIcon, openItemInspector=openItemInspector }
+        local envAugments = { ImGui=ImGui, mq=mq, Augments=Augments, getSlotNameFromID=item_utils.getSlotNameFromID, drawItemIcon=shared_ui.drawItemIcon, openItemInspector=openItemInspector, inventory_actor=inventory_actor }
         local envCheckUpgrades = { ImGui=ImGui, mq=mq, json=json, CheckUpgrades=CheckUpgrades, Suggestions=Suggestions, getSlotNameFromID=item_utils.getSlotNameFromID, drawItemIcon=shared_ui.drawItemIcon, inventory_actor=inventory_actor, Settings=state.Settings, openItemInspector=openItemInspector }
         local envFocusEffects = { ImGui=ImGui, mq=mq, FocusEffects=FocusEffects, getSlotNameFromID=item_utils.getSlotNameFromID }
 

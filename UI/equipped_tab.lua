@@ -327,52 +327,6 @@ function M.renderContent(inventoryUI, env)
           inventoryUI.visualFilterHPValue = tonumber(inventoryUI.visualFilterHPValue) or 0
           inventoryUI.visualFilterManaMode = inventoryUI.visualFilterManaMode or "All"
           inventoryUI.visualFilterManaValue = tonumber(inventoryUI.visualFilterManaValue) or 0
-          ImGui.Text("Armor:")
-          ImGui.SameLine()
-          ImGui.SetNextItemWidth(90)
-          if ImGui.BeginCombo("##ArmorTypeFilter", inventoryUI.armorTypeFilter) then
-            for _, armorType in ipairs(armorTypes) do
-              if ImGui.Selectable(armorType, inventoryUI.armorTypeFilter == armorType) then
-                inventoryUI.armorTypeFilter = armorType
-              end
-            end
-            ImGui.EndCombo()
-          end
-
-          local function renderStatFilterControls(label, modeKey, valueKey)
-            ImGui.Text(label .. ":")
-            ImGui.SameLine()
-            ImGui.SetNextItemWidth(90)
-            if ImGui.BeginCombo("##" .. modeKey, inventoryUI[modeKey]) then
-              for _, mode in ipairs(statFilterModes) do
-                if ImGui.Selectable(mode, inventoryUI[modeKey] == mode) then
-                  inventoryUI[modeKey] = mode
-                end
-              end
-              ImGui.EndCombo()
-            end
-            ImGui.SameLine()
-            ImGui.SetNextItemWidth(160)
-            local inputValue = ImGui.InputInt("##" .. valueKey, inventoryUI[valueKey])
-            inventoryUI[valueKey] = math.max(0, tonumber(inputValue) or 0)
-          end
-
-          ImGui.SameLine(0, 8)
-          renderStatFilterControls("AC", "visualFilterACMode", "visualFilterACValue")
-          ImGui.SameLine(0, 8)
-          renderStatFilterControls("HP", "visualFilterHPMode", "visualFilterHPValue")
-          ImGui.SameLine(0, 8)
-          renderStatFilterControls("Mana", "visualFilterManaMode", "visualFilterManaValue")
-          ImGui.SameLine(0, 8)
-          if ImGui.Button("Reset Filters##VisualStatFilters") then
-            inventoryUI.armorTypeFilter = "All"
-            inventoryUI.visualFilterACMode = "All"
-            inventoryUI.visualFilterACValue = 0
-            inventoryUI.visualFilterHPMode = "All"
-            inventoryUI.visualFilterHPValue = 0
-            inventoryUI.visualFilterManaMode = "All"
-            inventoryUI.visualFilterManaValue = 0
-          end
           ImGui.Separator()
 
           -- Map class (short codes like WAR or full names like Warrior) to armor type
@@ -532,6 +486,55 @@ function M.renderContent(inventoryUI, env)
 
           -- Comparison panel on right
           ImGui.NextColumn()
+          ImGui.Text("Armor:")
+          ImGui.SameLine()
+          ImGui.SetNextItemWidth(90)
+          if ImGui.BeginCombo("##ArmorTypeFilter", inventoryUI.armorTypeFilter) then
+            for _, armorType in ipairs(armorTypes) do
+              if ImGui.Selectable(armorType, inventoryUI.armorTypeFilter == armorType) then
+                inventoryUI.armorTypeFilter = armorType
+              end
+            end
+            ImGui.EndCombo()
+          end
+
+          if inventoryUI.showVisualFilters then
+            local function renderStatFilterControls(label, modeKey, valueKey)
+              ImGui.Text(label .. ":")
+              ImGui.SameLine()
+              ImGui.SetNextItemWidth(90)
+              if ImGui.BeginCombo("##" .. modeKey, inventoryUI[modeKey]) then
+                for _, mode in ipairs(statFilterModes) do
+                  if ImGui.Selectable(mode, inventoryUI[modeKey] == mode) then
+                    inventoryUI[modeKey] = mode
+                  end
+                end
+                ImGui.EndCombo()
+              end
+              ImGui.SameLine()
+              ImGui.SetNextItemWidth(160)
+              local inputValue = ImGui.InputInt("##" .. valueKey, inventoryUI[valueKey])
+              inventoryUI[valueKey] = math.max(0, tonumber(inputValue) or 0)
+            end
+
+            ImGui.SameLine(0, 8)
+            renderStatFilterControls("AC", "visualFilterACMode", "visualFilterACValue")
+            ImGui.SameLine(0, 8)
+            renderStatFilterControls("HP", "visualFilterHPMode", "visualFilterHPValue")
+            ImGui.SameLine(0, 8)
+            renderStatFilterControls("Mana", "visualFilterManaMode", "visualFilterManaValue")
+            ImGui.SameLine(0, 8)
+            if ImGui.Button("Reset Filters##VisualStatFilters") then
+              inventoryUI.armorTypeFilter = "All"
+              inventoryUI.visualFilterACMode = "All"
+              inventoryUI.visualFilterACValue = 0
+              inventoryUI.visualFilterHPMode = "All"
+              inventoryUI.visualFilterHPValue = 0
+              inventoryUI.visualFilterManaMode = "All"
+              inventoryUI.visualFilterManaValue = 0
+            end
+          end
+          ImGui.Separator()
           if inventoryUI.selectedSlotID then
             ImGui.Text("Comparing " .. inventoryUI.selectedSlotName .. " slot across all characters:")
             ImGui.Separator()

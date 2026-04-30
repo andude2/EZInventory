@@ -77,6 +77,7 @@ local LauncherView      = require("EZInventory.UI.launcher_view")
 -- Initialization
 local inventoryUI = State.inventoryUI
 State.LoadSettings()
+State.inventoryUI.launcherSelectedPanel = "Equipped"
 
 local function UpdateInventoryActorConfig()
     if inventory_actor and inventory_actor.update_config then

@@ -33,6 +33,7 @@ M.MSG_TYPE            = {
     CHAR_ASSIGN_UPDATE    = "char_assign_update",    -- Broadcast character assignment changes
     CHAR_ASSIGN_REQUEST   = "char_assign_request",   -- Request character assignments from peers
     CHAR_ASSIGN_RESPONSE  = "char_assign_response",  -- Response with character assignments
+    DELTA_UPDATE          = "inventory_delta",       -- Partial inventory update (added/removed/changed items)
 }
 
 M.peer_inventories    = {}
@@ -42,16 +43,22 @@ M.last_inventory_fast = {}
 M.last_inventory_enriched = nil
 M.last_enriched_snapshot = {}
 M._pending_enriched_messages = {}
+M._pending_enriched_job = false
 
 local actor_mailbox   = nil
 local command_mailbox = nil
 M.inventory_snapshot  = {}
+M.change_snapshot     = {}
 
 local last_lightweight_scan = 0
 local LIGHTWEIGHT_SCAN_INTERVAL_MS = 750
+local STARTUP_ENRICH_DELAY_BASE_MS = 30000
+local STARTUP_ENRICH_DELAY_SPREAD_MS = 120000
 local SHORT_ACTION_DELAY_MS = 200
 local MEDIUM_ACTION_DELAY_MS = 400
 local LOOP_POLL_DELAY_MS = 100
+local startup_enrich_ready_at = nil
+local startup_enrich_queued = false
 
 local function get_time_ms()
     if mq and mq.gettime then
@@ -61,6 +68,39 @@ local function get_time_ms()
         end
     end
     return math.floor(os.clock() * 1000)
+end
+
+local function stable_delay_offset_ms(value, spreadMs)
+    local text = tostring(value or "")
+    local hash = 0
+    for i = 1, #text do
+        hash = ((hash * 131) + string.byte(text, i)) % 2147483647
+    end
+    spreadMs = tonumber(spreadMs) or 0
+    if spreadMs <= 0 then
+        return 0
+    end
+    return hash % spreadMs
+end
+
+local function get_startup_enrich_ready_at()
+    if startup_enrich_ready_at then
+        return startup_enrich_ready_at
+    end
+
+    local characterName = "unknown"
+    if mq and mq.TLO and mq.TLO.Me and mq.TLO.Me.CleanName then
+        characterName = mq.TLO.Me.CleanName() or characterName
+    end
+    local serverName = "unknown"
+    if mq and mq.TLO and mq.TLO.MacroQuest and mq.TLO.MacroQuest.Server then
+        serverName = mq.TLO.MacroQuest.Server() or serverName
+    end
+
+    startup_enrich_ready_at = get_time_ms()
+        + STARTUP_ENRICH_DELAY_BASE_MS
+        + stable_delay_offset_ms(serverName .. "|" .. characterName, STARTUP_ENRICH_DELAY_SPREAD_MS)
+    return startup_enrich_ready_at
 end
 
 local function trade_log(tag, fmt, ...)
@@ -128,6 +168,7 @@ local function capture_lightweight_snapshot()
             snapshot[key] = {
                 name = item.Name() or '',
                 qty = get_item_quantity(item),
+                id = item.ID() or 0,
             }
         end
     end
@@ -168,7 +209,7 @@ local function snapshots_differ(oldSnapshot, newSnapshot)
         end
         local prevName = prev.name or ''
         local prevQty = prev.qty or 0
-        if prevName ~= (entry.name or '') or prevQty ~= (entry.qty or 0) then
+        if prevName ~= (entry.name or '') or prevQty ~= (entry.qty or 0) or (prev.id or 0) ~= (entry.id or 0) then
             return true
         end
     end
@@ -180,14 +221,43 @@ local function snapshots_differ(oldSnapshot, newSnapshot)
     return false
 end
 
-local function set_snapshot_entry(snapshot, key, name, qty)
+local function copy_aug_fields(source, target)
+    if type(source) ~= "table" or type(target) ~= "table" then
+        return
+    end
+
+    for k, v in pairs(source) do
+        if type(k) == "string" and k:match("^aug%d") then
+            target[k] = v
+        end
+    end
+end
+
+local function get_item_fingerprint(name, qty, id, itemlink)
+    return table.concat({
+        tostring(id or 0),
+        tostring(name or ''),
+        tostring(qty or 0),
+        tostring(itemlink or ''),
+    }, "|")
+end
+
+local function set_snapshot_entry(snapshot, key, name, qty, id, itemlink, sourceEntry)
     if not key or key == '' or not name or name == '' then
         return
     end
     snapshot[key] = {
         name = name or '',
         qty = qty or 0,
+        id = id or 0,
+        itemlink = itemlink or '',
+        fingerprint = get_item_fingerprint(name, qty, id, itemlink),
+        augments = {},
     }
+    copy_aug_fields(sourceEntry, snapshot[key].augments)
+    if sourceEntry and sourceEntry._augCacheExtended ~= nil then
+        snapshot[key].augments._extended = sourceEntry._augCacheExtended == true
+    end
 end
 
 local function snapshot_from_inventory_data(data)
@@ -199,7 +269,7 @@ local function snapshot_from_inventory_data(data)
     for _, entry in ipairs(data.equipped or {}) do
         local slot = tonumber(entry.slotid)
         if slot then
-            set_snapshot_entry(snapshot, format_equipped_key(slot), entry.name, entry.qty)
+            set_snapshot_entry(snapshot, format_equipped_key(slot), entry.name, entry.qty, entry.id, entry.itemlink, entry)
         end
     end
 
@@ -212,7 +282,7 @@ local function snapshot_from_inventory_data(data)
             end
         end
         if invSlot then
-            set_snapshot_entry(snapshot, format_general_inventory_key(invSlot), entry.name, entry.qty)
+            set_snapshot_entry(snapshot, format_general_inventory_key(invSlot), entry.name, entry.qty, entry.id, entry.itemlink, entry)
         end
     end
 
@@ -223,7 +293,7 @@ local function snapshot_from_inventory_data(data)
             for _, bagEntry in ipairs(bagItems or {}) do
                 local slot = tonumber(bagEntry.slotid)
                 if slot then
-                    set_snapshot_entry(snapshot, format_bag_item_key(invSlot, slot), bagEntry.name, bagEntry.qty)
+                    set_snapshot_entry(snapshot, format_bag_item_key(invSlot, slot), bagEntry.name, bagEntry.qty, bagEntry.id, bagEntry.itemlink, bagEntry)
                 end
             end
         end
@@ -234,15 +304,214 @@ local function snapshot_from_inventory_data(data)
         local slotid = tonumber(entry.slotid or -1)
         if bankSlot then
             if slotid and slotid > 0 then
-                set_snapshot_entry(snapshot, format_bank_bag_key(bankSlot, slotid), entry.name, entry.qty)
+                set_snapshot_entry(snapshot, format_bank_bag_key(bankSlot, slotid), entry.name, entry.qty, entry.id, entry.itemlink, entry)
             else
-                set_snapshot_entry(snapshot, format_bank_key(bankSlot), entry.name, entry.qty)
+                set_snapshot_entry(snapshot, format_bank_key(bankSlot), entry.name, entry.qty, entry.id, entry.itemlink, entry)
             end
         end
     end
 
     return snapshot
 end
+
+-- ---------------------------------------------------------------------------
+-- Delta update helpers
+-- ---------------------------------------------------------------------------
+
+local function flatten_inventory_data(data)
+    local flat = {}
+    for _, entry in ipairs(data.equipped or {}) do
+        flat[format_equipped_key(entry.slotid)] = {section = "equipped", data = entry}
+    end
+    for _, entry in ipairs(data.inventory or {}) do
+        flat[format_general_inventory_key(entry.inventorySlot or entry.slotid)] = {section = "inventory", data = entry}
+    end
+    for bagId, bagItems in pairs(data.bags or {}) do
+        for _, entry in ipairs(bagItems) do
+            flat[format_bag_item_key(tonumber(bagId) + 22, entry.slotid)] = {section = "bags", bagid = tonumber(bagId), data = entry}
+        end
+    end
+    for _, entry in ipairs(data.bank or {}) do
+        if tonumber(entry.slotid or -1) > 0 then
+            flat[format_bank_bag_key(entry.bankslotid, entry.slotid)] = {section = "bank", data = entry}
+        else
+            flat[format_bank_key(entry.bankslotid)] = {section = "bank", data = entry}
+        end
+    end
+    return flat
+end
+
+local function parse_slot_key(key)
+    local eqSlot = key:match("^eq_(%d+)$")
+    if eqSlot then return "equipped", tonumber(eqSlot) end
+    local invSlot = key:match("^inv_(%d+)$")
+    if invSlot then return "inventory", tonumber(invSlot) end
+    local bagInvSlot, bagSlot = key:match("^bag_(%d+)_(%d+)$")
+    if bagInvSlot then return "bags", tonumber(bagSlot), tonumber(bagInvSlot) - 22 end
+    local bankBagSlot, bankSub = key:match("^bankbag_(%d+)_(%d+)$")
+    if bankBagSlot then return "bank", tonumber(bankSub), nil, tonumber(bankBagSlot) end
+    local bankSlot = key:match("^bank_(%d+)$")
+    if bankSlot then return "bank", -1, nil, tonumber(bankSlot) end
+    return nil
+end
+
+local function remove_item_by_slot(data, section, slotid, bagid, bankslotid)
+    if section == "equipped" then
+        for i, item in ipairs(data.equipped or {}) do
+            if tonumber(item.slotid) == slotid then
+                table.remove(data.equipped, i)
+                return
+            end
+        end
+    elseif section == "inventory" then
+        for i, item in ipairs(data.inventory or {}) do
+            if tonumber(item.inventorySlot) == slotid or tonumber(item.slotid) == slotid then
+                table.remove(data.inventory, i)
+                return
+            end
+        end
+    elseif section == "bags" then
+        local bid = tonumber(bagid)
+        local list = data.bags and data.bags[bid]
+        if list then
+            for i, item in ipairs(list) do
+                if tonumber(item.slotid) == slotid then
+                    table.remove(list, i)
+                    if #list == 0 then data.bags[bid] = nil end
+                    return
+                end
+            end
+        end
+    elseif section == "bank" then
+        for i, item in ipairs(data.bank or {}) do
+            if tonumber(item.bankslotid) == bankslotid and tonumber(item.slotid or -1) == slotid then
+                table.remove(data.bank, i)
+                return
+            end
+        end
+    end
+end
+
+local function merge_item_data(oldItem, newItem)
+    if type(oldItem) ~= "table" or type(newItem) ~= "table" then
+        return newItem
+    end
+    local merged = {}
+    for k, v in pairs(newItem) do
+        merged[k] = v
+    end
+    for k, v in pairs(oldItem) do
+        if merged[k] == nil then
+            merged[k] = v
+        elseif type(v) == "table" and #v > 0 and type(merged[k]) == "table" and #merged[k] == 0 then
+            -- Preserve non-empty arrays over empty arrays (e.g. enriched focusEffects)
+            merged[k] = v
+        end
+    end
+    return merged
+end
+
+local function update_or_add_item(data, section, itemData, bagid)
+    if section == "equipped" then
+        data.equipped = data.equipped or {}
+        for i, item in ipairs(data.equipped) do
+            if tonumber(item.slotid) == tonumber(itemData.slotid) then
+                data.equipped[i] = merge_item_data(item, itemData)
+                return
+            end
+        end
+        table.insert(data.equipped, itemData)
+    elseif section == "inventory" then
+        data.inventory = data.inventory or {}
+        for i, item in ipairs(data.inventory) do
+            if tonumber(item.inventorySlot) == tonumber(itemData.inventorySlot) or tonumber(item.slotid) == tonumber(itemData.slotid) then
+                data.inventory[i] = merge_item_data(item, itemData)
+                return
+            end
+        end
+        table.insert(data.inventory, itemData)
+    elseif section == "bags" then
+        local bid = tonumber(bagid or itemData.bagid)
+        data.bags = data.bags or {}
+        data.bags[bid] = data.bags[bid] or {}
+        for i, item in ipairs(data.bags[bid]) do
+            if tonumber(item.slotid) == tonumber(itemData.slotid) then
+                data.bags[bid][i] = merge_item_data(item, itemData)
+                return
+            end
+        end
+        table.insert(data.bags[bid], itemData)
+    elseif section == "bank" then
+        data.bank = data.bank or {}
+        for i, item in ipairs(data.bank) do
+            if tonumber(item.bankslotid) == tonumber(itemData.bankslotid) and tonumber(item.slotid or -1) == tonumber(itemData.slotid or -1) then
+                data.bank[i] = merge_item_data(item, itemData)
+                return
+            end
+        end
+        table.insert(data.bank, itemData)
+    end
+end
+
+local function compute_inventory_delta(oldSnapshot, newData)
+    local newSnapshot = snapshot_from_inventory_data(newData)
+    local flatData = flatten_inventory_data(newData)
+    local delta = {removed = {}, updated = {}}
+    local changedCount = 0
+
+    for key, entry in pairs(newSnapshot) do
+        local old = oldSnapshot[key]
+        if not old or old.name ~= entry.name or old.qty ~= entry.qty or old.id ~= entry.id then
+            local flat = flatData[key]
+            if flat then
+                table.insert(delta.updated, flat)
+                changedCount = changedCount + 1
+            end
+        end
+    end
+
+    for key, _ in pairs(oldSnapshot) do
+        if not newSnapshot[key] then
+            table.insert(delta.removed, key)
+            changedCount = changedCount + 1
+        end
+    end
+
+    -- If more than half the slots changed, a full update is more efficient
+    local totalSlots = 0
+    for _ in pairs(newSnapshot) do totalSlots = totalSlots + 1 end
+    for _ in pairs(oldSnapshot) do totalSlots = totalSlots + 1 end
+    if totalSlots > 0 and changedCount > totalSlots * 0.5 then
+        return nil -- signal to send full update instead
+    end
+
+    return delta
+end
+
+local function apply_inventory_delta(peerId, delta)
+    local existing = M.peer_inventories[peerId]
+    if not existing then
+        -- No baseline; request a full inventory from this peer
+        local name = peerId:match("^[^_]+_(.+)$")
+        if name then
+            M.request_inventory_for(name)
+        end
+        return
+    end
+
+    for _, key in ipairs(delta.removed or {}) do
+        local section, slotid, bagid, bankslotid = parse_slot_key(key)
+        if section then
+            remove_item_by_slot(existing, section, slotid, bagid, bankslotid)
+        end
+    end
+
+    for _, update in ipairs(delta.updated or {}) do
+        update_or_add_item(existing, update.section, update.data, update.bagid)
+    end
+end
+
+-- ---------------------------------------------------------------------------
 
 -- Add function to update configuration
 function M.update_config(new_config)
@@ -708,7 +977,7 @@ local function scan_augment_links(item, include_effects)
     return data
 end
 
-local function get_basic_item_info(item, include_extended_stats)
+local function get_basic_item_info(item, include_extended_stats, snapshotKey, skip_augments)
     local basic = {}
 
     if not item or not item() then
@@ -743,10 +1012,31 @@ local function get_basic_item_info(item, include_extended_stats)
     basic.augtype = basic.augType
     basic.AugType = basic.augType
 
-    local augments = scan_augment_links(item, include_extended_stats)
+    -- MQ2ItemType.cpp exposes Item.AugSlot(n) as an augment datatype. Reading
+    -- every slot for every item is expensive, so reuse cached aug fields while
+    -- the item slot fingerprint is unchanged. ItemLink is included because
+    -- MacroQuest builds it through GetItemLink(...), which carries socket data.
+    local fingerprint = get_item_fingerprint(basic.name, basic.qty, basic.id, basic.itemlink)
+    local cachedSnapshot = snapshotKey and M.inventory_snapshot and M.inventory_snapshot[snapshotKey] or nil
+    local cachedAugments = cachedSnapshot and cachedSnapshot.augments or nil
+    local canUseCachedAugments = cachedSnapshot
+        and cachedSnapshot.fingerprint == fingerprint
+        and type(cachedAugments) == "table"
+        and (cachedAugments._extended == true or not include_extended_stats)
+        and basic.itemlink ~= ""
+
+    local augments = {}
+    if not skip_augments then
+        if canUseCachedAugments then
+            copy_aug_fields(cachedAugments, augments)
+        else
+            augments = scan_augment_links(item, include_extended_stats)
+        end
+    end
     for k, v in pairs(augments) do
         basic[k] = v
     end
+    basic._augCacheExtended = (not skip_augments) and (canUseCachedAugments and cachedAugments._extended == true or include_extended_stats)
 
     if include_extended_stats then
         basic.ac = item.AC() or ""
@@ -1073,6 +1363,7 @@ function M.gather_inventory(options)
     includeExtendedStats = not not includeExtendedStats
     
     local onlyEquippedWithStats = options.onlyEquippedWithStats
+    local skipAugments = options.skipAugments == true
     
     local scanStage = options.scanStage
     if not scanStage or scanStage == "" then
@@ -1101,7 +1392,7 @@ function M.gather_inventory(options)
         local item = mq.TLO.Me.Inventory(slot)
         if item() then
             -- Force stats for equipped items if requested for fast UI population
-            local entry = get_basic_item_info(item, includeExtendedStats or onlyEquippedWithStats)
+            local entry = get_basic_item_info(item, includeExtendedStats or onlyEquippedWithStats, format_equipped_key(slot), skipAugments)
             entry.slotid = slot
             table.insert(data.equipped, entry)
         end
@@ -1118,7 +1409,7 @@ function M.gather_inventory(options)
     for invSlot = 23, 34 do
         local pack = mq.TLO.Me.Inventory(invSlot)
         if pack() then
-            local generalEntry = get_basic_item_info(pack, includeExtendedStats)
+            local generalEntry = get_basic_item_info(pack, includeExtendedStats, format_general_inventory_key(invSlot), skipAugments)
             generalEntry.bagid = 0
             generalEntry.slotid = invSlot
             generalEntry.inventorySlot = invSlot
@@ -1132,7 +1423,7 @@ function M.gather_inventory(options)
                 for i = 1, pack.Container() do
                     local item = pack.Item(i)
                     if item() then
-                        local entry = get_basic_item_info(item, includeExtendedStats)
+                        local entry = get_basic_item_info(item, includeExtendedStats, format_bag_item_key(invSlot, i), skipAugments)
                         entry.bagid = bagid
                         entry.slotid = i
                         entry.bagname = pack.Name()
@@ -1147,7 +1438,7 @@ function M.gather_inventory(options)
     for bankSlot = 1, 24 do
         local item = mq.TLO.Me.Bank(bankSlot)
         if item.ID() then
-            local entry = get_basic_item_info(item, includeExtendedStats)
+            local entry = get_basic_item_info(item, includeExtendedStats, format_bank_key(bankSlot), skipAugments)
             entry.bankslotid = bankSlot
             entry.slotid = -1
             table.insert(data.bank, entry)
@@ -1156,7 +1447,7 @@ function M.gather_inventory(options)
                 for i = 1, item.Container() do
                     local sub = item.Item(i)
                     if sub.ID() then
-                        local subEntry = get_basic_item_info(sub, includeExtendedStats)
+                        local subEntry = get_basic_item_info(sub, includeExtendedStats, format_bank_bag_key(bankSlot, i), skipAugments)
                         subEntry.bankslotid = bankSlot
                         subEntry.slotid = i
                         subEntry.bagname = item.Name()
@@ -1199,7 +1490,11 @@ function M.inventory_has_changed(force)
     last_lightweight_scan = now
 
     local snapshot = capture_lightweight_snapshot()
-    return snapshots_differ(M.inventory_snapshot, snapshot)
+    if snapshots_differ(M.change_snapshot, snapshot) then
+        M.change_snapshot = snapshot
+        return true
+    end
+    return false
 end
 
 local function should_collect_enriched_inventory()
@@ -1223,7 +1518,18 @@ local function send_inventory_payload(messageType, inventoryData)
     return true
 end
 
-local function queue_enriched_inventory_send(messageType, force)
+local function send_inventory_delta(deltaData)
+    if not actor_mailbox then
+        return false
+    end
+    actor_mailbox:send(
+        { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
+        { type = M.MSG_TYPE.DELTA_UPDATE, data = deltaData }
+    )
+    return true
+end
+
+local function queue_enriched_inventory_send(messageType, force, delayUntilMs)
     if not should_collect_enriched_inventory() then
         return
     end
@@ -1231,13 +1537,21 @@ local function queue_enriched_inventory_send(messageType, force)
         (not snapshots_differ(M.last_enriched_snapshot or {}, M.inventory_snapshot or {})) then
         return
     end
-    if M._pending_enriched_messages[messageType] then
+    M._pending_enriched_messages[messageType] = true
+    if M._pending_enriched_job then
         return
     end
-    M._pending_enriched_messages[messageType] = true
+    M._pending_enriched_job = true
 
-    table.insert(M.deferred_tasks, function()
-        M._pending_enriched_messages[messageType] = false
+    local function run_enriched_send()
+        if delayUntilMs and get_time_ms() < delayUntilMs then
+            table.insert(M.deferred_tasks, run_enriched_send)
+            return
+        end
+
+        local pendingMessages = M._pending_enriched_messages
+        M._pending_enriched_messages = {}
+        M._pending_enriched_job = false
         if not actor_mailbox then
             return
         end
@@ -1249,14 +1563,49 @@ local function queue_enriched_inventory_send(messageType, force)
         end
 
         local enrichedData = M.gather_inventory({ includeExtendedStats = true, scanStage = "enriched" })
-        if send_inventory_payload(messageType, enrichedData) then
-            local enrichedSnapshot = snapshot_from_inventory_data(enrichedData)
-            M.last_enriched_snapshot = enrichedSnapshot
-            if messageType == M.MSG_TYPE.UPDATE then
-                M.inventory_snapshot = enrichedSnapshot
+        local enrichedSnapshot = snapshot_from_inventory_data(enrichedData)
+        local sentAny = false
+        local sentUpdate = false
+        for pendingMessageType, _ in pairs(pendingMessages) do
+            local useDelta = false
+            if pendingMessageType == M.MSG_TYPE.UPDATE and next(M.last_enriched_snapshot or {}) then
+                local delta = compute_inventory_delta(M.last_enriched_snapshot, enrichedData)
+                if delta then
+                    delta.name = normalizeCharacterName(mq.TLO.Me.CleanName())
+                    delta.server = mq.TLO.MacroQuest.Server()
+                    delta.class = mq.TLO.Me.Class()
+                    delta.config = {
+                        loadBasicStats = M.config.loadBasicStats,
+                        loadDetailedStats = M.config.loadDetailedStats,
+                        scanStage = "enriched",
+                    }
+                    useDelta = send_inventory_delta(delta)
+                end
+            end
+            if not useDelta then
+                if send_inventory_payload(pendingMessageType, enrichedData) then
+                    sentAny = true
+                    if pendingMessageType == M.MSG_TYPE.UPDATE then
+                        sentUpdate = true
+                    end
+                end
+            else
+                sentAny = true
+                if pendingMessageType == M.MSG_TYPE.UPDATE then
+                    sentUpdate = true
+                end
             end
         end
-    end)
+        if sentAny then
+            M.last_enriched_snapshot = enrichedSnapshot
+            if sentUpdate then
+                M.inventory_snapshot = enrichedSnapshot
+                M.change_snapshot = enrichedSnapshot
+            end
+        end
+    end
+
+    table.insert(M.deferred_tasks, run_enriched_send)
 end
 
 local function should_preserve_existing_enriched(existingData, incomingData)
@@ -1300,9 +1649,9 @@ local function message_handler(message)
             end
         end
     elseif content.type == M.MSG_TYPE.REQUEST then
-        local myInventory = M.gather_inventory({ includeExtendedStats = false, scanStage = "fast" })
+        local myInventory = M.gather_inventory({ includeExtendedStats = false, scanStage = "fast", skipAugments = true })
         send_inventory_payload(M.MSG_TYPE.RESPONSE, myInventory)
-        queue_enriched_inventory_send(M.MSG_TYPE.RESPONSE)
+        queue_enriched_inventory_send(M.MSG_TYPE.RESPONSE, false, get_startup_enrich_ready_at())
     elseif content.type == M.MSG_TYPE.RESPONSE then
         if content.data and content.data.name and content.data.server then
             -- Sanitize and normalize incoming names to avoid tracking corpse entries
@@ -1322,6 +1671,14 @@ local function message_handler(message)
                 if not should_preserve_existing_enriched(existing, content.data) then
                     M.peer_inventories[peerId] = content.data
                 end
+            end
+        end
+    elseif content.type == M.MSG_TYPE.DELTA_UPDATE then
+        if content.data and content.data.name and content.data.server then
+            local normalizedName = normalizeCharacterName(content.data.name)
+            if normalizedName and normalizedName ~= "" then
+                local peerId = content.data.server .. "_" .. normalizedName
+                apply_inventory_delta(peerId, content.data)
             end
         end
     elseif content.type == M.MSG_TYPE.CONFIG_UPDATE then
@@ -1560,11 +1917,39 @@ function M.publish_inventory(force)
         return false
     end
 
-    -- Initial fast scan includes equipped stats for immediate UI/comparison population
-    local inventoryData = M.gather_inventory({ includeExtendedStats = false, onlyEquippedWithStats = true, scanStage = "fast" })
-    send_inventory_payload(M.MSG_TYPE.UPDATE, inventoryData)
+    local isStartupPublish = not startup_enrich_queued
+    local hasEnrichedInventory = M.last_inventory_enriched ~= nil
+    local inventoryData
+    if isStartupPublish or not hasEnrichedInventory then
+        inventoryData = M.gather_inventory({ includeExtendedStats = false, scanStage = "fast", skipAugments = true })
+    else
+        -- Non-startup fast scan includes equipped stats for immediate UI/comparison population.
+        inventoryData = M.gather_inventory({ includeExtendedStats = false, onlyEquippedWithStats = true, scanStage = "fast" })
+    end
+
+    local useDelta = false
+    if not isStartupPublish and next(M.inventory_snapshot or {}) then
+        local delta = compute_inventory_delta(M.inventory_snapshot, inventoryData)
+        if delta then
+            delta.name = normalizeCharacterName(mq.TLO.Me.CleanName())
+            delta.server = mq.TLO.MacroQuest.Server()
+            delta.class = mq.TLO.Me.Class()
+            delta.config = {
+                loadBasicStats = M.config.loadBasicStats,
+                loadDetailedStats = M.config.loadDetailedStats,
+                scanStage = "fast",
+            }
+            useDelta = send_inventory_delta(delta)
+        end
+    end
+    if not useDelta then
+        send_inventory_payload(M.MSG_TYPE.UPDATE, inventoryData)
+    end
+
     M.inventory_snapshot = snapshot_from_inventory_data(inventoryData)
-    queue_enriched_inventory_send(M.MSG_TYPE.UPDATE, force)
+    M.change_snapshot = capture_lightweight_snapshot()
+    startup_enrich_queued = true
+    queue_enriched_inventory_send(M.MSG_TYPE.UPDATE, force, isStartupPublish and get_startup_enrich_ready_at() or nil)
     return true
 end
 
@@ -1577,7 +1962,11 @@ function M.clear_peer_data()
     M.last_inventory_fast = {}
     M.last_inventory_enriched = nil
     M.last_enriched_snapshot = {}
+    M.change_snapshot = {}
     M._pending_enriched_messages = {}
+    M._pending_enriched_job = false
+    startup_enrich_ready_at = nil
+    startup_enrich_queued = false
     return true
 end
 
@@ -1820,15 +2209,18 @@ function M.request_peer_collectibles(callback)
 end
 
 local function handle_proxy_give_batch(data)
-    local success, batchRequest = pcall(json.decode, data)
-
-    if not success then
-        print("[ERROR] Failed to decode batch trade request - JSON parsing error")
-        return
+    local batchRequest = data
+    if type(batchRequest) == "string" then
+        local success, decoded = pcall(json.decode, batchRequest)
+        if not success then
+            print("[ERROR] Failed to decode batch trade request - JSON parsing error")
+            return
+        end
+        batchRequest = decoded
     end
 
-    if not batchRequest then
-        print("[ERROR] Failed to decode batch trade request - JSON decode returned nil")
+    if type(batchRequest) ~= "table" then
+        print("[ERROR] Invalid batch trade request - expected table")
         return
     end
 
@@ -2464,11 +2856,11 @@ function M.perform_single_item_trade(request)
             trade_wait("post-trade item transfer settle", "auto-exchange for %s", request.name)
             mq.delay(750)
             M.send_inventory_command(request.toon, "perform_auto_exchange", {
-                json.encode({
+                {
                     itemName = request.name,
                     targetSlot = request.targetSlot,
                     targetSlotName = request.targetSlotName
-                })
+                }
             })
         end
     end
@@ -2514,15 +2906,11 @@ local function handle_command_message(message)
             print("[EZInventory] Banker not found")
         end
     elseif command == "proxy_give" then
-        --printf("[DEBUG] proxy_give command received, attempting JSON decode...")
-        local request = json.decode(args[1])
-        if request then
-            --printf("Received proxy_give (single) command for: %s to %s", request.name, request.to)
-        else
-            printf("[ERROR] Failed to decode proxy_give JSON: %s", tostring(args[1]))
+        local request = args[1]
+        if type(request) == "string" then
+            request = json.decode(request)
         end
-
-        if request then
+        if type(request) == "table" then
             table.insert(M.pending_requests, {
                 type = "single_item_trade",
                 name = request.name,
@@ -2532,25 +2920,24 @@ local function handle_command_message(message)
                 slotid = request.slotid,
                 bankslotid = request.bankslotid,
                 queuedAt = get_time_ms(),
-                -- Add auto-exchange fields
                 autoExchange = request.autoExchange,
                 targetSlot = request.targetSlot,
                 targetSlotName = request.targetSlotName
             })
             trade_log("QUEUE", "Added single item request to pending queue: %s (queue=%d)",
                 describe_trade_request({ name = request.name, toon = request.to }), #M.pending_requests)
-
-            -- Auto-exchange will be handled after successful trade completion
         else
-            print("[ERROR] Failed to decode proxy_give (single) request")
+            print("[ERROR] Failed to decode proxy_give request")
         end
     elseif command == "perform_auto_exchange" then
-        local exchangeInfo = json.decode(args[1])
-        if exchangeInfo then
+        local exchangeInfo = args[1]
+        if type(exchangeInfo) == "string" then
+            exchangeInfo = json.decode(exchangeInfo)
+        end
+        if type(exchangeInfo) == "table" then
             printf("[DEBUG] Received perform_auto_exchange command for %s to slot %s",
                 exchangeInfo.itemName, exchangeInfo.targetSlotName)
 
-            -- Perform the exchange immediately since trade is already complete
             local success = M.safe_auto_exchange(
                 exchangeInfo.itemName,
                 exchangeInfo.targetSlot,
@@ -2627,8 +3014,11 @@ local function handle_command_message(message)
             print("[EZInventory] Auto-bank started")
         end)
     elseif command == "destroy_item" then
-        -- args[1] should be JSON: { name=string?, bagid=int?, slotid=int? }
-        local req = json.decode(args[1] or "") or {}
+        local req = args[1]
+        if type(req) == "string" then
+            req = json.decode(req or "") or {}
+        end
+        if type(req) ~= "table" then req = {} end
         table.insert(M.deferred_tasks, function()
             local function CursorHasItem()
                 return mq.TLO.Cursor() ~= nil and (mq.TLO.Cursor.ID() or 0) > 0

@@ -32,7 +32,8 @@ local function getSelfInventorySnapshot(preferEnriched, fallbackIncludeExtended)
 
     return inventory_actor.gather_inventory({
         includeExtendedStats = not not fallbackIncludeExtended,
-        scanStage = fallbackIncludeExtended and "enriched" or "fast"
+        scanStage = fallbackIncludeExtended and "enriched" or "fast",
+        skipAugments = not fallbackIncludeExtended,
     })
 end
 

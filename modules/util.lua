@@ -322,8 +322,8 @@ function M.renderContextMenu()
       if canDestroyRemotely then
         if ImGui.MenuItem(string.format("Destroy on %s", tostring(src))) then
           local payload = { name = item.name, bagid = item.bagid, slotid = item.slotid }
-          if inventory_actor and inventory_actor.send_inventory_command and json and json.encode then
-            inventory_actor.send_inventory_command(src, "destroy_item", { json.encode(payload) })
+          if inventory_actor and inventory_actor.send_inventory_command then
+            inventory_actor.send_inventory_command(src, "destroy_item", { payload })
           end
           M.hideContextMenu()
         end
@@ -384,7 +384,7 @@ function M.initiateProxyTrade(item, sourceChar, targetChar)
     slotid = item.slotid,
     bankslotid = item.bankslotid,
   }
-  inventory_actor.send_inventory_command(sourceChar, "proxy_give", { json.encode(peerRequest), })
+  inventory_actor.send_inventory_command(sourceChar, "proxy_give", { peerRequest })
 end
 
 function M.initiateMultiItemTrade(targetChar)
@@ -431,7 +431,7 @@ function M.initiateMultiItemTrade(targetChar)
             bankslotid = it.bankslotid,
           })
         end
-        inventory_actor.send_inventory_command(source, "proxy_give_batch", { json.encode(batchRequest), })
+        inventory_actor.send_inventory_command(source, "proxy_give_batch", { batchRequest })
       end
     end
   else

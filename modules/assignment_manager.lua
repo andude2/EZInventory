@@ -310,9 +310,9 @@ local function processNextJob()
         }
         
         local success = inventory_actor.send_inventory_command(
-            job.sourceChar, 
-            "proxy_give", 
-            { json.encode(tradeRequest) }
+            job.sourceChar,
+            "proxy_give",
+            { tradeRequest }
         )
         
         if success then
