@@ -35,6 +35,7 @@ M.MSG_TYPE            = {
     CHAR_ASSIGN_UPDATE    = "char_assign_update",    -- Broadcast character assignment changes
     CHAR_ASSIGN_REQUEST   = "char_assign_request",   -- Request character assignments from peers
     CHAR_ASSIGN_RESPONSE  = "char_assign_response",  -- Response with character assignments
+    BATCH_COMPLETE        = "batch_complete",        -- Batch trade completion callback to manager
     DELTA_UPDATE          = "inventory_delta",       -- Partial inventory update (added/removed/changed items)
 }
 
@@ -1274,6 +1275,47 @@ local function normalizeCharacterName(name)
     return cleaned
 end
 
+local function send_batch_complete_to_manager(managerPeer, targetChar, itemCount, failed, batchId)
+    local normalizedManager = normalizeCharacterName(managerPeer)
+    if not normalizedManager or normalizedManager == "" then
+        return false
+    end
+
+    local normalizedTarget = normalizeCharacterName(targetChar)
+    local completedCount = tonumber(itemCount) or 0
+    local isFailed = failed == true
+    local sent = false
+
+    if M.send_inventory_command then
+        sent = M.send_inventory_command(normalizedManager, "batch_complete", {
+            {
+                targetChar = normalizedTarget,
+                itemCount = completedCount,
+                failed = isFailed,
+                batchId = batchId,
+            }
+        }) or sent
+    end
+
+    if actor_mailbox then
+        actor_mailbox:send(
+            { mailbox = (_G.EZINV_MODULE or "ezinventory"):lower() .. '_exchange' },
+            {
+                type = M.MSG_TYPE.BATCH_COMPLETE,
+                managerPeer = normalizedManager,
+                targetChar = normalizedTarget,
+                itemCount = completedCount,
+                failed = isFailed,
+                batchId = batchId,
+                sourcePeer = normalizeCharacterName(mq.TLO.Me.CleanName()),
+            }
+        )
+        sent = true
+    end
+
+    return sent
+end
+
 -- Build a slot-aware pickup command so we click the precise item instead of relying on names.
 local function build_pickup_command(name, bagid, slotid, opts)
     opts = opts or {}
@@ -1363,8 +1405,12 @@ local function place_cursor_item_in_trade(targetToon, expectedMinFilledSlots)
         mq.cmd("/click left target")
         mq.delay(250)
 
-        if get_trade_slot_fill_count() >= expectedMinFilledSlots or not cursor_has_item() then
-            return get_trade_slot_fill_count() >= expectedMinFilledSlots or not cursor_has_item()
+        if get_trade_slot_fill_count() >= expectedMinFilledSlots then
+            return true
+        end
+
+        if not cursor_has_item() then
+            return false
         end
     end
 
@@ -1932,6 +1978,22 @@ local function message_handler(message)
                 M.peer_char_assignments[name] = content.assignments
             end
         end
+    elseif content.type == M.MSG_TYPE.BATCH_COMPLETE then
+        local managerPeer = normalizeCharacterName(content.managerPeer)
+        local myName = normalizeCharacterName(mq.TLO.Me.CleanName())
+        if managerPeer and managerPeer ~= "" and managerPeer ~= myName then
+            return
+        end
+
+        if content.targetChar then
+            local itemCount = tonumber(content.itemCount) or 0
+            local failed = content.failed == true
+            printf("[BATCH COMPLETE] Received actor completion for %d items to %s%s",
+                itemCount, tostring(content.targetChar), failed and " (FAILED)" or "")
+            if M.on_batch_complete then
+                M.on_batch_complete(content.targetChar, itemCount, failed, content.batchId)
+            end
+        end
     end
 end
 
@@ -2339,36 +2401,153 @@ local multi_trade_state = {
     target_toon = nil,
     items_to_trade = {},
     current_item_index = 1,
+    placed_item_count = 0,
     initiator = nil,
+    batch_id = nil,
     status = "IDLE",
     nav_start_time = 0,
     trade_window_open_time = 0,
     trade_completion_time = 0,
+    next_trade_confirm_at = 0,
     banker_nav_start_time = 0,
     at_banker = false,
 }
 
+local auto_accept_trade_state = {
+    active = false,
+    status = "IDLE",
+    started_at = 0,
+    click_at = 0,
+    deadline = 0,
+    batch_complete = false,
+    target_char = nil,
+    item_count = 0,
+    initiator = nil,
+    batch_id = nil,
+}
+
+local function start_auto_accept_trade(options)
+    options = options or {}
+    auto_accept_trade_state.active = true
+    auto_accept_trade_state.status = "WAIT_OPEN"
+    auto_accept_trade_state.started_at = get_time_ms()
+    auto_accept_trade_state.click_at = 0
+    auto_accept_trade_state.deadline = auto_accept_trade_state.started_at + 10000
+    auto_accept_trade_state.batch_complete = options.batchComplete == true
+    auto_accept_trade_state.target_char = options.targetChar
+    auto_accept_trade_state.item_count = tonumber(options.itemCount) or 0
+    auto_accept_trade_state.initiator = normalizeCharacterName(options.initiator)
+    auto_accept_trade_state.batch_id = options.batchId
+    trade_log("ACCEPT", "Auto-accept task started.")
+    trade_wait("incoming trade window", "auto_accept_trade")
+end
+
+local function complete_auto_accept_batch(state, failed)
+    if not state.batch_complete then
+        return
+    end
+
+    local targetChar = state.target_char or normalizeCharacterName(mq.TLO.Me.CleanName())
+    local itemCount = state.item_count or 0
+    local initiator = normalizeCharacterName(state.initiator)
+    local myName = normalizeCharacterName(mq.TLO.Me.CleanName())
+
+    if initiator and initiator ~= "" and initiator ~= myName then
+        send_batch_complete_to_manager(initiator, targetChar, itemCount, failed, state.batch_id)
+    elseif M.on_batch_complete then
+        M.on_batch_complete(targetChar, itemCount, failed, state.batch_id)
+    end
+end
+
+local function process_auto_accept_trade()
+    local state = auto_accept_trade_state
+    if not state.active then
+        return
+    end
+
+    local now = get_time_ms()
+    -- Per MQ2WindowType.cpp, Window.Open returns the window's IsVisible() state.
+    local tradeOpen = mq.TLO.Window("TradeWnd").Open()
+
+    if state.status == "WAIT_OPEN" then
+        if tradeOpen then
+            state.status = "WAIT_CLICK"
+            state.click_at = now + 500
+            state.deadline = now + 12000
+            return
+        end
+
+        if now >= state.deadline then
+            mq.cmd("/popcustom 5 TradeWnd did not open for auto-accept")
+            state.active = false
+            state.status = "IDLE"
+        end
+        return
+    end
+
+    if state.status == "WAIT_CLICK" then
+        if not tradeOpen then
+            state.active = false
+            state.status = "IDLE"
+            return
+        end
+
+        if now >= state.click_at then
+            trade_log("STEP", "Trade window open. Clicking accept.")
+            mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
+            trade_wait("sender to finalize trade | auto_accept_trade")
+            state.status = "WAIT_CLOSE"
+        end
+        return
+    end
+
+    if state.status == "WAIT_CLOSE" then
+        if not tradeOpen then
+            trade_log("ACCEPT", "Trade window closed after accept.")
+            complete_auto_accept_batch(state, false)
+            state.active = false
+            state.status = "IDLE"
+            return
+        end
+
+        if now >= state.deadline then
+            printf("[WARN] Auto-accept timed out waiting for sender to finalize trade.")
+            mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
+            complete_auto_accept_batch(state, true)
+            state.active = false
+            state.status = "IDLE"
+        end
+    end
+end
+
 function M.process_pending_requests()
+    process_auto_accept_trade()
+
     if multi_trade_state.active then
         local success = M.perform_multi_item_trade_step()
         if not success then
             printf("[ERROR] Multi-item trade failed, resetting state.")
             if multi_trade_state.initiator and multi_trade_state.initiator ~= "" then
-                M.send_inventory_command(multi_trade_state.initiator, "batch_complete", {
-                    targetChar = multi_trade_state.target_toon,
-                    itemCount = 0,
-                    failed = true,
-                })
+                send_batch_complete_to_manager(
+                    multi_trade_state.initiator,
+                    multi_trade_state.target_toon,
+                    0,
+                    true,
+                    multi_trade_state.batch_id
+                )
             end
             multi_trade_state.active = false
             if mq.TLO.Cursor.ID() then mq.delay(100) end
         elseif multi_trade_state.status == "COMPLETED" then
             printf("[BATCH] Multi-item trade session completed.")
             if multi_trade_state.initiator and multi_trade_state.initiator ~= "" then
-                M.send_inventory_command(multi_trade_state.initiator, "batch_complete", {
-                    targetChar = multi_trade_state.target_toon,
-                    itemCount = multi_trade_state.current_item_index - 1,
-                })
+                send_batch_complete_to_manager(
+                    multi_trade_state.initiator,
+                    multi_trade_state.target_toon,
+                    multi_trade_state.placed_item_count or 0,
+                    false,
+                    multi_trade_state.batch_id
+                )
             end
             multi_trade_state.active = false
         end
@@ -2385,7 +2564,9 @@ function M.process_pending_requests()
             multi_trade_state.target_toon = request.target
             multi_trade_state.items_to_trade = request.items
             multi_trade_state.current_item_index = 1
+            multi_trade_state.placed_item_count = 0
             multi_trade_state.initiator = request.initiator
+            multi_trade_state.batch_id = request.batchId
             multi_trade_state.status = "NAVIGATING"
             multi_trade_state.at_banker = false
             multi_trade_state.banker_nav_start_time = 0
@@ -2393,6 +2574,15 @@ function M.process_pending_requests()
             local success = M.perform_multi_item_trade_step()
             if not success then
                 printf("[ERROR] Initial multi-item trade step failed, resetting state.")
+                if multi_trade_state.initiator and multi_trade_state.initiator ~= "" then
+                    send_batch_complete_to_manager(
+                        multi_trade_state.initiator,
+                        multi_trade_state.target_toon,
+                        0,
+                        true,
+                        multi_trade_state.batch_id
+                    )
+                end
                 multi_trade_state.active = false
                 if mq.TLO.Cursor.ID() then mq.delay(100) end
             end
@@ -2533,6 +2723,13 @@ function M.perform_multi_item_trade_step()
                 return false
             end
 
+            -- The item is no longer in its original bank slot after autoinventory.
+            -- Use normal inventory/name pickup for the later trade placement step.
+            item_to_retrieve.fromBank = false
+            item_to_retrieve.bankslotid = nil
+            item_to_retrieve.bagid = nil
+            item_to_retrieve.slotid = nil
+
             state.current_bank_item_index = state.current_bank_item_index + 1
             return true
         else
@@ -2646,7 +2843,50 @@ function M.perform_multi_item_trade_step()
             return false
         end
         mq.cmd("/click left target")
-        mq.delay(SHORT_ACTION_DELAY_MS)
+        local tradeOpenDeadline = get_time_ms() + 5000
+        while not mq.TLO.Window("TradeWnd").Open() and get_time_ms() < tradeOpenDeadline do
+            mq.delay(LOOP_POLL_DELAY_MS)
+        end
+
+        if not mq.TLO.Window("TradeWnd").Open() then
+            printf("[ERROR] Trade window failed to open with %s. Aborting batch trade.", targetToon)
+            if cursor_has_item() then
+                mq.cmd("/autoinventory")
+                mq.delay(100)
+            end
+            return false
+        end
+
+        mq.delay(150)
+
+        local firstPlaced = false
+        if get_trade_slot_fill_count() >= 1 then
+            firstPlaced = true
+        else
+            if not cursor_has_item() then
+                printf("[BATCH STATE] Re-picking first item after trade window opened: %s", firstItemForTrade.name)
+                mq.cmd(firstPickupCmd)
+                mq.delay(SHORT_ACTION_DELAY_MS)
+            end
+
+            if cursor_has_item() then
+                firstPlaced = place_cursor_item_in_trade(targetToon, 1)
+            end
+        end
+
+        if not firstPlaced then
+            printf("[ERROR] Trade opened without placing %s. Aborting empty batch trade.", firstItemForTrade.name)
+            if cursor_has_item() then
+                mq.cmd("/autoinventory")
+                mq.delay(100)
+            end
+            if mq.TLO.Window("TradeWnd").Open() then
+                mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
+            end
+            return false
+        end
+
+        state.placed_item_count = 1
         state.current_item_index = state.current_item_index + 1
 
         mq.delay(5)
@@ -2705,6 +2945,7 @@ function M.perform_multi_item_trade_step()
                 end
                 return false
             end
+            state.placed_item_count = (state.placed_item_count or 0) + 1
             state.current_item_index = state.current_item_index + 1
             return true
         else
@@ -2713,14 +2954,32 @@ function M.perform_multi_item_trade_step()
     end
 
     if state.status == "FINALIZING_TRADE" then
-        printf("[BATCH STATE] Clicking trade button for %s items.", state.current_item_index - 1)
+        if (state.placed_item_count or 0) <= 0 or get_trade_slot_fill_count() <= 0 then
+            printf("[ERROR] Refusing to finalize empty batch trade to %s.", targetToon)
+            if mq.TLO.Window("TradeWnd").Open() then
+                mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
+            end
+            return false
+        end
+
+        printf("[BATCH STATE] Clicking trade button for %s items.", state.placed_item_count or 0)
         if not mq.TLO.Window("TradeWnd").Open() then
             printf("[WARN] Trade window closed unexpectedly before finalizing. Aborting.")
             return false
         end
+        M.send_inventory_command(targetToon, "auto_accept_trade", {
+            {
+                batchComplete = true,
+                targetChar = targetToon,
+                itemCount = state.placed_item_count or 0,
+                initiator = state.initiator,
+                batchId = state.batch_id,
+            }
+        })
+        mq.delay(300)
         mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
-        M.send_inventory_command(targetToon, "auto_accept_trade", {})
         state.trade_completion_time = get_time_ms()
+        state.next_trade_confirm_at = state.trade_completion_time + 2500
         state.status = "WAIT_FOR_TRADE_COMPLETION"
         return true
     end
@@ -2728,7 +2987,10 @@ function M.perform_multi_item_trade_step()
     if state.status == "WAIT_FOR_TRADE_COMPLETION" then
         if mq.TLO.Window("TradeWnd").Open() then
             if (get_time_ms() - state.trade_completion_time) < 10000 then
-                mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
+                if get_time_ms() >= (state.next_trade_confirm_at or 0) then
+                    mq.cmd("/notify TradeWnd TRDW_Trade_Button leftmouseup")
+                    state.next_trade_confirm_at = get_time_ms() + 2500
+                end
                 return true
             else
                 printf("[WARN] Trade window remained open for %s. Possible issue with trade. Cancelling.", targetToon)
@@ -2737,7 +2999,7 @@ function M.perform_multi_item_trade_step()
             end
         else
             printf("Successfully completed multi-item trade with %s for %d items.", targetToon,
-                state.current_item_index - 1)
+                state.placed_item_count or 0)
             state.status = "COMPLETED"
             return true
         end
@@ -3037,28 +3299,9 @@ local function handle_command_message(message)
             print("[ERROR] Failed to decode perform_auto_exchange request")
         end
     elseif command == "auto_accept_trade" then
-        table.insert(M.deferred_tasks, function()
-            trade_log("ACCEPT", "Auto-accept task started.")
-            trade_wait("incoming trade window", "auto_accept_trade")
-            local timeout = get_time_ms() + 10000
-            while not mq.TLO.Window("TradeWnd").Open() and get_time_ms() < timeout do
-                mq.delay(LOOP_POLL_DELAY_MS)
-            end
-            if mq.TLO.Window("TradeWnd").Open() then
-                local accepted = confirm_trade_until_closed({
-                    timeoutMs = 12000,
-                    clickIntervalMs = 750,
-                    initialDelayMs = 500,
-                    waitReason = "sender to finalize trade | auto_accept_trade",
-                    clickLabel = "Trade window open. Clicking accept.",
-                })
-                if not accepted and mq.TLO.Window("TradeWnd").Open() then
-                    mq.cmd("/notify TradeWnd TRDW_Cancel_Button leftmouseup")
-                end
-            else
-                mq.cmd("/popcustom 5 TradeWnd did not open for auto-accept")
-            end
-        end)
+        local options = args[1]
+        if type(options) ~= "table" then options = {} end
+        start_auto_accept_trade(options)
     elseif command == "auto_bank_sequence" then
         -- Navigate to nearest banker, open the bank window, then start auto-banking
         table.insert(M.deferred_tasks, function()
@@ -3103,7 +3346,12 @@ local function handle_command_message(message)
                 tonumber(batchInfo.itemCount) or 0, batchInfo.targetChar,
                 batchInfo.failed and " (FAILED)" or "")
             if M.on_batch_complete then
-                M.on_batch_complete(batchInfo.targetChar, tonumber(batchInfo.itemCount) or 0, batchInfo.failed)
+                M.on_batch_complete(
+                    batchInfo.targetChar,
+                    tonumber(batchInfo.itemCount) or 0,
+                    batchInfo.failed,
+                    batchInfo.batchId
+                )
             end
         end
     elseif command == "destroy_item" then

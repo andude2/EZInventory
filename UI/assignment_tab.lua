@@ -405,6 +405,15 @@ function M.renderContent(inventoryUI, env)
         -- Show pending jobs
         if AssignmentManager and AssignmentManager.getPendingJobs then
           local pendingJobs = AssignmentManager.getPendingJobs()
+          if (status.currentBatch or #pendingJobs > 0) and AssignmentManager.markCurrentCompleteAndContinue then
+            if ImGui.Button("Mark Complete + Next##AssignmentMarkCompleteNext") then
+              AssignmentManager.markCurrentCompleteAndContinue()
+            end
+            if ImGui.IsItemHovered() then
+              ImGui.SetTooltip("Mark the current trade batch complete and continue to the next pending assignment.")
+            end
+          end
+
           if #pendingJobs > 0 then
             ImGui.Text("Pending Jobs (%d):", #pendingJobs)
             for i, job in ipairs(pendingJobs) do

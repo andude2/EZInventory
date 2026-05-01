@@ -10,8 +10,9 @@ local Settings = nil
 local itemNameCache = {}
 
 local BATCH_SIZE = 8
-local BATCH_BASE_TIMEOUT_MS = 45000
-local BATCH_PER_ITEM_TIMEOUT_MS = 5000
+local BATCH_BASE_TIMEOUT_MS = 15000
+local BATCH_PER_ITEM_TIMEOUT_MS = 3000
+local BATCH_MAX_TIMEOUT_MS = 30000
 local BATCH_COOLDOWN_MS = 3000
 
 local tradeQueue = {
@@ -36,7 +37,7 @@ end
 local function now_ms()
     local current = mq.gettime()
     if current then
-        return math.floor(current / 1000)
+        return math.floor(current)
     end
     return math.floor(os.clock() * 1000)
 end
@@ -297,13 +298,6 @@ local function sendNextBatch()
         return false
     end
 
-    local sourceCooldowns = tradeQueue.lastBatchSentToSource
-    for source, sentAt in pairs(sourceCooldowns) do
-        if (now_ms() - sentAt) < BATCH_COOLDOWN_MS then
-            return true
-        end
-    end
-
     local batches = groupJobsIntoBatches(tradeQueue.pendingJobs)
     if #batches == 0 then
         tradeQueue.status = "IDLE"
@@ -315,6 +309,10 @@ local function sendNextBatch()
     local sourceChar = batch[1].sourceChar
     local targetChar = batch[1].targetChar
     local itemCount = #batch
+    local lastSentToSource = tradeQueue.lastBatchSentToSource[normalizeChar(sourceChar)] or 0
+    if (now_ms() - lastSentToSource) < BATCH_COOLDOWN_MS then
+        return true
+    end
 
     local batchItems = {}
     for _, job in ipairs(batch) do
@@ -340,6 +338,7 @@ local function sendNextBatch()
         target = targetChar,
         items = batchItems,
         initiator = mq.TLO.Me.CleanName(),
+        batchId = string.format("%s:%s:%d", tostring(sourceChar), tostring(targetChar), now_ms()),
     }
 
     printf("[Assignment Manager] Sending batch: %d items from %s -> %s", itemCount, sourceChar, targetChar)
@@ -357,12 +356,13 @@ local function sendNextBatch()
             jobs = batch,
             sourceChar = sourceChar,
             targetChar = targetChar,
+            batchId = batchRequest.batchId,
             sentAt = now_ms(),
         }
         tradeQueue.lastBatchSentToSource[normalizeChar(sourceChar)] = now_ms()
         tradeQueue.lastActivityTime = now_ms()
 
-        local timeoutMs = BATCH_BASE_TIMEOUT_MS + (itemCount * BATCH_PER_ITEM_TIMEOUT_MS)
+        local timeoutMs = math.min(BATCH_MAX_TIMEOUT_MS, BATCH_BASE_TIMEOUT_MS + (itemCount * BATCH_PER_ITEM_TIMEOUT_MS))
         tradeQueue.currentBatch.timeoutMs = timeoutMs
 
         tradeQueue.status = "WAITING_FOR_BATCH"
@@ -451,7 +451,7 @@ function M.stop()
     printf("[Assignment Manager] Queue processing stopped")
 end
 
-function M.onBatchComplete(targetChar, itemCount, failed)
+function M.onBatchComplete(targetChar, itemCount, failed, batchId)
     if not tradeQueue.active or tradeQueue.status ~= "WAITING_FOR_BATCH" then
         return
     end
@@ -461,6 +461,12 @@ function M.onBatchComplete(targetChar, itemCount, failed)
     end
 
     local batch = tradeQueue.currentBatch
+    if batch.batchId and batchId and batch.batchId ~= batchId then
+        printf("[Assignment Manager] Received batch_complete id %s but waiting for %s, ignoring",
+            tostring(batchId), tostring(batch.batchId))
+        return
+    end
+
     if normalizeChar(batch.targetChar) ~= normalizeChar(targetChar) then
         printf("[Assignment Manager] Received batch_complete for %s but waiting for %s, ignoring",
             targetChar, batch.targetChar)
@@ -475,14 +481,54 @@ function M.onBatchComplete(targetChar, itemCount, failed)
         end
     else
         printf("[Assignment Manager] Batch complete: %d items to %s", itemCount or 0, targetChar)
-        for _, job in ipairs(batch.jobs) do
-            job.status = "COMPLETED"
+        local completedItems = tonumber(itemCount) or 0
+        for index, job in ipairs(batch.jobs) do
+            if index <= completedItems then
+                job.status = "COMPLETED"
+            else
+                job.status = "FAILED"
+                printf("[Assignment Manager] Batch only completed %d/%d items; marking %s failed",
+                    completedItems, #batch.jobs, tostring(job.itemName or "unknown"))
+            end
             table.insert(tradeQueue.completedJobs, job)
         end
     end
 
     tradeQueue.currentBatch = nil
     tradeQueue.status = "IDLE"
+end
+
+function M.markCurrentCompleteAndContinue()
+    if not tradeQueue.active then
+        printf("[Assignment Manager] Queue is not active")
+        return false
+    end
+
+    if tradeQueue.currentBatch then
+        local batch = tradeQueue.currentBatch
+        printf("[Assignment Manager] Manually marking current batch complete: %d items from %s -> %s",
+            #batch.jobs, tostring(batch.sourceChar or "unknown"), tostring(batch.targetChar or "unknown"))
+        for _, job in ipairs(batch.jobs) do
+            job.status = "COMPLETED"
+            table.insert(tradeQueue.completedJobs, job)
+        end
+        tradeQueue.currentBatch = nil
+        tradeQueue.status = "IDLE"
+        tradeQueue.lastActivityTime = now_ms()
+        return true
+    end
+
+    if #tradeQueue.pendingJobs > 0 then
+        printf("[Assignment Manager] No current batch; continuing to next pending assignment")
+        tradeQueue.status = "IDLE"
+        tradeQueue.lastActivityTime = 0
+        return sendNextBatch()
+    end
+
+    printf("[Assignment Manager] No current batch or pending jobs to continue")
+    tradeQueue.status = "IDLE"
+    tradeQueue.active = false
+    return false
 end
 
 function M.clearQueue()
