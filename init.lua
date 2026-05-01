@@ -85,6 +85,7 @@ local function UpdateInventoryActorConfig()
             loadBasicStats = State.Settings.loadBasicStats,
             loadDetailedStats = State.Settings.loadDetailedStats,
             enableStatsFiltering = State.Settings.enableStatsFiltering or true,
+            excludedPeers = State.Settings.excludedPeers or {},
         })
     end
 end
@@ -193,6 +194,8 @@ AssignmentManager.setup({
     Settings = State.Settings,
 })
 
+inventory_actor.on_batch_complete = AssignmentManager.onBatchComplete
+
 Util.setup({
     ImGui = ImGui,
     mq = mq,
@@ -291,7 +294,7 @@ end)
 local function main()
     Bindings.setup({
         mq = mq, inventory_actor = inventory_actor, inventoryUI = inventoryUI,
-        Settings = State.Settings, Banking = Banking, AssignmentManager = AssignmentManager,
+        Settings = State.Settings, SettingsFile = State.SettingsFile, Banking = Banking, AssignmentManager = AssignmentManager,
         setMainWindowVisible = WindowManager.setMainWindowVisible,
         UpdateInventoryActorConfig = UpdateInventoryActorConfig,
         OnStatsLoadingModeChanged = OnStatsLoadingModeChanged,

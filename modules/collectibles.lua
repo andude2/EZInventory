@@ -131,6 +131,10 @@ end
 
 -- Callback for peer collectibles responses
 function Collectibles.onPeerCollectiblesReceived(peerName, collectibles)
+    if inventory_actor.is_peer_excluded and inventory_actor.is_peer_excluded(peerName) then
+        Collectibles.peerItems[peerName] = nil
+        return
+    end
     if Collectibles.peerItems[peerName] then
         -- Update existing peer data
         Collectibles.peerItems[peerName] = collectibles
@@ -173,16 +177,20 @@ function Collectibles.renderContent(options)
     local totalLocal = #Collectibles.items
     local totalPeers = 0
     local peerCount = 0
-    for _, items in pairs(Collectibles.peerItems) do
-        totalPeers = totalPeers + #items
-        peerCount = peerCount + 1
+    for peerName, items in pairs(Collectibles.peerItems) do
+        if not (inventory_actor.is_peer_excluded and inventory_actor.is_peer_excluded(peerName)) then
+            totalPeers = totalPeers + #items
+            peerCount = peerCount + 1
+        end
     end
 
     -- Check connected peers from inventory actor
     local connectedPeerCount = 0
     if inventory_actor.peer_inventories then
-        for _ in pairs(inventory_actor.peer_inventories) do
-            connectedPeerCount = connectedPeerCount + 1
+        for _, invData in pairs(inventory_actor.peer_inventories) do
+            if not (inventory_actor.is_peer_excluded and inventory_actor.is_peer_excluded(invData and invData.name)) then
+                connectedPeerCount = connectedPeerCount + 1
+            end
         end
     end
 
@@ -235,7 +243,7 @@ function Collectibles.renderContent(options)
 
     -- Add peer items (exclude local character to avoid duplicates)
     for peerName, items in pairs(Collectibles.peerItems) do
-        if peerName ~= localChar then -- Skip local character to avoid duplicates
+        if peerName ~= localChar and not (inventory_actor.is_peer_excluded and inventory_actor.is_peer_excluded(peerName)) then -- Skip local character to avoid duplicates
             for _, item in ipairs(items) do
                 local displayItem = {}
                 for k, v in pairs(item) do

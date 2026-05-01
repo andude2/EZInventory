@@ -21,6 +21,20 @@ local function getBroadcastCommand()
     return string.format("/lua run %s", getBroadcastName())
 end
 
+local function isPeerExcluded(peerName)
+    if inventory_actor and inventory_actor.is_peer_excluded then
+        return inventory_actor.is_peer_excluded(peerName)
+    end
+    local normalized = character_utils and character_utils.extractCharacterName(peerName) or peerName
+    for _, excluded in ipairs((state and state.Settings and state.Settings.excludedPeers) or {}) do
+        local excludedName = character_utils and character_utils.extractCharacterName(excluded) or excluded
+        if normalized and excludedName and normalized:lower() == excludedName:lower() then
+            return true
+        end
+    end
+    return false
+end
+
 local EMPTY_INVENTORY_DATA = { equipped = {}, inventory = {}, bags = {}, bank = {}, }
 local inventoryFingerprintCache = setmetatable({}, { __mode = "k" })
 
@@ -166,7 +180,7 @@ local function buildPeerRecordMap(myName, myServer)
         local peerName = character_utils.extractCharacterName(invData.name)
         local peerServer = tostring(invData.server or "Unknown")
         local peerKey = string.format("%s|%s", peerServer, peerName)
-        if peerKey ~= selfKey then
+        if peerKey ~= selfKey and not isPeerExcluded(peerName) then
             records[peerKey] = {
                 key = peerKey,
                 name = peerName,
@@ -262,7 +276,7 @@ function M.loadInventoryData(peer)
     end
 end
 
-function M.getPeerConnectionStatus()
+function M.getPeerConnectionStatus(includeExcluded)
     local connectionMethod = "None"
     local connectedPeers = {}
     local function string_trim(s) return s:match("^%s*(.-)%s*$") end
@@ -274,7 +288,8 @@ function M.getPeerConnectionStatus()
             for peer in string.gmatch(peersStr, "([^,]+)") do
                 peer = string_trim(peer)
                 local normalizedPeer = character_utils.extractCharacterName(peer)
-                if peer ~= "" and normalizedPeer ~= character_utils.extractCharacterName(mq.TLO.Me.CleanName()) then
+                if peer ~= "" and normalizedPeer ~= character_utils.extractCharacterName(mq.TLO.Me.CleanName())
+                    and (includeExcluded or not isPeerExcluded(normalizedPeer)) then
                     table.insert(connectedPeers, { name = normalizedPeer, displayName = peer, method = "MQ2Mono", online = true })
                 end
             end
@@ -287,7 +302,8 @@ function M.getPeerConnectionStatus()
                 peer = string_trim(peer)
                 if peer ~= "" then
                     local charName = character_utils.extractCharacterName(peer)
-                    if charName ~= character_utils.extractCharacterName(mq.TLO.Me.CleanName()) then
+                    if charName ~= character_utils.extractCharacterName(mq.TLO.Me.CleanName())
+                        and (includeExcluded or not isPeerExcluded(charName)) then
                         table.insert(connectedPeers, { name = charName, displayName = peer, method = "DanNet", online = true })
                     end
                 end
@@ -298,7 +314,8 @@ function M.getPeerConnectionStatus()
         local names = mq.TLO.EQBC.Names() or ""
         for name in names:gmatch("([^%s]+)") do
             local normalizedName = character_utils.extractCharacterName(name)
-            if normalizedName ~= character_utils.extractCharacterName(mq.TLO.Me.CleanName()) then
+            if normalizedName ~= character_utils.extractCharacterName(mq.TLO.Me.CleanName())
+                and (includeExcluded or not isPeerExcluded(normalizedName)) then
                 table.insert(connectedPeers, { name = normalizedName, displayName = name, method = "EQBC", online = true })
             end
         end
@@ -331,7 +348,7 @@ function M.init()
     inventoryUI._peerRequestQueue = {}
     local _, connectedPeers = M.getPeerConnectionStatus()
     for _, p in ipairs(connectedPeers or {}) do
-        if p.name and p.name ~= normalizedMyName then
+        if p.name and p.name ~= normalizedMyName and not isPeerExcluded(p.name) then
             table.insert(inventoryUI._peerRequestQueue, p.name)
         end
     end
@@ -421,13 +438,22 @@ function M.updatePeerList()
 end
 
 function M.broadcastLuaRun(connectionMethod)
-    local cmd = getBroadcastCommand()
-    if connectionMethod == "MQ2Mono" then mq.cmd("/e3bcaa " .. cmd)
-    elseif connectionMethod == "DanNet" then mq.cmd("/dgaexecute " .. cmd)
-    elseif connectionMethod == "EQBC" then mq.cmd("/bca /" .. cmd) end
+    local _, connectedPeers = M.getPeerConnectionStatus()
+    local sent = 0
+    for _, peer in ipairs(connectedPeers or {}) do
+        if peer.name and not isPeerExcluded(peer.name) then
+            M.sendLuaRunToPeer(peer.name, connectionMethod)
+            sent = sent + 1
+        end
+    end
+    printf("Sent EZInventory startup to %d non-excluded peers via %s", sent, tostring(connectionMethod or "Unknown"))
 end
 
 function M.sendLuaRunToPeer(peerName, connectionMethod)
+    if isPeerExcluded(peerName) then
+        printf("Skipping excluded peer %s", tostring(peerName))
+        return false
+    end
     local cmd = getBroadcastCommand()
 
     if connectionMethod == "DanNet" then
@@ -441,20 +467,15 @@ function M.sendLuaRunToPeer(peerName, connectionMethod)
         printf("Sent to %s via MQ2Mono: %s", peerName, cmd)
     else
         printf("Cannot send to %s - no valid connection method", peerName)
+        return false
     end
+    return true
 end
 
 function M.autoStartPeers()
-    local broadcastName = getBroadcastName()
-    if mq.TLO.Plugin("MQ2Mono").IsLoaded() then
-        mq.cmdf("/e3bca /lua run %s", broadcastName)
-        print("Broadcasting inventory startup via MQ2Mono to all connected clients...")
-    elseif mq.TLO.Plugin("MQ2DanNet").IsLoaded() then
-        mq.cmdf("/dgaexecute /lua run %s", broadcastName)
-        print("Broadcasting inventory startup via DanNet to all connected clients...")
-    elseif mq.TLO.Plugin("MQ2EQBC").IsLoaded() and mq.TLO.EQBC.Connected() then
-        mq.cmdf("/bca //lua run %s", broadcastName)
-        print("Broadcasting inventory startup via EQBC to all connected clients...")
+    local connectionMethod = M.getPeerConnectionStatus()
+    if connectionMethod ~= "None" then
+        M.broadcastLuaRun(connectionMethod)
     else
         print("\ar[EZInventory] Warning: Neither DanNet nor EQBC is available for broadcasting\ax")
     end
@@ -510,7 +531,9 @@ function M.update()
         if (now - (inventoryUI._lastPeerRequestTime or 0)) > 300 then
             local nextPeer = table.remove(inventoryUI._peerRequestQueue, 1)
             local myName = character_utils.extractCharacterName(mq.TLO.Me.CleanName())
-            if nextPeer == myName then
+            if isPeerExcluded(nextPeer) then
+                -- Excluded peer was queued before settings changed; skip it.
+            elseif nextPeer == myName then
                 inventory_actor.publish_inventory()
             else
                 if inventory_actor.request_inventory_for then

@@ -36,6 +36,7 @@ function M.render(inventoryUI, env)
         { id = "CheckUpgrades", label = "Upgrades", icon = icons.FA_CHEVRON_CIRCLE_UP or "U", visibleSetting = "launcherShowCheckUpgrades" },
         { id = "FocusEffects", label = "Focus", icon = icons.FA_MAGIC or "F", visibleSetting = "launcherShowFocusEffects" },
         { id = "Collectibles", label = "Collectibles", icon = icons.FA_STAR or "C", visibleSetting = "launcherShowCollectibles" },
+        { id = "Peers", label = "Peers", icon = icons.FA_USERS or "P", visibleSetting = "launcherShowPeers" },
         { id = "WindowSettings", label = "Settings", icon = icons.FA_COG or "W" },
     }
 
@@ -91,6 +92,7 @@ function M.render(inventoryUI, env)
         ui.launcherShowCheckUpgrades = ImGui.Checkbox("Upgrades", ui.launcherShowCheckUpgrades ~= false)
         ui.launcherShowFocusEffects = ImGui.Checkbox("Focus", ui.launcherShowFocusEffects ~= false)
         ui.launcherShowCollectibles = ImGui.Checkbox("Collectibles", ui.launcherShowCollectibles ~= false)
+        ui.launcherShowPeers = ImGui.Checkbox("Peers", ui.launcherShowPeers ~= false)
 
         if ImGui.Button("Save Config", 120, 0) then
             if env.actions and env.actions.saveConfig then
@@ -145,6 +147,7 @@ function M.render(inventoryUI, env)
         Augments = { title = "Augment Search", module = env.modules and env.modules.AugmentsTab, moduleEnv = env.envs and setmetatable({ isPopout = true }, { __index = env.envs.Augments }), popout = true },
         CheckUpgrades = { title = "Upgrade Check", module = env.modules and env.modules.CheckUpgradesTab, moduleEnv = env.envs and env.envs.CheckUpgrades, popout = true },
         FocusEffects = { title = "Focus Effects Analysis", module = env.modules and env.modules.FocusEffectsTab, moduleEnv = env.envs and env.envs.FocusEffects, popout = true },
+        Peers = { title = "Peer Management", module = env.modules and env.modules.PeerTab, moduleEnv = env.envs and env.envs.Peer, popout = true },
         Collectibles = { title = "Collectibles", render = function()
             if env.collectibles and env.collectibles.renderContent then
                 env.collectibles.renderContent()
@@ -254,7 +257,6 @@ function M.render(inventoryUI, env)
         inventoryUI.windows.Bags = false
         inventoryUI.windows.Bank = false
     end
-    inventoryUI.windows.Peers = false
     inventoryUI.windows.Performance = false
 
     local function renderWindow(key, title, module, moduleEnv)

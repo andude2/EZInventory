@@ -568,4 +568,70 @@ function M.build_loose_augments_for_peers(peerEntries, targetSlot, options)
     return results
 end
 
+function M.build_loose_augment_upgrades(insertedAugRow, peerEntries)
+    local augTypeSlots = insertedAugRow.augmentTypeSlots or {}
+    if #augTypeSlots == 0 then
+        return {}, insertedAugRow
+    end
+
+    local baseAc = tonumber(insertedAugRow.ac) or 0
+    local baseHp = tonumber(insertedAugRow.hp) or 0
+    local baseMana = tonumber(insertedAugRow.mana) or 0
+    local baseId = tonumber(insertedAugRow.augmentId) or 0
+
+    local virtualSlot = {
+        slotTypeSlots = augTypeSlots,
+        peerName = insertedAugRow.peerName,
+        peerServer = insertedAugRow.peerServer,
+        parentItemName = insertedAugRow.insertedIn or "Unknown",
+        augSlot = insertedAugRow.augSlot,
+        slotTypeRaw = insertedAugRow.augmentTypeRaw or "",
+        slotTypeDisplay = insertedAugRow.augmentTypeDisplay or "--",
+    }
+
+    local candidates = M.build_loose_augments_for_peers(peerEntries, virtualSlot, {
+        includeEquipped = false,
+        includeInventory = true,
+        includeBank = true,
+    })
+
+    local upgrades = {}
+    for _, candidate in ipairs(candidates) do
+        if (tonumber(candidate.augmentId) or 0) == baseId then
+            goto continue
+        end
+
+        local candAc = tonumber(candidate.ac) or 0
+        local candHp = tonumber(candidate.hp) or 0
+        local candMana = tonumber(candidate.mana) or 0
+
+        if candAc > baseAc or candHp > baseHp or candMana > baseMana then
+            candidate._upgradeDiff = {
+                ac = candAc - baseAc,
+                hp = candHp - baseHp,
+                mana = candMana - baseMana,
+            }
+            table.insert(upgrades, candidate)
+        end
+
+        ::continue::
+    end
+
+    table.sort(upgrades, function(a, b)
+        local scoreA = (tonumber(a.hp) or 0) + (tonumber(a.mana) or 0) + (tonumber(a.ac) or 0) * 2
+        local scoreB = (tonumber(b.hp) or 0) + (tonumber(b.mana) or 0) + (tonumber(b.ac) or 0) * 2
+        if scoreA ~= scoreB then
+            return scoreA > scoreB
+        end
+        local nameA = (a.augmentName or ""):lower()
+        local nameB = (b.augmentName or ""):lower()
+        if nameA ~= nameB then
+            return nameA < nameB
+        end
+        return (tonumber(a.augmentId) or 0) < (tonumber(b.augmentId) or 0)
+    end)
+
+    return upgrades, insertedAugRow
+end
+
 return M

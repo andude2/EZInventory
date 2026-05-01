@@ -150,6 +150,18 @@ function M.renderContent(inventoryUI, env)
       end
     end
 
+    local isExecuting = AssignmentManager and AssignmentManager.isBusy() or false
+    if isExecuting then
+      ImGui.SameLine()
+      ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.8, 0.3, 0.2, 1.0))
+      if ImGui.Button("Stop Queue") then
+        if AssignmentManager and AssignmentManager.stop then
+          AssignmentManager.stop()
+        end
+      end
+      ImGui.PopStyleColor()
+    end
+
     ImGui.Separator()
 
     -- Function to compute assignment data (expensive, so we cache it)
@@ -347,29 +359,46 @@ function M.renderContent(inventoryUI, env)
         ImGui.Separator()
         ImGui.Text("Trade Queue Status:")
         
-        if ImGui.BeginTable("QueueTable", 3, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg) then
-          ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 100)
-          ImGui.TableSetupColumn("Pending", ImGuiTableColumnFlags.WidthFixed, 80)
-          ImGui.TableSetupColumn("Current Job", ImGuiTableColumnFlags.WidthStretch)
+        if ImGui.BeginTable("QueueTable", 4, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg) then
+          ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 120)
+          ImGui.TableSetupColumn("Pending", ImGuiTableColumnFlags.WidthFixed, 60)
+          ImGui.TableSetupColumn("Completed", ImGuiTableColumnFlags.WidthFixed, 70)
+          ImGui.TableSetupColumn("Current Batch", ImGuiTableColumnFlags.WidthStretch)
           ImGui.TableHeadersRow()
-          
+
           ImGui.TableNextRow()
           ImGui.TableSetColumnIndex(0)
-          ImGui.Text(status.status or "Unknown")
-          
+          local statusText = status.status or "Unknown"
+          if statusText == "WAITING_FOR_BATCH" then
+            ImGui.PushStyleColor(ImGuiCol.Text, ImVec4(0.3, 0.7, 1.0, 1.0))
+          elseif statusText == "IDLE" and status.pendingJobs and status.pendingJobs > 0 then
+            ImGui.PushStyleColor(ImGuiCol.Text, ImVec4(0.8, 0.8, 0.3, 1.0))
+          else
+            ImGui.PushStyleColor(ImGuiCol.Text, ImVec4(0.3, 0.8, 0.3, 1.0))
+          end
+          ImGui.Text(statusText)
+          ImGui.PopStyleColor()
+
           ImGui.TableSetColumnIndex(1)
           ImGui.Text(tostring(status.pendingJobs or 0))
-          
+
           ImGui.TableSetColumnIndex(2)
-          if status.currentJob then
-            ImGui.Text("%s: %s -> %s", 
-              status.currentJob.itemName or "Unknown",
-              status.currentJob.sourceChar or "Unknown",
-              status.currentJob.targetChar or "Unknown")
+          ImGui.Text(tostring(status.completedJobs or 0))
+
+          ImGui.TableSetColumnIndex(3)
+          if status.currentBatch then
+            local batch = status.currentBatch
+            local elapsedSec = math.floor(batch.elapsed / 1000)
+            local timeoutSec = math.ceil(batch.timeoutMs / 1000)
+            ImGui.Text("%d items: %s -> %s (%ds/%ds)",
+              batch.itemCount or 0,
+              batch.sourceChar or "Unknown",
+              batch.targetChar or "Unknown",
+              elapsedSec, timeoutSec)
           else
             ImGui.Text("None")
           end
-          
+
           ImGui.EndTable()
         end
         

@@ -7,6 +7,7 @@ function M.setup(env)
   local inventory_actor = env.inventory_actor
   local inventoryUI = env.inventoryUI
   local Settings = env.Settings
+  local SettingsFile = env.SettingsFile
   local UpdateInventoryActorConfig = env.UpdateInventoryActorConfig
   local OnStatsLoadingModeChanged = env.OnStatsLoadingModeChanged
   local Banking = env.Banking
@@ -20,6 +21,9 @@ function M.setup(env)
     { binding = "/ezinventory_stats_mode",      description = "Changes stats loading mode: minimal/selective/full" },
     { binding = "/ezinventory_toggle_basic",    description = "Toggles basic stats loading on/off" },
     { binding = "/ezinventory_toggle_detailed", description = "Toggles detailed stats loading on/off" },
+    { binding = "/ezinventory_exclude <name>",  description = "Excludes a character from peer cache, commands, and searches." },
+    { binding = "/ezinventory_include <name>",  description = "Removes a character from the exclusion list." },
+    { binding = "/ezinventory_exclusions",      description = "Lists excluded characters." },
     { binding = "/ezinv_autobank",              description = "Starts the Auto-Bank sequence on this character" },
     { binding = "/ezinvassign show",            description = "Show all character assignments across all characters" },
     { binding = "/ezinvassign execute",         description = "Execute all character assignments (consolidate items)" },
@@ -84,6 +88,79 @@ function M.setup(env)
     UpdateInventoryActorConfig()
     print(string.format("[EZInventory] Detailed stats loading: %s",
     Settings.loadDetailedStats and "ENABLED" or "DISABLED"))
+  end)
+
+  local function normalizePeerName(name)
+    if not name or name == "" then return nil end
+    local cleaned = tostring(name)
+    if cleaned:find("_") then
+      local lastPart = nil
+      for part in cleaned:gmatch("[^_]+") do lastPart = part end
+      cleaned = lastPart or cleaned
+    end
+    cleaned = cleaned:gsub("%s*[%`’']s [Cc]orpse%d*$", "")
+    cleaned = cleaned:match("^%s*(.-)%s*$") or cleaned
+    if cleaned == "" then return nil end
+    return cleaned:sub(1, 1):upper() .. cleaned:sub(2):lower()
+  end
+
+  local function saveExcludedPeers(peers)
+    local normalizedPeers = {}
+    local seen = {}
+    for _, name in ipairs(peers or {}) do
+      local normalized = normalizePeerName(name)
+      if normalized and not seen[normalized:lower()] then
+        table.insert(normalizedPeers, normalized)
+        seen[normalized:lower()] = true
+      end
+    end
+    table.sort(normalizedPeers, function(a, b) return a:lower() < b:lower() end)
+    Settings.excludedPeers = normalizedPeers
+    inventoryUI.excludedPeers = normalizedPeers
+    if inventory_actor and inventory_actor.update_config then
+      inventory_actor.update_config({ excludedPeers = normalizedPeers })
+    end
+    if mq and mq.pickle and SettingsFile then
+      mq.pickle(SettingsFile, Settings)
+    end
+    if UpdateInventoryActorConfig then
+      UpdateInventoryActorConfig()
+    end
+    return normalizedPeers
+  end
+
+  mq.bind("/ezinventory_exclude", function(peerName)
+    local normalized = normalizePeerName(peerName)
+    if not normalized then
+      print("Usage: /ezinventory_exclude <character>")
+      return
+    end
+    local nextExcluded = {}
+    for _, name in ipairs(Settings.excludedPeers or {}) do table.insert(nextExcluded, name) end
+    table.insert(nextExcluded, normalized)
+    local saved = saveExcludedPeers(nextExcluded)
+    printf("[EZInventory] Excluded %s. Current exclusions: %s", normalized, table.concat(saved, ", "))
+  end)
+
+  mq.bind("/ezinventory_include", function(peerName)
+    local normalized = normalizePeerName(peerName)
+    if not normalized then
+      print("Usage: /ezinventory_include <character>")
+      return
+    end
+    local nextExcluded = {}
+    for _, name in ipairs(Settings.excludedPeers or {}) do
+      if normalizePeerName(name) ~= normalized then
+        table.insert(nextExcluded, name)
+      end
+    end
+    local saved = saveExcludedPeers(nextExcluded)
+    printf("[EZInventory] Included %s. Current exclusions: %s", normalized, #saved > 0 and table.concat(saved, ", ") or "(none)")
+  end)
+
+  mq.bind("/ezinventory_exclusions", function()
+    local excluded = Settings.excludedPeers or {}
+    printf("[EZInventory] Excluded peers: %s", #excluded > 0 and table.concat(excluded, ", ") or "(none)")
   end)
 
     mq.bind('/ezinvbank', function()

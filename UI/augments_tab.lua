@@ -63,14 +63,30 @@ local function row_matches_slot_type(row, selectedSlotType)
   return false
 end
 
-local function build_slot_type_options(rows, showEmptySlots)
+local function row_has_slot_type(row, targetSlotType, showEmptySlots)
+  local target = tonumber(targetSlotType)
+  if not target then
+    return false
+  end
+
+  local slotTypes = showEmptySlots and row.slotTypeSlots or row.augmentTypeSlots
+  for _, slotType in ipairs(slotTypes or {}) do
+    if tonumber(slotType) == target then
+      return true
+    end
+  end
+
+  return false
+end
+
+local function build_slot_type_options(rows, showEmptySlots, hideType20)
   local values = { All = true }
 
   for _, row in ipairs(rows or {}) do
     local slotTypes = showEmptySlots and row.slotTypeSlots or row.augmentTypeSlots
     for _, slotType in ipairs(slotTypes or {}) do
       local numeric = tonumber(slotType)
-      if numeric and numeric > 0 then
+      if numeric and numeric > 0 and not (hideType20 and numeric == 20) then
         values[tostring(numeric)] = true
       end
     end
@@ -102,6 +118,87 @@ local function find_peer_entry(inventoryUI, serverName, peerName)
   end
 
   return nil
+end
+
+local function is_self_peer(mq, peerName, peerServer)
+  local myName = (mq.TLO.Me and mq.TLO.Me.CleanName and mq.TLO.Me.CleanName()) or ""
+  local myServer = (mq.TLO.MacroQuest and mq.TLO.MacroQuest.Server and mq.TLO.MacroQuest.Server()) or ""
+  return tostring(peerName or "") == tostring(myName) and tostring(peerServer or "") == tostring(myServer)
+end
+
+local function render_aug_trade_actions(inventoryUI, env, row, targetPeerName, targetPeerServer, labelPrefix, rowIndex)
+  local ImGui = env.ImGui
+  local mq = env.mq
+  local inventory_actor = env.inventory_actor
+
+  if tonumber(row.nodrop) ~= 0 then
+    ImGui.TextColored(0.8, 0.3, 0.3, 1.0, "No Drop")
+    return
+  end
+
+  local sourceIsSelf = is_self_peer(mq, row.peerName, row.peerServer)
+  local targetIsSelf = is_self_peer(mq, targetPeerName, targetPeerServer)
+
+  if sourceIsSelf and targetIsSelf then
+    if ImGui.Button("Pickup##" .. labelPrefix .. tostring(rowIndex), 62, 0) then
+      local cmd = string.format('/nomodkey /shift /itemnotify "%s" leftmouseup', row.augmentName or "")
+      mq.cmd(cmd)
+    end
+    if ImGui.IsItemHovered() then
+      ImGui.SetTooltip("Pick up this augment to cursor")
+    end
+  elseif sourceIsSelf then
+    if ImGui.Button("Give##" .. labelPrefix .. tostring(rowIndex), 62, 0) then
+      local giveRequest = {
+        name = row.augmentName,
+        to = targetPeerName,
+        fromBank = row.source == "Bank",
+        bagid = row.bagid,
+        slotid = row.slotid,
+        bankslotid = row.bankslotid,
+      }
+      if inventory_actor and inventory_actor.send_inventory_command then
+        inventory_actor.send_inventory_command(row.peerName, "proxy_give", { giveRequest })
+      end
+    end
+    if ImGui.IsItemHovered() then
+      ImGui.SetTooltip("Give this augment to %s", targetPeerName or "target")
+    end
+  elseif targetIsSelf then
+    if ImGui.Button("Request##" .. labelPrefix .. tostring(rowIndex), 62, 0) then
+      local giveRequest = {
+        name = row.augmentName,
+        to = targetPeerName,
+        fromBank = row.source == "Bank",
+        bagid = row.bagid,
+        slotid = row.slotid,
+        bankslotid = row.bankslotid,
+      }
+      if inventory_actor and inventory_actor.send_inventory_command then
+        inventory_actor.send_inventory_command(row.peerName, "proxy_give", { giveRequest })
+      end
+    end
+    if ImGui.IsItemHovered() then
+      ImGui.SetTooltip("Request %s to give this augment to you", row.peerName or "owner")
+    end
+  else
+    if ImGui.Button("Give##" .. labelPrefix .. tostring(rowIndex), 62, 0) then
+      local giveRequest = {
+        name = row.augmentName,
+        to = targetPeerName,
+        fromBank = row.source == "Bank",
+        bagid = row.bagid,
+        slotid = row.slotid,
+        bankslotid = row.bankslotid,
+      }
+      if inventory_actor and inventory_actor.send_inventory_command then
+        inventory_actor.send_inventory_command(row.peerName, "proxy_give", { giveRequest })
+      end
+    end
+    if ImGui.IsItemHovered() then
+      ImGui.SetTooltip("Ask %s to give this augment to %s", row.peerName or "owner", targetPeerName or "target")
+    end
+  end
 end
 
 local function ensure_popout_selection(inventoryUI, mq)
@@ -279,7 +376,8 @@ local function render_matching_augments(inventoryUI, env, selectedSlot, peerEntr
   local filteredCandidates = {}
   for _, row in ipairs(candidateRows) do
     local hiddenByNoDrop = inventoryUI.augmentsHideNoDropCandidates and tonumber(row.nodrop) ~= 0
-    if not hiddenByNoDrop and row_matches_filter(row, filterText) then
+    local hiddenByType20 = inventoryUI.augmentsHideType20 and row_has_slot_type(row, 20, false)
+    if not hiddenByNoDrop and not hiddenByType20 and row_matches_filter(row, filterText) then
       table.insert(filteredCandidates, row)
     end
   end
@@ -291,7 +389,7 @@ local function render_matching_augments(inventoryUI, env, selectedSlot, peerEntr
   end
 
   inventoryUI.augmentsCandidateCurrentPage = tonumber(inventoryUI.augmentsCandidateCurrentPage) or 1
-  local pageStateKey = string.format("%s|%s|%d", tostring(selectedSlot.key or ""), tostring(filterText), #candidateRows)
+  local pageStateKey = string.format("%s|%s|%s|%d", tostring(selectedSlot.key or ""), tostring(filterText), tostring(inventoryUI.augmentsHideType20), #candidateRows)
   if inventoryUI.augmentsCandidatePrevPageState ~= pageStateKey then
     inventoryUI.augmentsCandidateCurrentPage = 1
     inventoryUI.augmentsCandidatePrevPageState = pageStateKey
@@ -400,34 +498,173 @@ local function render_matching_augments(inventoryUI, env, selectedSlot, peerEntr
       renderStatValue(ImGui, row.mana, STAT_COLORS.mana)
 
       ImGui.TableSetColumnIndex(8)
-      if tonumber(row.nodrop) == 0 then
-        if ImGui.Button("Give##fitting_aug_give_" .. tostring(rowIndex), 62, 0) then
-          local giveRequest = {
-            name = row.augmentName,
-            to = selectedSlot.peerName,
-            fromBank = row.source == "Bank",
-            bagid = row.bagid,
-            slotid = row.slotid,
-            bankslotid = row.bankslotid,
-          }
-          if inventory_actor and inventory_actor.send_inventory_command then
-            inventory_actor.send_inventory_command(row.peerName, "proxy_give", { giveRequest })
-          end
-          if mq and mq.cmdf then
-            printf("Requested %s to give %s to %s for %s Aug %s",
-              tostring(row.peerName),
-              tostring(row.augmentName),
-              tostring(selectedSlot.peerName),
-              tostring(selectedSlot.parentItemName),
-              tostring(selectedSlot.augSlot))
-          end
-        end
-        if ImGui.IsItemHovered() then
-          ImGui.SetTooltip("Ask %s to give this augment to %s", row.peerName or "owner", selectedSlot.peerName or "target")
-        end
+      render_aug_trade_actions(inventoryUI, env, row, selectedSlot.peerName, selectedSlot.peerServer, "fitting_aug_give_", rowIndex)
+    end
+
+    ImGui.EndTable()
+  end
+end
+
+local AUGMENT_UPGRADE_ROWS_PER_PAGE = 20
+
+local function render_augment_upgrades(inventoryUI, env, baseAugRow, peerEntries, Augments)
+  local ImGui = env.ImGui
+  local mq = env.mq
+  local drawItemIcon = env.drawItemIcon
+  local inventory_actor = env.inventory_actor
+
+  ImGui.Separator()
+  ImGui.Text("Upgrades for %s (in %s)", baseAugRow.augmentName or "Unknown", baseAugRow.insertedIn or "Unknown")
+  ImGui.TextColored(0.75, 0.9, 0.75, 1.0, "Searching cached peer inventory, bags, and bank for augments with better stats.")
+
+  inventoryUI.augmentsUpgradeFilter = ImGui.InputText("Filter Upgrades##AugmentUpgradeFilter", inventoryUI.augmentsUpgradeFilter or "")
+  local filterText = tostring(inventoryUI.augmentsUpgradeFilter or ""):lower()
+
+  local upgradeRows = Augments.build_loose_augment_upgrades(baseAugRow, peerEntries)
+
+  local filteredUpgrades = {}
+  for _, row in ipairs(upgradeRows) do
+    local hiddenByType20 = inventoryUI.augmentsHideType20 and row_has_slot_type(row, 20, false)
+    if not hiddenByType20 and row_matches_filter(row, filterText) then
+      table.insert(filteredUpgrades, row)
+    end
+  end
+
+  ImGui.Text("Found %d potential upgrades across %d peers", #filteredUpgrades, #(peerEntries or {}))
+  if #filteredUpgrades == 0 then
+    ImGui.TextWrapped("No loose augments with better stats found for this type.")
+    return
+  end
+
+  inventoryUI.augmentsUpgradeCurrentPage = tonumber(inventoryUI.augmentsUpgradeCurrentPage) or 1
+  local pageStateKey = string.format("%s|%s|%s|%d", tostring(baseAugRow.augmentId or ""), tostring(filterText), tostring(inventoryUI.augmentsHideType20), #upgradeRows)
+  if inventoryUI.augmentsUpgradePrevPageState ~= pageStateKey then
+    inventoryUI.augmentsUpgradeCurrentPage = 1
+    inventoryUI.augmentsUpgradePrevPageState = pageStateKey
+  end
+
+  local totalRows = #filteredUpgrades
+  local totalPages = math.max(1, math.ceil(totalRows / AUGMENT_UPGRADE_ROWS_PER_PAGE))
+  if inventoryUI.augmentsUpgradeCurrentPage > totalPages then
+    inventoryUI.augmentsUpgradeCurrentPage = totalPages
+  elseif inventoryUI.augmentsUpgradeCurrentPage < 1 then
+    inventoryUI.augmentsUpgradeCurrentPage = 1
+  end
+
+  local startIdx = ((inventoryUI.augmentsUpgradeCurrentPage - 1) * AUGMENT_UPGRADE_ROWS_PER_PAGE) + 1
+  local endIdx = math.min(startIdx + AUGMENT_UPGRADE_ROWS_PER_PAGE - 1, totalRows)
+
+  ImGui.Text("Page %d of %d | Showing rows %d-%d of %d",
+    inventoryUI.augmentsUpgradeCurrentPage, totalPages, startIdx, endIdx, totalRows)
+  ImGui.SameLine()
+  if inventoryUI.augmentsUpgradeCurrentPage > 1 then
+    if ImGui.Button("< Prev##AugmentUpgradePagePrev") then
+      inventoryUI.augmentsUpgradeCurrentPage = inventoryUI.augmentsUpgradeCurrentPage - 1
+    end
+  else
+    ImGui.BeginDisabled()
+    ImGui.Button("< Prev##AugmentUpgradePagePrevDisabled")
+    ImGui.EndDisabled()
+  end
+  ImGui.SameLine()
+  if inventoryUI.augmentsUpgradeCurrentPage < totalPages then
+    if ImGui.Button("Next >##AugmentUpgradePageNext") then
+      inventoryUI.augmentsUpgradeCurrentPage = inventoryUI.augmentsUpgradeCurrentPage + 1
+    end
+  else
+    ImGui.BeginDisabled()
+    ImGui.Button("Next >##AugmentUpgradePageNextDisabled")
+    ImGui.EndDisabled()
+  end
+
+  local _, availY = get_content_avail_size(ImGui)
+  local tableHeight = math.max(180, availY - 8)
+  local flags = borFlag(ImGuiTableFlags.Borders, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.ScrollY)
+  if ImGui.BeginTable("AugmentUpgradesTable", 10, flags, 0, tableHeight) then
+    ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 30)
+    ImGui.TableSetupColumn("Augment", ImGuiTableColumnFlags.WidthStretch, 1.0)
+    ImGui.TableSetupColumn("Owner", ImGuiTableColumnFlags.WidthFixed, 95)
+    ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthStretch, 1.0)
+    ImGui.TableSetupColumn("AC", ImGuiTableColumnFlags.WidthFixed, 45)
+    ImGui.TableSetupColumn("HP", ImGuiTableColumnFlags.WidthFixed, 55)
+    ImGui.TableSetupColumn("Mana", ImGuiTableColumnFlags.WidthFixed, 60)
+    ImGui.TableSetupColumn("Diff AC", ImGuiTableColumnFlags.WidthFixed, 50)
+    ImGui.TableSetupColumn("Diff HP", ImGuiTableColumnFlags.WidthFixed, 55)
+    ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 70)
+    ImGui.TableHeadersRow()
+
+    for rowIndex = startIdx, endIdx do
+      local row = filteredUpgrades[rowIndex]
+      ImGui.TableNextRow()
+
+      ImGui.TableSetColumnIndex(0)
+      if row.augmentIcon and row.augmentIcon > 0 then
+        drawItemIcon(row.augmentIcon, 18, 18)
       else
-        ImGui.TextColored(0.8, 0.3, 0.3, 1.0, "No Drop")
+        ImGui.Text("--")
       end
+
+      ImGui.TableSetColumnIndex(1)
+      local augLabel = string.format("%s##upgrade_aug_%d", row.augmentName or "Unknown", rowIndex)
+      if ImGui.Selectable(augLabel) then
+        if env.openItemInspector then
+          env.openItemInspector({
+            name = row.augmentName,
+            itemlink = row.augmentLink,
+            icon = row.augmentIcon,
+            ac = row.ac,
+            hp = row.hp,
+            mana = row.mana,
+            augType = row.augmentTypeRaw,
+          }, { owner = row.peerName, location = row.location or "Augment" })
+        else
+          local links = mq.ExtractLinks(row.augmentLink or "")
+          if links and #links > 0 then
+            mq.ExecuteTextLink(links[1])
+          end
+        end
+      end
+
+      ImGui.TableSetColumnIndex(2)
+      ImGui.Text(row.peerName or "--")
+
+      ImGui.TableSetColumnIndex(3)
+      ImGui.Text(row.location or "--")
+
+      ImGui.TableSetColumnIndex(4)
+      renderStatValue(ImGui, row.ac, STAT_COLORS.ac)
+
+      ImGui.TableSetColumnIndex(5)
+      renderStatValue(ImGui, row.hp, STAT_COLORS.hp)
+
+      ImGui.TableSetColumnIndex(6)
+      renderStatValue(ImGui, row.mana, STAT_COLORS.mana)
+
+      ImGui.TableSetColumnIndex(7)
+      local diff = row._upgradeDiff
+      if diff then
+        if diff.ac > 0 then
+          ImGui.TextColored(0.2, 1.0, 0.2, 1.0, "+" .. diff.ac)
+        elseif diff.ac < 0 then
+          ImGui.TextColored(1.0, 0.3, 0.3, 1.0, tostring(diff.ac))
+        else
+          ImGui.TextColored(0.5, 0.5, 0.5, 1.0, "0")
+        end
+      end
+
+      ImGui.TableSetColumnIndex(8)
+      if diff then
+        if diff.hp > 0 then
+          ImGui.TextColored(0.2, 1.0, 0.2, 1.0, "+" .. diff.hp)
+        elseif diff.hp < 0 then
+          ImGui.TextColored(1.0, 0.3, 0.3, 1.0, tostring(diff.hp))
+        else
+          ImGui.TextColored(0.5, 0.5, 0.5, 1.0, "0")
+        end
+      end
+
+      ImGui.TableSetColumnIndex(9)
+      render_aug_trade_actions(inventoryUI, env, row, baseAugRow.peerName, baseAugRow.peerServer, "upgrade_aug_give_", rowIndex)
     end
 
     ImGui.EndTable()
@@ -501,6 +738,7 @@ function M.renderContent(inventoryUI, env)
     inventoryUI.augmentsShowEmptySlots = inventoryUI.augmentsShowEmptySlots == true
     inventoryUI.augmentsShowEmptySlotsAllPeers = inventoryUI.augmentsShowEmptySlotsAllPeers == true
     inventoryUI.augmentsSlotTypeFilter = inventoryUI.augmentsSlotTypeFilter or "All"
+    inventoryUI.augmentsHideType20 = inventoryUI.augmentsHideType20 == true
 
     ImGui.Text("Inserted augment search and placement.")
     inventoryUI.augmentsFilter = ImGui.InputText("Filter##AugmentsFilter", inventoryUI.augmentsFilter)
@@ -573,7 +811,7 @@ function M.renderContent(inventoryUI, env)
       inventoryUI[rowsCacheField].rows = augmentRows
     end
 
-    local slotTypeOptions = build_slot_type_options(augmentRows, inventoryUI.augmentsShowEmptySlots)
+    local slotTypeOptions = build_slot_type_options(augmentRows, inventoryUI.augmentsShowEmptySlots, inventoryUI.augmentsHideType20)
     local hasSelectedSlotType = false
     for _, option in ipairs(slotTypeOptions) do
       if option == inventoryUI.augmentsSlotTypeFilter then
@@ -598,12 +836,18 @@ function M.renderContent(inventoryUI, env)
       end
       ImGui.EndCombo()
     end
+    ImGui.SameLine()
+    inventoryUI.augmentsHideType20 = ImGui.Checkbox("Hide Type 20 (Ornamentation)##AugmentsHideType20", inventoryUI.augmentsHideType20)
+    if ImGui.IsItemHovered() then
+      ImGui.SetTooltip("Exclude augments and empty augment slots that include slot type 20.")
+    end
     ImGui.Separator()
 
     local filteredRows = {}
     local filterText = (inventoryUI.augmentsFilter or ""):lower()
     for _, row in ipairs(augmentRows) do
-      if row_matches_filter(row, filterText) and row_matches_slot_type(row, inventoryUI.augmentsSlotTypeFilter) then
+      local hiddenByType20 = inventoryUI.augmentsHideType20 and row_has_slot_type(row, 20, inventoryUI.augmentsShowEmptySlots)
+      if not hiddenByType20 and row_matches_filter(row, filterText) and row_matches_slot_type(row, inventoryUI.augmentsSlotTypeFilter) then
         table.insert(filteredRows, row)
       end
     end
@@ -632,7 +876,7 @@ function M.renderContent(inventoryUI, env)
     end
 
     inventoryUI.augmentsCurrentPage = tonumber(inventoryUI.augmentsCurrentPage) or 1
-    local pageStateKey = string.format("%s|%s|%s|%s|%s|%s|%s|%s",
+    local pageStateKey = string.format("%s|%s|%s|%s|%s|%s|%s|%s|%s",
       tostring(filterText),
       tostring(inventoryUI.augmentsShowEmptySlots),
       tostring(inventoryUI.augmentsIncludeEquipped),
@@ -640,6 +884,7 @@ function M.renderContent(inventoryUI, env)
       tostring(inventoryUI.augmentsIncludeBank),
       tostring(inventoryUI.augmentsShowEmptySlotsAllPeers),
       tostring(inventoryUI.augmentsSlotTypeFilter),
+      tostring(inventoryUI.augmentsHideType20),
       tostring(inventoryUI.augmentsShowEmptySlotsAllPeers and selectedServerName or selectedPeerName or "Unknown")
     )
     if inventoryUI.augmentsPrevPageState ~= pageStateKey then
@@ -839,6 +1084,20 @@ function M.renderContent(inventoryUI, env)
             end
             ImGui.EndTooltip()
           end
+          if ImGui.BeginPopupContextItem("##aug_ctx_" .. tostring(rowIndex)) then
+            ImGui.PushStyleColor(ImGuiCol_PopupBg, 0.12, 0.14, 0.22, 0.95)
+            ImGui.PushStyleColor(ImGuiCol_Border, 0.3, 0.5, 0.8, 1.0)
+            if ImGui.Selectable("Search for Upgrades##aug_upgrade_" .. tostring(rowIndex)) then
+              local upgradeRow = {}
+              for k, v in pairs(row) do upgradeRow[k] = v end
+              upgradeRow.peerName = upgradeRow.peerName or selectedPeerName or ""
+              upgradeRow.peerServer = upgradeRow.peerServer or selectedServerName or ""
+              inventoryUI.augmentsSelectedUpgradeBase = upgradeRow
+              inventoryUI.augmentsUpgradeCurrentPage = 1
+            end
+            ImGui.PopStyleColor(2)
+            ImGui.EndPopup()
+          end
 
           ImGui.TableSetColumnIndex(2)
           local parentLabel = string.format("%s##aug_parent_%d", row.insertedIn or "Unknown", rowIndex)
@@ -882,7 +1141,16 @@ function M.renderContent(inventoryUI, env)
 
         ImGui.EndTable()
       end
+
+      if inventoryUI.augmentsSelectedUpgradeBase then
+        if ImGui.Button("Clear Upgrade Search##AugmentClearUpgradeSearch") then
+          inventoryUI.augmentsSelectedUpgradeBase = nil
+        end
+        if inventoryUI.augmentsSelectedUpgradeBase then
+          render_augment_upgrades(inventoryUI, env, inventoryUI.augmentsSelectedUpgradeBase, augmentCandidatePeerEntries, Augments)
+        end
+      end
     end
-end
+  end
 
 return M

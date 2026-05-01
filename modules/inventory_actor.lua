@@ -6,12 +6,14 @@ local Banking         = require("EZInventory.modules.banking")
 
 M.pending_requests    = {}
 M.deferred_tasks      = {}
+M.on_batch_complete   = nil
 
 -- Add configuration for stats loading
 M.config              = {
     loadBasicStats = true,
     loadDetailedStats = false,
     enableStatsFiltering = true,
+    excludedPeers = {},
 }
 
 M.MSG_TYPE            = {
@@ -45,6 +47,82 @@ M.last_enriched_snapshot = {}
 M._pending_enriched_messages = {}
 M._pending_enriched_job = false
 
+local function normalize_peer_name(name)
+    if not name or name == "" then return name end
+    local cleaned = tostring(name)
+    if cleaned:find("_") then
+        local lastPart = nil
+        for part in cleaned:gmatch("[^_]+") do lastPart = part end
+        cleaned = lastPart or cleaned
+    end
+    cleaned = cleaned:gsub("%s*[%`’']s [Cc]orpse%d*$", "")
+    cleaned = cleaned:match("^%s*(.-)%s*$") or cleaned
+    if cleaned and #cleaned > 0 then
+        return cleaned:sub(1, 1):upper() .. cleaned:sub(2):lower()
+    end
+    return cleaned
+end
+
+local function rebuild_excluded_peer_lookup()
+    M.excluded_peer_lookup = {}
+    for _, name in ipairs(M.config.excludedPeers or {}) do
+        local normalized = normalize_peer_name(name)
+        if normalized and normalized ~= "" then
+            M.excluded_peer_lookup[normalized:lower()] = true
+        end
+    end
+end
+
+function M.is_peer_excluded(peerName)
+    local normalized = normalize_peer_name(peerName)
+    return normalized and M.excluded_peer_lookup and M.excluded_peer_lookup[normalized:lower()] == true
+end
+
+local function remove_excluded_peer_data()
+    for key, inv in pairs(M.peer_inventories or {}) do
+        local name = inv and inv.name or key:match("^[^_]+_(.+)$")
+        if M.is_peer_excluded(name) then
+            M.peer_inventories[key] = nil
+        end
+    end
+
+    for peerName, _ in pairs(M.peer_bank_flags or {}) do
+        if M.is_peer_excluded(peerName) then M.peer_bank_flags[peerName] = nil end
+    end
+    for peerName, _ in pairs(M.peer_char_assignments or {}) do
+        if M.is_peer_excluded(peerName) then M.peer_char_assignments[peerName] = nil end
+    end
+    for peerName, _ in pairs(M.peer_paths or {}) do
+        if M.is_peer_excluded(peerName) then M.peer_paths[peerName] = nil end
+    end
+    for peerName, _ in pairs(M.peer_script_paths or {}) do
+        if M.is_peer_excluded(peerName) then M.peer_script_paths[peerName] = nil end
+    end
+end
+
+function M.set_excluded_peers(excludedPeers)
+    local normalizedPeers = {}
+    local seen = {}
+    for _, name in ipairs(excludedPeers or {}) do
+        local normalized = normalize_peer_name(name)
+        if normalized and normalized ~= "" and not seen[normalized:lower()] then
+            table.insert(normalizedPeers, normalized)
+            seen[normalized:lower()] = true
+        end
+    end
+    table.sort(normalizedPeers, function(a, b) return a:lower() < b:lower() end)
+    M.config.excludedPeers = normalizedPeers
+    rebuild_excluded_peer_lookup()
+    remove_excluded_peer_data()
+    return normalizedPeers
+end
+
+function M.get_excluded_peers()
+    return M.config.excludedPeers or {}
+end
+
+rebuild_excluded_peer_lookup()
+
 local actor_mailbox   = nil
 local command_mailbox = nil
 M.inventory_snapshot  = {}
@@ -52,12 +130,9 @@ M.change_snapshot     = {}
 
 local last_lightweight_scan = 0
 local LIGHTWEIGHT_SCAN_INTERVAL_MS = 750
-local STARTUP_ENRICH_DELAY_BASE_MS = 30000
-local STARTUP_ENRICH_DELAY_SPREAD_MS = 120000
 local SHORT_ACTION_DELAY_MS = 200
 local MEDIUM_ACTION_DELAY_MS = 400
 local LOOP_POLL_DELAY_MS = 100
-local startup_enrich_ready_at = nil
 local startup_enrich_queued = false
 
 local function get_time_ms()
@@ -68,39 +143,6 @@ local function get_time_ms()
         end
     end
     return math.floor(os.clock() * 1000)
-end
-
-local function stable_delay_offset_ms(value, spreadMs)
-    local text = tostring(value or "")
-    local hash = 0
-    for i = 1, #text do
-        hash = ((hash * 131) + string.byte(text, i)) % 2147483647
-    end
-    spreadMs = tonumber(spreadMs) or 0
-    if spreadMs <= 0 then
-        return 0
-    end
-    return hash % spreadMs
-end
-
-local function get_startup_enrich_ready_at()
-    if startup_enrich_ready_at then
-        return startup_enrich_ready_at
-    end
-
-    local characterName = "unknown"
-    if mq and mq.TLO and mq.TLO.Me and mq.TLO.Me.CleanName then
-        characterName = mq.TLO.Me.CleanName() or characterName
-    end
-    local serverName = "unknown"
-    if mq and mq.TLO and mq.TLO.MacroQuest and mq.TLO.MacroQuest.Server then
-        serverName = mq.TLO.MacroQuest.Server() or serverName
-    end
-
-    startup_enrich_ready_at = get_time_ms()
-        + STARTUP_ENRICH_DELAY_BASE_MS
-        + stable_delay_offset_ms(serverName .. "|" .. characterName, STARTUP_ENRICH_DELAY_SPREAD_MS)
-    return startup_enrich_ready_at
 end
 
 local function trade_log(tag, fmt, ...)
@@ -404,8 +446,15 @@ local function merge_item_data(oldItem, newItem)
         if merged[k] == nil then
             merged[k] = v
         elseif type(v) == "table" and #v > 0 and type(merged[k]) == "table" and #merged[k] == 0 then
-            -- Preserve non-empty arrays over empty arrays (e.g. enriched focusEffects)
             merged[k] = v
+        elseif type(v) == "table" and #v > 0 and type(merged[k]) == "table" and #merged[k] > 0 and k ~= "augments" then
+            local oldLen = 0
+            for _ in pairs(v) do oldLen = oldLen + 1 end
+            local newLen = 0
+            for _ in pairs(merged[k]) do newLen = newLen + 1 end
+            if newLen < oldLen then
+                merged[k] = v
+            end
         end
     end
     return merged
@@ -477,11 +526,11 @@ local function compute_inventory_delta(oldSnapshot, newData)
         end
     end
 
-    -- If more than half the slots changed, a full update is more efficient
+    -- If a significant portion of slots changed, a full update is more efficient
     local totalSlots = 0
     for _ in pairs(newSnapshot) do totalSlots = totalSlots + 1 end
     for _ in pairs(oldSnapshot) do totalSlots = totalSlots + 1 end
-    if totalSlots > 0 and changedCount > totalSlots * 0.5 then
+    if totalSlots > 0 and changedCount > totalSlots * 0.3 then
         return nil -- signal to send full update instead
     end
 
@@ -517,7 +566,11 @@ end
 function M.update_config(new_config)
     for key, value in pairs(new_config) do
         if M.config[key] ~= nil then
-            M.config[key] = value
+            if key == "excludedPeers" then
+                M.set_excluded_peers(value)
+            else
+                M.config[key] = value
+            end
         end
     end
     --print(string.format("[Inventory Actor] Config updated - Basic: %s, Detailed: %s", tostring(M.config.loadBasicStats), tostring(M.config.loadDetailedStats)))
@@ -1529,7 +1582,7 @@ local function send_inventory_delta(deltaData)
     return true
 end
 
-local function queue_enriched_inventory_send(messageType, force, delayUntilMs)
+local function queue_enriched_inventory_send(messageType, force)
     if not should_collect_enriched_inventory() then
         return
     end
@@ -1544,11 +1597,6 @@ local function queue_enriched_inventory_send(messageType, force, delayUntilMs)
     M._pending_enriched_job = true
 
     local function run_enriched_send()
-        if delayUntilMs and get_time_ms() < delayUntilMs then
-            table.insert(M.deferred_tasks, run_enriched_send)
-            return
-        end
-
         local pendingMessages = M._pending_enriched_messages
         M._pending_enriched_messages = {}
         M._pending_enriched_job = false
@@ -1632,6 +1680,9 @@ local function message_handler(message)
             -- Sanitize and normalize incoming names to avoid tracking corpse entries
             local normalizedName = normalizeCharacterName(content.data.name)
             if normalizedName and normalizedName ~= "" then
+                if M.is_peer_excluded(normalizedName) then
+                    return
+                end
                 -- Cleanup any stale corpse entries for this peer/server
                 for key, inv in pairs(M.peer_inventories) do
                     if inv and inv.server == content.data.server and inv.name and isCorpseName(inv.name) then
@@ -1649,14 +1700,17 @@ local function message_handler(message)
             end
         end
     elseif content.type == M.MSG_TYPE.REQUEST then
-        local myInventory = M.gather_inventory({ includeExtendedStats = false, scanStage = "fast", skipAugments = true })
+        local myInventory = M.gather_inventory({ includeExtendedStats = false, onlyEquippedWithStats = true, scanStage = "fast" })
         send_inventory_payload(M.MSG_TYPE.RESPONSE, myInventory)
-        queue_enriched_inventory_send(M.MSG_TYPE.RESPONSE, false, get_startup_enrich_ready_at())
+        queue_enriched_inventory_send(M.MSG_TYPE.RESPONSE, false)
     elseif content.type == M.MSG_TYPE.RESPONSE then
         if content.data and content.data.name and content.data.server then
             -- Sanitize and normalize incoming names to avoid tracking corpse entries
             local normalizedName = normalizeCharacterName(content.data.name)
             if normalizedName and normalizedName ~= "" then
+                if M.is_peer_excluded(normalizedName) then
+                    return
+                end
                 -- Cleanup any stale corpse entries for this peer/server
                 for key, inv in pairs(M.peer_inventories) do
                     if inv and inv.server == content.data.server and inv.name and isCorpseName(inv.name) then
@@ -1677,6 +1731,9 @@ local function message_handler(message)
         if content.data and content.data.name and content.data.server then
             local normalizedName = normalizeCharacterName(content.data.name)
             if normalizedName and normalizedName ~= "" then
+                if M.is_peer_excluded(normalizedName) then
+                    return
+                end
                 local peerId = content.data.server .. "_" .. normalizedName
                 apply_inventory_delta(peerId, content.data)
             end
@@ -1729,7 +1786,9 @@ local function message_handler(message)
             -- We'll need to expose this data to the main UI
             M.peer_paths = M.peer_paths or {}
             local normalizedPeerName = normalizeCharacterName(content.peerName)
-            M.peer_paths[normalizedPeerName] = content.path
+            if not M.is_peer_excluded(normalizedPeerName) then
+                M.peer_paths[normalizedPeerName] = content.path
+            end
         end
     elseif content.type == M.MSG_TYPE.SCRIPT_PATH_REQUEST then
         -- Respond with our script path (relative to EQ installation)
@@ -1761,7 +1820,9 @@ local function message_handler(message)
         if content.peerName and content.scriptPath then
             M.peer_script_paths = M.peer_script_paths or {}
             local normalizedPeerName = normalizeCharacterName(content.peerName)
-            M.peer_script_paths[normalizedPeerName] = content.scriptPath
+            if not M.is_peer_excluded(normalizedPeerName) then
+                M.peer_script_paths[normalizedPeerName] = content.scriptPath
+            end
         end
     elseif content.type == M.MSG_TYPE.COLLECTIBLES_REQUEST then
         -- Respond with our collectibles
@@ -1779,7 +1840,7 @@ local function message_handler(message)
     elseif content.type == M.MSG_TYPE.COLLECTIBLES_RESPONSE then
         -- Store the received collectibles and trigger callback
         if content.peerName and content.collectibles then
-            if M.collectibles_callback then
+            if M.collectibles_callback and not M.is_peer_excluded(content.peerName) then
                 M.collectibles_callback(content.peerName, content.collectibles)
             end
         end
@@ -1822,7 +1883,9 @@ local function message_handler(message)
     elseif content.type == M.MSG_TYPE.BANK_FLAGS_RESPONSE then
         if content.peerName and type(content.flags) == 'table' then
             local name = normalizeCharacterName(content.peerName)
-            M.peer_bank_flags[name] = content.flags
+            if not M.is_peer_excluded(name) then
+                M.peer_bank_flags[name] = content.flags
+            end
         end
     elseif content.type == M.MSG_TYPE.CHAR_ASSIGN_UPDATE then
         -- Receive and apply character assignment updates from other clients
@@ -1830,6 +1893,9 @@ local function message_handler(message)
         local assignedTo = content.assignedTo
         local sourcePeer = content.sourcePeer
         if itemID and sourcePeer then
+            if M.is_peer_excluded(sourcePeer) then
+                return
+            end
             if not M.peer_char_assignments[sourcePeer] then
                 M.peer_char_assignments[sourcePeer] = {}
             end
@@ -1862,7 +1928,9 @@ local function message_handler(message)
         -- Store received character assignments
         if content.peerName and type(content.assignments) == 'table' then
             local name = normalizeCharacterName(content.peerName)
-            M.peer_char_assignments[name] = content.assignments
+            if not M.is_peer_excluded(name) then
+                M.peer_char_assignments[name] = content.assignments
+            end
         end
     end
 end
@@ -1918,12 +1986,10 @@ function M.publish_inventory(force)
     end
 
     local isStartupPublish = not startup_enrich_queued
-    local hasEnrichedInventory = M.last_inventory_enriched ~= nil
     local inventoryData
-    if isStartupPublish or not hasEnrichedInventory then
-        inventoryData = M.gather_inventory({ includeExtendedStats = false, scanStage = "fast", skipAugments = true })
+    if isStartupPublish then
+        inventoryData = M.gather_inventory({ includeExtendedStats = false, onlyEquippedWithStats = true, scanStage = "fast" })
     else
-        -- Non-startup fast scan includes equipped stats for immediate UI/comparison population.
         inventoryData = M.gather_inventory({ includeExtendedStats = false, onlyEquippedWithStats = true, scanStage = "fast" })
     end
 
@@ -1949,7 +2015,7 @@ function M.publish_inventory(force)
     M.inventory_snapshot = snapshot_from_inventory_data(inventoryData)
     M.change_snapshot = capture_lightweight_snapshot()
     startup_enrich_queued = true
-    queue_enriched_inventory_send(M.MSG_TYPE.UPDATE, force, isStartupPublish and get_startup_enrich_ready_at() or nil)
+    queue_enriched_inventory_send(M.MSG_TYPE.UPDATE, force)
     return true
 end
 
@@ -1965,7 +2031,6 @@ function M.clear_peer_data()
     M.change_snapshot = {}
     M._pending_enriched_messages = {}
     M._pending_enriched_job = false
-    startup_enrich_ready_at = nil
     startup_enrich_queued = false
     return true
 end
@@ -2015,7 +2080,7 @@ function M.request_inventory_for(peerName)
         print("[Inventory Actor] Cannot request inventory - actor system not initialized")
         return false
     end
-    if not peerName or peerName == '' then return false end
+    if not peerName or peerName == '' or M.is_peer_excluded(peerName) then return false end
     actor_mailbox:send(
         { character = peerName },
         { type = M.MSG_TYPE.REQUEST }
@@ -2089,7 +2154,7 @@ function M.send_bank_flag_update(peerName, itemID, flagged)
     if not actor_mailbox then
         return false
     end
-    if not peerName or not itemID then return false end
+    if not peerName or not itemID or M.is_peer_excluded(peerName) then return false end
     -- Log for visibility
     printf("[EZInventory] Sending bank flag update to %s: itemID=%s flagged=%s", tostring(peerName), tostring(itemID),
         tostring(flagged))
@@ -2235,6 +2300,7 @@ local function handle_proxy_give_batch(data)
         target = batchRequest.target,
         items = {},
         source = mq.TLO.Me.CleanName(),
+        initiator = batchRequest.initiator,
         status = "INITIATING"
     }
 
@@ -2242,20 +2308,21 @@ local function handle_proxy_give_batch(data)
         table.insert(session.items, itemRequest)
         if #session.items >= 8 then
             table.insert(M.pending_requests,
-                { type = "multi_item_trade", target = session.target, items = session.items })
+                { type = "multi_item_trade", target = session.target, items = session.items, initiator = session.initiator })
             printf("Queued a trade session with %d items for %s. Total sessions: %d", #session.items, session.target,
                 #M.pending_requests)
             session = {
                 target = batchRequest.target,
                 items = {},
                 source = mq.TLO.Me.CleanName(),
+                initiator = batchRequest.initiator,
                 status = "INITIATING"
             }
         end
     end
 
     if #session.items > 0 then
-        table.insert(M.pending_requests, { type = "multi_item_trade", target = session.target, items = session.items })
+        table.insert(M.pending_requests, { type = "multi_item_trade", target = session.target, items = session.items, initiator = session.initiator })
         printf("Queued a final trade session with %d items for %s. Total sessions: %d", #session.items, session.target,
             #M.pending_requests)
     end
@@ -2272,7 +2339,8 @@ local multi_trade_state = {
     target_toon = nil,
     items_to_trade = {},
     current_item_index = 1,
-    status = "IDLE", -- "IDLE", "NAVIGATING", "OPENING_TRADE", "PLACING_ITEMS", "TRADING", "COMPLETED"
+    initiator = nil,
+    status = "IDLE",
     nav_start_time = 0,
     trade_window_open_time = 0,
     trade_completion_time = 0,
@@ -2285,10 +2353,23 @@ function M.process_pending_requests()
         local success = M.perform_multi_item_trade_step()
         if not success then
             printf("[ERROR] Multi-item trade failed, resetting state.")
+            if multi_trade_state.initiator and multi_trade_state.initiator ~= "" then
+                M.send_inventory_command(multi_trade_state.initiator, "batch_complete", {
+                    targetChar = multi_trade_state.target_toon,
+                    itemCount = 0,
+                    failed = true,
+                })
+            end
             multi_trade_state.active = false
             if mq.TLO.Cursor.ID() then mq.delay(100) end
         elseif multi_trade_state.status == "COMPLETED" then
             printf("[BATCH] Multi-item trade session completed.")
+            if multi_trade_state.initiator and multi_trade_state.initiator ~= "" then
+                M.send_inventory_command(multi_trade_state.initiator, "batch_complete", {
+                    targetChar = multi_trade_state.target_toon,
+                    itemCount = multi_trade_state.current_item_index - 1,
+                })
+            end
             multi_trade_state.active = false
         end
         return
@@ -2304,6 +2385,7 @@ function M.process_pending_requests()
             multi_trade_state.target_toon = request.target
             multi_trade_state.items_to_trade = request.items
             multi_trade_state.current_item_index = 1
+            multi_trade_state.initiator = request.initiator
             multi_trade_state.status = "NAVIGATING"
             multi_trade_state.at_banker = false
             multi_trade_state.banker_nav_start_time = 0
@@ -3013,6 +3095,17 @@ local function handle_command_message(message)
             Banking.start()
             print("[EZInventory] Auto-bank started")
         end)
+    elseif command == "batch_complete" then
+        local batchInfo = args[1]
+        if type(batchInfo) == "string" then batchInfo = {} end
+        if type(batchInfo) == "table" and batchInfo.targetChar then
+            printf("[BATCH COMPLETE] Received completion for %d items to %s%s",
+                tonumber(batchInfo.itemCount) or 0, batchInfo.targetChar,
+                batchInfo.failed and " (FAILED)" or "")
+            if M.on_batch_complete then
+                M.on_batch_complete(batchInfo.targetChar, tonumber(batchInfo.itemCount) or 0, batchInfo.failed)
+            end
+        end
     elseif command == "destroy_item" then
         local req = args[1]
         if type(req) == "string" then
@@ -3071,6 +3164,10 @@ function M.send_inventory_command(peer, command, args)
         print("[Inventory Actor] Cannot send command - command mailbox not initialized")
         return false
     end
+    if M.is_peer_excluded(peer) then
+        printf("[Inventory Actor] Skipping command %s to excluded peer %s", tostring(command), tostring(peer))
+        return false
+    end
     if command == "proxy_give" or command == "proxy_give_batch" or command == "auto_accept_trade" or command == "perform_auto_exchange" then
         trade_log("SEND CMD", "Trying to send %s to %s", command, tostring(peer))
     else
@@ -3092,7 +3189,7 @@ function M.broadcast_inventory_command(command, args)
     for peerID, _ in pairs(M.peer_inventories) do
         local name = peerID:match("_(.+)$")
         local myNormalizedName = normalizeCharacterName(mq.TLO.Me.CleanName())
-        if name and name ~= myNormalizedName then
+        if name and name ~= myNormalizedName and not M.is_peer_excluded(name) then
             M.send_inventory_command(name, command, args)
         end
     end
