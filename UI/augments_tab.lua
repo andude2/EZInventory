@@ -346,6 +346,18 @@ local function copy_selected_slot(row, selectedPeerName, selectedServerName)
   return copy
 end
 
+local function same_peer_character(aName, aServer, bName, bServer)
+  local leftName = tostring(aName or ""):lower()
+  local rightName = tostring(bName or ""):lower()
+  if leftName == "" or rightName == "" or leftName ~= rightName then
+    return false
+  end
+
+  local leftServer = tostring(aServer or ""):lower()
+  local rightServer = tostring(bServer or ""):lower()
+  return leftServer == "" or rightServer == "" or leftServer == rightServer
+end
+
 local function render_matching_augments(inventoryUI, env, selectedSlot, peerEntries)
   local ImGui = env.ImGui
   local mq = env.mq
@@ -376,8 +388,10 @@ local function render_matching_augments(inventoryUI, env, selectedSlot, peerEntr
   local filteredCandidates = {}
   for _, row in ipairs(candidateRows) do
     local hiddenByNoDrop = inventoryUI.augmentsHideNoDropCandidates and tonumber(row.nodrop) ~= 0
+    local hiddenByUnusableNoDrop = tonumber(row.nodrop) ~= 0
+        and not same_peer_character(row.peerName, row.peerServer, selectedSlot.peerName, selectedSlot.peerServer)
     local hiddenByType20 = inventoryUI.augmentsHideType20 and row_has_slot_type(row, 20, false)
-    if not hiddenByNoDrop and not hiddenByType20 and row_matches_filter(row, filterText) then
+    if not hiddenByNoDrop and not hiddenByUnusableNoDrop and not hiddenByType20 and row_matches_filter(row, filterText) then
       table.insert(filteredCandidates, row)
     end
   end
@@ -389,7 +403,12 @@ local function render_matching_augments(inventoryUI, env, selectedSlot, peerEntr
   end
 
   inventoryUI.augmentsCandidateCurrentPage = tonumber(inventoryUI.augmentsCandidateCurrentPage) or 1
-  local pageStateKey = string.format("%s|%s|%s|%d", tostring(selectedSlot.key or ""), tostring(filterText), tostring(inventoryUI.augmentsHideType20), #candidateRows)
+  local pageStateKey = string.format("%s|%s|%s|%s|%d",
+    tostring(selectedSlot.key or ""),
+    tostring(filterText),
+    tostring(inventoryUI.augmentsHideType20),
+    tostring(inventoryUI.augmentsHideNoDropCandidates),
+    #candidateRows)
   if inventoryUI.augmentsCandidatePrevPageState ~= pageStateKey then
     inventoryUI.augmentsCandidateCurrentPage = 1
     inventoryUI.augmentsCandidatePrevPageState = pageStateKey
@@ -524,8 +543,10 @@ local function render_augment_upgrades(inventoryUI, env, baseAugRow, peerEntries
 
   local filteredUpgrades = {}
   for _, row in ipairs(upgradeRows) do
+    local hiddenByUnusableNoDrop = tonumber(row.nodrop) ~= 0
+        and not same_peer_character(row.peerName, row.peerServer, baseAugRow.peerName, baseAugRow.peerServer)
     local hiddenByType20 = inventoryUI.augmentsHideType20 and row_has_slot_type(row, 20, false)
-    if not hiddenByType20 and row_matches_filter(row, filterText) then
+    if not hiddenByUnusableNoDrop and not hiddenByType20 and row_matches_filter(row, filterText) then
       table.insert(filteredUpgrades, row)
     end
   end
@@ -944,7 +965,7 @@ function M.renderContent(inventoryUI, env)
         ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1.0)
         ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthStretch, 1.0)
         ImGui.TableSetupColumn("Aug Slot", ImGuiTableColumnFlags.WidthFixed, 65)
-        ImGui.TableSetupColumn("Fits Slot Type", ImGuiTableColumnFlags.WidthFixed, 120)
+        ImGui.TableSetupColumn("Fits", ImGuiTableColumnFlags.WidthFixed, 70)
         ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 85)
         ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 90)
         ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 70)
@@ -1033,16 +1054,22 @@ function M.renderContent(inventoryUI, env)
         end
       end
     else
-      if ImGui.BeginTable("InsertedAugmentsTable", 9, flags) then
+      local insertedAugTableHeight = 0
+      if inventoryUI.augmentsSelectedUpgradeBase then
+        local _, availableHeight = get_content_avail_size(ImGui)
+        insertedAugTableHeight = math.max(170, math.min(280, availableHeight * 0.45))
+      end
+      if ImGui.BeginTable("InsertedAugmentsTable", 10, flags, 0, insertedAugTableHeight) then
         ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 30)
         ImGui.TableSetupColumn("Augment", ImGuiTableColumnFlags.WidthStretch, 1.0)
         ImGui.TableSetupColumn("Inserted In", ImGuiTableColumnFlags.WidthStretch, 1.0)
         ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthStretch, 1.0)
         ImGui.TableSetupColumn("Aug Slot", ImGuiTableColumnFlags.WidthFixed, 65)
-        ImGui.TableSetupColumn("Fits Slot Type", ImGuiTableColumnFlags.WidthFixed, 110)
+        ImGui.TableSetupColumn("Fits", ImGuiTableColumnFlags.WidthFixed, 70)
         ImGui.TableSetupColumn("AC", ImGuiTableColumnFlags.WidthFixed, 45)
         ImGui.TableSetupColumn("HP", ImGuiTableColumnFlags.WidthFixed, 55)
         ImGui.TableSetupColumn("Mana", ImGuiTableColumnFlags.WidthFixed, 60)
+        ImGui.TableSetupColumn("Upgrade?", ImGuiTableColumnFlags.WidthFixed, 78)
         ImGui.TableHeadersRow()
 
         for rowIndex = startIdx, endIdx do
@@ -1084,20 +1111,6 @@ function M.renderContent(inventoryUI, env)
             end
             ImGui.EndTooltip()
           end
-          if ImGui.BeginPopupContextItem("##aug_ctx_" .. tostring(rowIndex)) then
-            ImGui.PushStyleColor(ImGuiCol_PopupBg, 0.12, 0.14, 0.22, 0.95)
-            ImGui.PushStyleColor(ImGuiCol_Border, 0.3, 0.5, 0.8, 1.0)
-            if ImGui.Selectable("Search for Upgrades##aug_upgrade_" .. tostring(rowIndex)) then
-              local upgradeRow = {}
-              for k, v in pairs(row) do upgradeRow[k] = v end
-              upgradeRow.peerName = upgradeRow.peerName or selectedPeerName or ""
-              upgradeRow.peerServer = upgradeRow.peerServer or selectedServerName or ""
-              inventoryUI.augmentsSelectedUpgradeBase = upgradeRow
-              inventoryUI.augmentsUpgradeCurrentPage = 1
-            end
-            ImGui.PopStyleColor(2)
-            ImGui.EndPopup()
-          end
 
           ImGui.TableSetColumnIndex(2)
           local parentLabel = string.format("%s##aug_parent_%d", row.insertedIn or "Unknown", rowIndex)
@@ -1137,6 +1150,19 @@ function M.renderContent(inventoryUI, env)
 
           ImGui.TableSetColumnIndex(8)
           renderStatValue(ImGui, row.mana, STAT_COLORS.mana)
+
+          ImGui.TableSetColumnIndex(9)
+          if ImGui.Button("Find##aug_upgrade_" .. tostring(rowIndex), 56, 0) then
+            local upgradeRow = {}
+            for k, v in pairs(row) do upgradeRow[k] = v end
+            upgradeRow.peerName = upgradeRow.peerName or selectedPeerName or ""
+            upgradeRow.peerServer = upgradeRow.peerServer or selectedServerName or ""
+            inventoryUI.augmentsSelectedUpgradeBase = upgradeRow
+            inventoryUI.augmentsUpgradeCurrentPage = 1
+          end
+          if ImGui.IsItemHovered() then
+            ImGui.SetTooltip("Search cached peer inventory for better loose augments of this type.")
+          end
         end
 
         ImGui.EndTable()
