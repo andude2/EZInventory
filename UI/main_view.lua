@@ -6,7 +6,7 @@ local ImGui, icons, json, state, character_utils, item_utils, shared_ui, window_
 local inventory_actor, Suggestions, Collectibles, Banking, AssignmentManager, Theme, Modals, Util
 local Augments, CheckUpgrades, FocusEffects, matchesSearch
 local UpdateInventoryActorConfig, SaveConfigWithStatsUpdate, OnStatsLoadingModeChanged
-local EquippedTab, BagsTab, BankTab, AllCharsTab, AssignmentTab, AugmentsTab, CheckUpgradesTab, FocusEffectsTab, PeerTab, PerformanceTab, LauncherView
+local EquippedTab, BagsTab, BankTab, AllCharsTab, AssignmentTab, AugmentsTab, CheckUpgradesTab, FocusEffectsTab, PeerTab, PerformanceTab, LauncherView, CommandCenterTab, InventoryIndex
 
 function M.setup(env)
     ImGui = env.ImGui; icons = env.icons; json = env.json; state = env.state
@@ -23,6 +23,7 @@ function M.setup(env)
     AssignmentTab = env.AssignmentTab; AugmentsTab = env.AugmentsTab; CheckUpgradesTab = env.CheckUpgradesTab
     FocusEffectsTab = env.FocusEffectsTab; PeerTab = env.PeerTab; PerformanceTab = env.PerformanceTab
     LauncherView = env.LauncherView
+    CommandCenterTab = env.CommandCenterTab; InventoryIndex = env.InventoryIndex
     matchesSearch = env.matchesSearch
 end
 
@@ -140,11 +141,12 @@ function M.render()
         local envAugments = { ImGui=ImGui, mq=mq, Augments=Augments, getSlotNameFromID=item_utils.getSlotNameFromID, drawItemIcon=shared_ui.drawItemIcon, openItemInspector=openItemInspector, inventory_actor=inventory_actor }
         local envCheckUpgrades = { ImGui=ImGui, mq=mq, json=json, CheckUpgrades=CheckUpgrades, Suggestions=Suggestions, getSlotNameFromID=item_utils.getSlotNameFromID, drawItemIcon=shared_ui.drawItemIcon, inventory_actor=inventory_actor, Settings=state.Settings, openItemInspector=openItemInspector }
         local envFocusEffects = { ImGui=ImGui, mq=mq, FocusEffects=FocusEffects, getSlotNameFromID=item_utils.getSlotNameFromID }
+        local envCommandCenter = { ImGui=ImGui, mq=mq, InventoryIndex=InventoryIndex, inventory_actor=inventory_actor, character_utils=character_utils, item_utils=item_utils, openItemInspector=openItemInspector, showContextMenu=Util.showContextMenu }
 
         ImGui.BeginChild("TabbedContentRegion", 0, 0, true, ImGuiChildFlags.Border)
         local tab_ok, tab_err = pcall(function()
             if inventoryUI.viewMode == "launcher" then
-                LauncherView.render(inventoryUI, { ImGui=ImGui, modules={ EquippedTab=EquippedTab, BagsTab=BagsTab, BankTab=BankTab, AllCharsTab=AllCharsTab, AssignmentTab=AssignmentTab, PeerTab=PeerTab, PerformanceTab=PerformanceTab, AugmentsTab=AugmentsTab, CheckUpgradesTab=CheckUpgradesTab, FocusEffectsTab=FocusEffectsTab }, envs={ Equipped=envEquipped, Bags=envBags, Bank=envBank, AllChars=envAll, Assignment=envAssignment, Peer=envPeer, Performance=envPerf, Augments=envAugments, CheckUpgrades=envCheckUpgrades, FocusEffects=envFocusEffects }, collectibles={ isVisible=function() return Collectibles.visible==true end, toggle=Collectibles.toggle, renderContent=Collectibles.renderContent }, actions={ saveConfig=SaveConfigWithStatsUpdate, openGiveItem=function() inventoryUI.showGiveItemPanel=true end } })
+                LauncherView.render(inventoryUI, { ImGui=ImGui, modules={ CommandCenterTab=CommandCenterTab, EquippedTab=EquippedTab, BagsTab=BagsTab, BankTab=BankTab, AllCharsTab=AllCharsTab, AssignmentTab=AssignmentTab, PeerTab=PeerTab, PerformanceTab=PerformanceTab, AugmentsTab=AugmentsTab, CheckUpgradesTab=CheckUpgradesTab, FocusEffectsTab=FocusEffectsTab }, envs={ CommandCenter=envCommandCenter, Equipped=envEquipped, Bags=envBags, Bank=envBank, AllChars=envAll, Assignment=envAssignment, Peer=envPeer, Performance=envPerf, Augments=envAugments, CheckUpgrades=envCheckUpgrades, FocusEffects=envFocusEffects }, collectibles={ isVisible=function() return Collectibles.visible==true end, toggle=Collectibles.toggle, renderContent=Collectibles.renderContent }, actions={ saveConfig=SaveConfigWithStatsUpdate, openGiveItem=function() inventoryUI.showGiveItemPanel=true end } })
             elseif ImGui.BeginTabBar("InventoryTabs", ImGuiTabBarFlags.Reorderable) then
                 EquippedTab.render(inventoryUI, envEquipped)
                 BagsTab.render(inventoryUI, envBags)
@@ -152,6 +154,7 @@ function M.render()
                 AugmentsTab.render(inventoryUI, envAugments)
                 CheckUpgradesTab.render(inventoryUI, envCheckUpgrades)
                 FocusEffectsTab.render(inventoryUI, envFocusEffects)
+                CommandCenterTab.render(inventoryUI, envCommandCenter)
                 AllCharsTab.render(inventoryUI, envAll)
                 AssignmentTab.render(inventoryUI, envAssignment)
                 PeerTab.render(inventoryUI, envPeer)

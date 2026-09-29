@@ -42,6 +42,7 @@ local NetworkManager = require("EZInventory.core.network_manager")
 -- 2. Load Logic Modules
 local CharacterUtils = require("EZInventory.logic.character_utils")
 local ItemUtils      = require("EZInventory.logic.item_utils")
+local InventoryIndex = require("EZInventory.logic.inventory_index")
 
 -- 3. Load UI Modules
 local SharedUI      = require("EZInventory.UI.shared_components")
@@ -73,6 +74,7 @@ local FocusEffectsTab   = require("EZInventory.UI.focus_effects_tab")
 local PeerTab           = require("EZInventory.UI.peer_management_tab")
 local PerformanceTab    = require("EZInventory.UI.performance_tab")
 local LauncherView      = require("EZInventory.UI.launcher_view")
+local CommandCenterTab  = require("EZInventory.UI.command_center_tab")
 
 -- Initialization
 local inventoryUI = State.inventoryUI
@@ -84,7 +86,7 @@ local function UpdateInventoryActorConfig()
         inventory_actor.update_config({
             loadBasicStats = State.Settings.loadBasicStats,
             loadDetailedStats = State.Settings.loadDetailedStats,
-            enableStatsFiltering = State.Settings.enableStatsFiltering or true,
+            enableStatsFiltering = State.Settings.enableStatsFiltering ~= false,
             excludedPeers = State.Settings.excludedPeers or {},
         })
     end
@@ -210,7 +212,6 @@ Util.setup({
     getItemAssignment = ItemUtils.getItemAssignment,
     setItemAssignment = ItemUtils.setItemAssignment,
     clearItemAssignment = ItemUtils.clearItemAssignment,
-    peerCache = {}, -- Peer list cache managed internally or via NetworkManager
     drawItemIcon = SharedUI.drawItemIcon,
 })
 Util.set_show_equipment_comparison(function(item)
@@ -260,6 +261,7 @@ MainView.setup({
     AllCharsTab = AllCharsTab, AssignmentTab = AssignmentTab, AugmentsTab = AugmentsTab,
     CheckUpgradesTab = CheckUpgradesTab, FocusEffectsTab = FocusEffectsTab,
     PeerTab = PeerTab, PerformanceTab = PerformanceTab, LauncherView = LauncherView,
+    CommandCenterTab = CommandCenterTab, InventoryIndex = InventoryIndex,
     matchesSearch = matchesSearch,
 })
 

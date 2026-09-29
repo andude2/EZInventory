@@ -10,7 +10,7 @@ local ImGui, mq, json
 local inventoryUI, inventory_actor, Settings, SettingsFile
 local extractCharacterName, isItemBankFlagged, setItemBankFlag
 local getItemAssignment, setItemAssignment, clearItemAssignment
-local peerCache, drawItemIcon
+local drawItemIcon
 local showEquipmentComparison -- set later via setter if needed
 
 function M.setup(env)
@@ -27,7 +27,6 @@ function M.setup(env)
   getItemAssignment = env.getItemAssignment
   setItemAssignment = env.setItemAssignment
   clearItemAssignment = env.clearItemAssignment
-  peerCache = env.peerCache
   drawItemIcon = env.drawItemIcon
 end
 

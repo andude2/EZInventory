@@ -212,7 +212,6 @@ function M.renderContent(inventoryUI, env)
         inventoryUI.isLoadingData = true
         table.insert(inventory_actor.deferred_tasks, function()
           if inventory_actor.clear_peer_data then inventory_actor.clear_peer_data() end
-          peerCache = {}
           inventoryUI._selfCache = { data = nil, time = 0 }
           inventory_actor.publish_inventory()
           inventory_actor.request_all_inventories()
@@ -242,9 +241,11 @@ function M.renderContent(inventoryUI, env)
     if ImGui.CollapsingHeader("Advanced Settings") then
       ImGui.Indent()
 
-      local autoRefreshChanged = ImGui.Checkbox("Auto-refresh on config change", Settings.autoRefreshInventory or true)
-      if autoRefreshChanged ~= (Settings.autoRefreshInventory or true) then
+      local autoRefreshEnabled = Settings.autoRefreshInventory ~= false
+      local autoRefreshChanged = ImGui.Checkbox("Auto-refresh on config change", autoRefreshEnabled)
+      if autoRefreshChanged ~= autoRefreshEnabled then
         Settings.autoRefreshInventory = autoRefreshChanged
+        inventoryUI.autoRefreshInventory = autoRefreshChanged
       end
       if ImGui.IsItemHovered() then ImGui.SetTooltip("Automatically refresh inventory when performance settings change") end
 
@@ -265,10 +266,11 @@ function M.renderContent(inventoryUI, env)
 
       ImGui.Spacing()
       ImGui.Text("Filtering Options:")
-      local enableStatsFilteringChanged = ImGui.Checkbox("Enable stats-based filtering",
-        Settings.enableStatsFiltering or true)
-      if enableStatsFilteringChanged ~= (Settings.enableStatsFiltering or true) then
+      local statsFilteringEnabled = Settings.enableStatsFiltering ~= false
+      local enableStatsFilteringChanged = ImGui.Checkbox("Enable stats-based filtering", statsFilteringEnabled)
+      if enableStatsFilteringChanged ~= statsFilteringEnabled then
         Settings.enableStatsFiltering = enableStatsFilteringChanged
+        inventoryUI.enableStatsFiltering = enableStatsFilteringChanged
         UpdateInventoryActorConfig()
       end
       if ImGui.IsItemHovered() then ImGui.SetTooltip("Allow filtering items by statistics in the All Characters tab") end

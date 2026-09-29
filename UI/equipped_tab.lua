@@ -283,7 +283,7 @@ function M.renderContent(inventoryUI, env)
               local sortedEquippedItems = {}
               for _, item in ipairs(inventoryUI.inventoryData.equipped) do
                 -- matchesSearch must be defined by caller scope; assume all if not provided
-                local matches = env.matchesSearch and env.matchesSearch(item) or true
+                local matches = not env.matchesSearch or env.matchesSearch(item)
                 if matches then table.insert(sortedEquippedItems, item) end
               end
               table.sort(sortedEquippedItems, function(a, b)

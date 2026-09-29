@@ -136,8 +136,11 @@ end
 
 local function getInventoryFingerprint(data)
     if type(data) ~= "table" then return "none" end
-    if inventoryFingerprintCache[data] then return inventoryFingerprintCache[data] end
+    local revision = tonumber(data._ezinventoryRevision) or 0
+    local cached = inventoryFingerprintCache[data]
+    if cached and cached.revision == revision then return cached.fingerprint end
     local hash = 5381
+    hash = mixHash(hash, revision)
     hash = hashInventoryList(hash, "equipped", data.equipped or {})
     hash = hashInventoryList(hash, "inventory", data.inventory or {})
     hash = hashInventoryList(hash, "bank", data.bank or {})
@@ -149,7 +152,7 @@ local function getInventoryFingerprint(data)
         hash = mixHash(hash, bid); hash = hashInventoryList(hash, "bag_items", bags[bid] or bags[tostring(bid)] or {})
     end
     local fingerprint = tostring(hash)
-    inventoryFingerprintCache[data] = fingerprint
+    inventoryFingerprintCache[data] = { revision = revision, fingerprint = fingerprint }
     return fingerprint
 end
 

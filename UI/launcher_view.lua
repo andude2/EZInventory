@@ -28,6 +28,7 @@ function M.render(inventoryUI, env)
     end
 
     local tiles = {
+        { id = "CommandCenter", label = "Command", icon = icons.FA_TERMINAL or icons.FA_SEARCH or "C" },
         { id = "Equipped", label = "Equipped", icon = icons.FA_USER or "E", visibleSetting = "launcherShowEquipped" },
         { id = "Inventory", label = "Inventory", icon = icons.FA_BOX_OPEN or "I", visibleSetting = "launcherShowInventory" },
         { id = "AllChars", label = "Search All", icon = icons.FA_SEARCH or "S", visibleSetting = "launcherShowAllChars" },
@@ -140,6 +141,7 @@ function M.render(inventoryUI, env)
     }
 
     local contentModules = {
+        CommandCenter = { title = "Inventory Command Center", module = env.modules and env.modules.CommandCenterTab, moduleEnv = env.envs and env.envs.CommandCenter, popout = true },
         Equipped = { title = "Equipped Items", module = env.modules and env.modules.EquippedTab, moduleEnv = env.envs and env.envs.Equipped, popout = true },
         Inventory = { title = "Inventory", module = inventoryCombined, moduleEnv = nil, popout = true },
         AllChars = { title = "All Characters Search", module = env.modules and env.modules.AllCharsTab, moduleEnv = env.envs and env.envs.AllChars, popout = true },
@@ -318,6 +320,7 @@ function M.render(inventoryUI, env)
     end
 
     renderWindow("Equipped", "Equipped Items", env.modules.EquippedTab, env.envs.Equipped)
+    renderWindow("CommandCenter", "Inventory Command Center", env.modules.CommandCenterTab, env.envs.CommandCenter)
     renderWindow("Inventory", "Inventory", inventoryCombined, nil)
     renderWindow("AllChars", "All Characters Search", env.modules.AllCharsTab, env.envs.AllChars)
     renderWindow("Assignments", "Character Assignments", env.modules.AssignmentTab, env.envs.Assignment)

@@ -549,6 +549,10 @@ local function apply_inventory_delta(peerId, delta)
         return
     end
 
+    existing.capturedAt = tonumber(delta.capturedAt) or existing.capturedAt
+    if delta.bankAccessible ~= nil then existing.bankAccessible = delta.bankAccessible == true end
+    if delta.config then existing.config = delta.config end
+
     for _, key in ipairs(delta.removed or {}) do
         local section, slotid, bagid, bankslotid = parse_slot_key(key)
         if section then
@@ -558,6 +562,10 @@ local function apply_inventory_delta(peerId, delta)
 
     for _, update in ipairs(delta.updated or {}) do
         update_or_add_item(existing, update.section, update.data, update.bagid)
+    end
+
+    if #(delta.removed or {}) > 0 or #(delta.updated or {}) > 0 then
+        existing._ezinventoryRevision = (tonumber(existing._ezinventoryRevision) or 0) + 1
     end
 end
 
@@ -617,105 +625,94 @@ local function convertSlotNameForMQ2Exchange(slotName)
     return slotNameMap[slotName] or slotName:lower()
 end
 
--- Safe auto-exchange function with comprehensive safety checks
-function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
-    -- Convert slot name to MQ2Exchange compatible format
-    local mq2ExchangeSlotName = convertSlotNameForMQ2Exchange(targetSlotName)
+local auto_exchange_queue = {}
 
-    -- Check if MQ2Exchange plugin is loaded
+local function find_inventory_item(itemName)
+    local findItem = mq.TLO.FindItem(itemName)
+    if findItem() then return findItem end
+
+    for i = 1, 10 do
+        local item = mq.TLO.Me.Inventory(i)
+        if item() and item.Name() == itemName then return item end
+    end
+
+    for bag = 1, 10 do
+        local bagSlot = mq.TLO.Me.Inventory(bag)
+        if bagSlot() and bagSlot.Container() then
+            for slot = 1, bagSlot.Container() do
+                local item = bagSlot.Item(slot)
+                if item() and item.Name() == itemName then return item end
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Queue an auto-exchange so waiting for a recently traded item never blocks
+-- the actor callback or the main UI/event loop.
+function M.safe_auto_exchange(itemName, targetSlot, targetSlotName)
+    if not itemName or itemName == "" or not targetSlotName or targetSlotName == "" then
+        printf("[AUTO-EXCHANGE] Invalid exchange request")
+        return false
+    end
     if not mq.TLO.Plugin("MQ2Exchange").IsLoaded() then
         printf("[AUTO-EXCHANGE] ERROR: MQ2Exchange plugin is not loaded!")
         return false
     end
 
-    -- Check if cursor is free
-    if mq.TLO.Cursor() then
-        printf("[AUTO-EXCHANGE] Cursor not free, cannot exchange %s", itemName)
-        return false
-    end
+    table.insert(auto_exchange_queue, {
+        itemName = itemName,
+        targetSlot = targetSlot,
+        targetSlotName = targetSlotName,
+        exchangeSlotName = convertSlotNameForMQ2Exchange(targetSlotName),
+    })
+    return true
+end
 
-    -- Wait up to 10 seconds for the item to appear in inventory
-    local foundItem = nil
-    local maxWaitTime = 10
-    local startTime = os.time()
+local function process_auto_exchange()
+    local request = auto_exchange_queue[1]
+    if not request then return end
+    request.deadline = request.deadline or (get_time_ms() + 10000)
 
-
-    while (os.time() - startTime) < maxWaitTime do
-        -- Use FindItem TLO for better item detection
-        local findItem = mq.TLO.FindItem(itemName)
-        if findItem() then
-            foundItem = findItem
-            break
-        end
-
-        -- Also check manually as backup
-        for i = 1, 10 do -- Check general inventory slots
-            local item = mq.TLO.Me.Inventory(i)
-            if item() and item.Name() == itemName then
-                foundItem = item
-                break
-            end
-        end
-
-        if foundItem then break end
-
-        -- Check bags if not found in general inventory
-        for bag = 1, 10 do
-            local bagSlot = mq.TLO.Me.Inventory(bag)
-            if bagSlot() and bagSlot.Container() then
-                for slot = 1, bagSlot.Container() do
-                    local item = bagSlot.Item(slot)
-                    if item() and item.Name() == itemName then
-                        foundItem = item
-                        break
-                    end
-                end
-                if foundItem then break end
-            end
-        end
-
-        if foundItem then break end
-
-        -- Can't use mq.delay() in actor thread, so we'll just continue the loop with os.time() check
-    end
-
+    local foundItem = find_inventory_item(request.itemName)
     if not foundItem then
-        printf("[AUTO-EXCHANGE] Item %s not found in inventory after %d seconds", itemName, maxWaitTime)
-        return false
+        if get_time_ms() >= request.deadline then
+            printf("[AUTO-EXCHANGE] Item %s not found in inventory after 10 seconds", request.itemName)
+            table.remove(auto_exchange_queue, 1)
+        end
+        return
     end
 
-    -- Check if there's enough bag space for currently equipped item (if any)
-    local currentlyEquipped = mq.TLO.Me.Inventory(targetSlot)
+    if not mq.TLO.Plugin("MQ2Exchange").IsLoaded() then
+        printf("[AUTO-EXCHANGE] ERROR: MQ2Exchange plugin is not loaded!")
+        table.remove(auto_exchange_queue, 1)
+        return
+    end
+    if mq.TLO.Cursor() then
+        if get_time_ms() >= request.deadline then
+            printf("[AUTO-EXCHANGE] Cursor remained occupied; cannot exchange %s", request.itemName)
+            table.remove(auto_exchange_queue, 1)
+        end
+        return
+    end
+
+    local currentlyEquipped = mq.TLO.Me.Inventory(request.targetSlot)
     if currentlyEquipped() then
-        -- Check bag space using MacroQuest TLO
-        -- Size 1 = tiny, 2 = small, 3 = medium, 4 = large, 5 = giant
         local equippedItemSize = currentlyEquipped.Size() or 1
         local freeSpace = mq.TLO.Me.FreeInventory(equippedItemSize)()
-
-
         if freeSpace == 0 then
             printf("[AUTO-EXCHANGE] No bag space available for currently equipped %s (size %d)",
                 currentlyEquipped.Name(), equippedItemSize)
-            return false
+            table.remove(auto_exchange_queue, 1)
+            return
         end
-    else
     end
 
-
-    -- Perform the exchange using MQ2Exchange
-    -- Use mq2ExchangeSlotName (converted slot name) for the command
-    mq.cmdf("/exchange \"%s\" %s", itemName, mq2ExchangeSlotName)
-
-    -- Note: We can't reliably wait/verify in the actor thread context,
-    -- but the /exchange command appears to work correctly.
-    -- If there were issues, MQ2Exchange would show error messages.
-
-    printf("[AUTO-EXCHANGE] Exchange command sent for %s to %s slot", itemName, targetSlotName)
-    printf("[AUTO-EXCHANGE] If the exchange succeeded, %s should now be equipped", itemName)
-
-    -- Return true since the command was sent successfully
-    -- The actual verification would need to happen outside the actor system
-    return true
+    mq.cmdf("/exchange \"%s\" %s", request.itemName, request.exchangeSlotName)
+    printf("[AUTO-EXCHANGE] Exchange command sent for %s to %s slot",
+        request.itemName, request.targetSlotName)
+    table.remove(auto_exchange_queue, 1)
 end
 
 local function get_item_class_info(item)
@@ -1058,6 +1055,13 @@ local function get_basic_item_info(item, include_extended_stats, snapshotKey, sk
     basic.nodrop = item.NoDrop() and 1 or 0
     basic.tradeskills = item.Tradeskills() and 1 or 0
     basic.qty = item.Stack() or 1
+    -- Per MQ2ItemType.cpp: Lore, Attuneable, StackSize, and Collectible are
+    -- inexpensive item members. Keep them in every snapshot so global search
+    -- and inventory-health checks do not need a second live item scan.
+    basic.lore = safe_get(function() return item.Lore() end, false) and 1 or 0
+    basic.attuneable = safe_get(function() return item.Attuneable() end, false) and 1 or 0
+    basic.collectible = safe_get(function() return item.Collectible() end, false) and 1 or 0
+    basic.maxStack = safe_get(function() return item.StackSize() end, 1)
     -- Keep lightweight but always provide item type metadata used by search tables.
     basic.itemtype = safe_get(function() return item.Type() end, "")
     basic.itemClass = safe_get(function() return item.ItemClass() end, "")
@@ -1474,6 +1478,8 @@ function M.gather_inventory(options)
         name = normalizeCharacterName(mq.TLO.Me.CleanName()),
         server = mq.TLO.MacroQuest.Server(),
         class = mq.TLO.Me.Class(),
+        capturedAt = os.time(),
+        bankAccessible = (mq.TLO.Window("BankWnd").Open() or mq.TLO.Window("BigBankWnd").Open()) == true,
         equipped = {},
         inventory = {},
         bags = {},
@@ -1514,6 +1520,7 @@ function M.gather_inventory(options)
             generalEntry.inventorySlot = invSlot
             generalEntry.packslot = invSlot - 22
             generalEntry.bagname = pack.Name()
+            generalEntry.containerSlots = pack.Container() or 0
             table.insert(data.inventory, generalEntry)
 
             if pack.Container() and pack.Container() > 0 then
@@ -2062,6 +2069,8 @@ function M.publish_inventory(force)
             delta.name = normalizeCharacterName(mq.TLO.Me.CleanName())
             delta.server = mq.TLO.MacroQuest.Server()
             delta.class = mq.TLO.Me.Class()
+            delta.capturedAt = inventoryData.capturedAt
+            delta.bankAccessible = inventoryData.bankAccessible
             delta.config = {
                 loadBasicStats = M.config.loadBasicStats,
                 loadDetailedStats = M.config.loadDetailedStats,
@@ -2521,6 +2530,7 @@ local function process_auto_accept_trade()
 end
 
 function M.process_pending_requests()
+    process_auto_exchange()
     process_auto_accept_trade()
 
     if multi_trade_state.active then
@@ -3289,7 +3299,7 @@ local function handle_command_message(message)
             )
 
             if success then
-                printf("[AUTO-EXCHANGE] Successfully equipped %s to %s slot",
+                printf("[AUTO-EXCHANGE] Queued %s for the %s slot",
                     exchangeInfo.itemName, exchangeInfo.targetSlotName)
             else
                 printf("[AUTO-EXCHANGE] Failed to equip %s to %s slot",
