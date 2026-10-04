@@ -35,6 +35,53 @@ local function flagText(record)
     return table.concat(values, ", ")
 end
 
+local function groupRecords(records)
+    local byKey, groups = {}, {}
+    for _, record in ipairs(records) do
+        local key = record.itemId > 0 and ("id:" .. tostring(record.itemId)) or ("name:" .. record.name:lower())
+        local group = byKey[key]
+        if not group then
+            group = {
+                key = key, name = record.name, itemId = record.itemId, records = {}, quantity = 0,
+                characters = {}, characterCount = 0, locations = {}, locationCount = 0,
+                flags = {}, assignments = {}, freshness = "live",
+            }
+            byKey[key] = group
+            table.insert(groups, group)
+        end
+        table.insert(group.records, record)
+        group.quantity = group.quantity + (record.quantity or 1)
+        local characterKey = record.server .. "|" .. record.character
+        if not group.characters[characterKey] then group.characters[characterKey] = true; group.characterCount = group.characterCount + 1 end
+        local locationKey = characterKey .. "|" .. record.locationLabel
+        if not group.locations[locationKey] then group.locations[locationKey] = true; group.locationCount = group.locationCount + 1 end
+        for flag, enabled in pairs(record.flags or {}) do if enabled then group.flags[flag] = true end end
+        if record.assignment then group.assignments[record.assignment] = true end
+        if record.freshness == "stale" then group.freshness = "stale"
+        elseif record.freshness == "unknown" and group.freshness ~= "stale" then group.freshness = "unknown" end
+    end
+    return groups
+end
+
+local function groupFlagText(group)
+    local values = {}
+    if group.flags.lore then table.insert(values, "Lore") end
+    if group.flags.noDrop then table.insert(values, "No Drop") end
+    if group.flags.attuneable then table.insert(values, "Attuneable") end
+    if group.flags.collectible then table.insert(values, "Collectible") end
+    if group.flags.bank then table.insert(values, "Bank") end
+    local assignments = {}; for name in pairs(group.assignments) do table.insert(assignments, name) end
+    table.sort(assignments)
+    if #assignments > 0 then table.insert(values, "-> " .. table.concat(assignments, "/")) end
+    return table.concat(values, ", ")
+end
+
+local function renderFreshness(ImGui, freshness)
+    if freshness == "stale" then ImGui.TextColored(1.0, 0.55, 0.25, 1.0, "Stale")
+    elseif freshness == "live" then ImGui.TextColored(0.35, 0.9, 0.45, 1.0, "Live")
+    else ImGui.Text("Unknown") end
+end
+
 local function ensureState(ui)
     ui.commandCenter = ui.commandCenter or {
         mode = "search", query = "", character = "All", server = "All", location = "All", flag = "All",
@@ -85,10 +132,11 @@ local function renderSearch(ui, env, index, state)
 
     local filtered = {}
     for _, record in ipairs(index.records) do if env.InventoryIndex.matches(record, state) then table.insert(filtered, record) end end
+    local groups = groupRecords(filtered)
     local pageSize = state.pageSize or 100
-    local pageCount = math.max(1, math.ceil(#filtered / pageSize))
+    local pageCount = math.max(1, math.ceil(#groups / pageSize))
     state.page = math.max(1, math.min(state.page or 1, pageCount))
-    ImGui.Text("%d result%s", #filtered, #filtered == 1 and "" or "s")
+    ImGui.Text("%d item%s (%d instance%s)", #groups, #groups == 1 and "" or "s", #filtered, #filtered == 1 and "" or "s")
     ImGui.SameLine()
     if ImGui.SmallButton("<##CommandPage") and state.page > 1 then state.page = state.page - 1 end
     ImGui.SameLine(); ImGui.Text("Page %d / %d", state.page, pageCount); ImGui.SameLine()
@@ -97,39 +145,48 @@ local function renderSearch(ui, env, index, state)
     local flags = ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.ScrollY
     if ImGui.BeginTable("CommandCenterResults", 7, flags, 0, 0) then
         ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch)
-        ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthFixed, 95)
-        ImGui.TableSetupColumn("Location", ImGuiTableColumnFlags.WidthFixed, 125)
+        ImGui.TableSetupColumn("Characters", ImGuiTableColumnFlags.WidthFixed, 95)
+        ImGui.TableSetupColumn("Locations", ImGuiTableColumnFlags.WidthFixed, 125)
         ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 55)
         ImGui.TableSetupColumn("Flags", ImGuiTableColumnFlags.WidthStretch)
         ImGui.TableSetupColumn("Freshness", ImGuiTableColumnFlags.WidthFixed, 75)
         ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 105)
         ImGui.TableHeadersRow()
         local first = ((state.page - 1) * pageSize) + 1
-        local last = math.min(#filtered, first + pageSize - 1)
+        local last = math.min(#groups, first + pageSize - 1)
         for i = first, last do
-            local record = filtered[i]
-            ImGui.PushID(record.instanceKey)
+            local group = groups[i]
+            local firstRecord = group.records[1]
+            ImGui.PushID(group.key)
             ImGui.TableNextRow()
             ImGui.TableNextColumn()
-            if ImGui.Selectable(record.name, false) and env.openItemInspector then env.openItemInspector(record.item, { source = record.character, location = record.locationLabel }) end
-            if #record.augments > 0 and ImGui.IsItemHovered() then
-                local names = {}; for _, aug in ipairs(record.augments) do table.insert(names, aug.name) end
-                ImGui.SetTooltip("Augments: " .. table.concat(names, ", "))
-            end
-            ImGui.TableNextColumn(); ImGui.Text(record.character)
-            ImGui.TableNextColumn(); ImGui.Text(record.locationLabel)
-            ImGui.TableNextColumn(); ImGui.Text(record.maxStack > 1 and string.format("%d/%d", record.quantity, record.maxStack) or tostring(record.quantity))
-            ImGui.TableNextColumn(); ImGui.TextWrapped(flagText(record))
+            local expanded = ImGui.TreeNodeEx(group.name .. "##Group", ImGuiTreeNodeFlags.SpanFullWidth)
+            ImGui.TableNextColumn(); ImGui.Text("%d", group.characterCount)
+            ImGui.TableNextColumn(); ImGui.Text("%d", group.locationCount)
+            ImGui.TableNextColumn(); ImGui.Text(tostring(group.quantity))
+            ImGui.TableNextColumn(); ImGui.TextWrapped(groupFlagText(group))
+            ImGui.TableNextColumn(); renderFreshness(ImGui, group.freshness)
             ImGui.TableNextColumn()
-            if record.freshness == "stale" then ImGui.TextColored(1.0, 0.55, 0.25, 1.0, "Stale")
-            elseif record.freshness == "live" then ImGui.TextColored(0.35, 0.9, 0.45, 1.0, "Live")
-            else ImGui.Text("Unknown") end
-            if ImGui.IsItemHovered() then ImGui.SetTooltip(string.format("%s snapshot%s", record.scanStage, record.ageSeconds and (", " .. record.ageSeconds .. "s old") or "")) end
-            ImGui.TableNextColumn()
-            if ImGui.SmallButton("Inspect") and env.openItemInspector then env.openItemInspector(record.item, { source = record.character, location = record.locationLabel }) end
-            ImGui.SameLine()
-            if ImGui.SmallButton("More") and env.showContextMenu then
-                env.showContextMenu(record.item, record.character, nil, nil)
+            if ImGui.SmallButton("Inspect") and env.openItemInspector then env.openItemInspector(firstRecord.item, { source = firstRecord.character, location = firstRecord.locationLabel }) end
+
+            if expanded then
+                for instanceIndex, record in ipairs(group.records) do
+                    ImGui.PushID(instanceIndex)
+                    ImGui.TableNextRow()
+                    ImGui.TableNextColumn(); ImGui.Text("  " .. record.name)
+                    ImGui.TableNextColumn(); ImGui.Text(record.character .. " (" .. record.server .. ")")
+                    ImGui.TableNextColumn(); ImGui.Text(record.locationLabel)
+                    ImGui.TableNextColumn(); ImGui.Text(record.maxStack > 1 and string.format("%d/%d", record.quantity, record.maxStack) or tostring(record.quantity))
+                    ImGui.TableNextColumn(); ImGui.TextWrapped(flagText(record))
+                    ImGui.TableNextColumn(); renderFreshness(ImGui, record.freshness)
+                    if ImGui.IsItemHovered() then ImGui.SetTooltip(string.format("%s snapshot%s", record.scanStage, record.ageSeconds and (", " .. record.ageSeconds .. "s old") or "")) end
+                    ImGui.TableNextColumn()
+                    if ImGui.SmallButton("Inspect") and env.openItemInspector then env.openItemInspector(record.item, { source = record.character, location = record.locationLabel }) end
+                    ImGui.SameLine()
+                    if ImGui.SmallButton("More") and env.showContextMenu then env.showContextMenu(record.item, record.character, nil, nil) end
+                    ImGui.PopID()
+                end
+                ImGui.TreePop()
             end
             ImGui.PopID()
         end
