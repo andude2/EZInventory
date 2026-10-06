@@ -445,8 +445,9 @@ function M.broadcastLuaRun(connectionMethod)
     local sent = 0
     for _, peer in ipairs(connectedPeers or {}) do
         if peer.name and not isPeerExcluded(peer.name) then
-            M.sendLuaRunToPeer(peer.name, connectionMethod)
-            sent = sent + 1
+            if M.sendLuaRunToPeer(peer.displayName or peer.name, connectionMethod) then
+                sent = sent + 1
+            end
         end
     end
     printf("Sent EZInventory startup to %d non-excluded peers via %s", sent, tostring(connectionMethod or "Unknown"))
@@ -460,7 +461,22 @@ function M.sendLuaRunToPeer(peerName, connectionMethod)
     local cmd = getBroadcastCommand()
 
     if connectionMethod == "DanNet" then
-        mq.cmdf("/dgt %s %s", peerName, cmd)
+        -- /dgt sends chat text; /dex executes a command on a specific DanNet peer.
+        -- Keep the raw DanNet peer identity (usually Server_Character) when the
+        -- caller supplies it, since reducing it to the character name can make
+        -- cross-server targeting ambiguous.
+        local target = peerName
+        if not tostring(target):find("_", 1, true) then
+            local normalizedTarget = character_utils.extractCharacterName(target)
+            local _, peers = M.getPeerConnectionStatus(true)
+            for _, peer in ipairs(peers or {}) do
+                if peer.name and peer.name:lower() == normalizedTarget:lower() then
+                    target = peer.displayName or peer.name
+                    break
+                end
+            end
+        end
+        mq.cmdf("/dex %s %s", target, cmd)
         printf("Sent to %s via DanNet: %s", peerName, cmd)
     elseif connectionMethod == "EQBC" then
         mq.cmdf("/bct %s /%s", peerName, cmd)
